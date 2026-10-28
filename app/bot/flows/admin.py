@@ -100,7 +100,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
             if uid in svc.cfg.extra_admins:
                 await safe_answer(
                     query,
-                    "این کاربر در ADMIN_IDS تنظیمات است؛ از env حذفش کن.",
+                    text.t(lang, "admin_env_admin"),
                     alert=True,
                 )
             await _render_admins(update, context)
@@ -274,7 +274,7 @@ async def _show_user(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: in
         joined=fmt_ts(user.created_at),
     )
     action = "unban" if user.is_banned else "ban"
-    label = "♻️ رفع مسدودی" if user.is_banned else "🚫 مسدود کردن"
+    label = text.t(lang, "btn_unban" if user.is_banned else "btn_ban")
     await edit(
         msg,
         body,
@@ -311,7 +311,7 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
             await reply(update, text.t(lang, "admin_add_fail"))
             return
         if await repo.count_admins() >= svc.cfg.max_admins > 0:
-            await reply(update, f"⛔️ سقف ادمین‌ها ({svc.cfg.max_admins}) پر است.")
+            await reply(update, text.t(lang, "admin_limit_reached", max=svc.cfg.max_admins))
             return
         await repo.add_admin(user.id, update.effective_user.id)
         await reply(update, text.t(lang, "admin_add_ok", uid=user.id))

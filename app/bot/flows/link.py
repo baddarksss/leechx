@@ -100,6 +100,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
         uploader=info.uploader,
         extractor=info.extractor,
         kind="link",
+        lang=lang,
     )
     svc.drafts.put(draft)
 

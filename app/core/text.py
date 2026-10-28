@@ -89,6 +89,18 @@ FA: dict[str, str] = {
     "btn_admin_broadcast": "📢 پیام همگانی",
     "btn_admin_users": "🔎 کاربر",
     "btn_admin_cleanup": "🧹 پاک‌سازی",
+    "btn_admin_add": "➕ افزودن ادمین",
+    "btn_ban": "🚫 مسدود کردن",
+    "btn_unban": "♻️ رفع مسدودی",
+    "set_ttl": "⏳ اعتبار لینک: {v} ساعت",
+    "set_upload": "📦 سقف آپلود: {v}MB",
+    "set_link": "🔗 سقف فایل لینک: {v}MB",
+    "set_rate": "🐢 فاصلهٔ درخواست: {v}s",
+    "set_quota": "📉 سهمیهٔ روزانه: {v}",
+    "set_maintenance": "🛠 حالت تعمیر {flag}",
+    "set_nsfw": "🔞 سایت‌های بزرگسال {flag}",
+    "admin_limit_reached": "⛔️ سقف ادمین‌ها ({max}) پر است.",
+    "admin_env_admin": "این کاربر در ADMIN_IDS تنظیمات است؛ از env حذفش کن.",
 
     # ── وضعیت ──
     "status": (
@@ -239,6 +251,18 @@ EN: dict[str, str] = {
     "btn_admin_broadcast": "📢 Broadcast",
     "btn_admin_users": "🔎 User",
     "btn_admin_cleanup": "🧹 Cleanup",
+    "btn_admin_add": "➕ Add admin",
+    "btn_ban": "🚫 Ban",
+    "btn_unban": "♻️ Unban",
+    "set_ttl": "⏳ Link TTL: {v}h",
+    "set_upload": "📦 Max upload: {v}MB",
+    "set_link": "🔗 Max link file: {v}MB",
+    "set_rate": "🐢 Rate limit: {v}s",
+    "set_quota": "📉 Daily quota: {v}",
+    "set_maintenance": "🛠 Maintenance {flag}",
+    "set_nsfw": "🔞 NSFW sites {flag}",
+    "admin_limit_reached": "⛔️ Admin limit reached ({max}).",
+    "admin_env_admin": "This user is listed in ADMIN_IDS; remove them from env.",
     "status": (
         "<b>📊 Your status</b>\n\n"
         "🆔 <code>{uid}</code>\n⬇️ Downloads: <b>{downloads}</b>\n"

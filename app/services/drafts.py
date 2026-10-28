@@ -30,6 +30,7 @@ class Draft:
     uploader: str | None = None
     extractor: str = ""
     kind: str = "link"
+    lang: str = "fa"
     created_at: float = field(default_factory=time.time)
 
 

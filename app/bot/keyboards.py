@@ -96,7 +96,7 @@ def admin_menu(lang: str) -> Kb:
 
 
 def admins_menu(lang: str, admins: list[int]) -> Kb:
-    rows = [[Btn("➕ افزودن ادمین", callback_data="a|admadd")]]
+    rows = [[Btn(text.t(lang, "btn_admin_add"), callback_data="a|admadd")]]
     for uid in admins[:20]:
         rows.append([Btn(f"🗑 {uid}", callback_data=f"a|admrm|{uid}")])
     rows.append([Btn(text.t(lang, "btn_back"), callback_data=A_BACK)])
@@ -108,12 +108,12 @@ def settings_menu(lang: str, snap: dict) -> Kb:
         return "🟢" if value else "🔴"
 
     return Kb([
-        [Btn(f"⏳ TTL: {snap['link_ttl_hours']}h", callback_data="a|edit|link_ttl_hours")],
-        [Btn(f"📦 Max upload: {snap['max_upload_mb']}MB", callback_data="a|edit|max_upload_mb"),
-         Btn(f"🔗 Max link: {snap['max_link_mb']}MB", callback_data="a|edit|max_link_mb")],
-        [Btn(f"🐢 Rate: {snap['rate_limit_seconds']}s", callback_data="a|edit|rate_limit_seconds"),
-         Btn(f"📉 Quota: {snap['daily_quota']}", callback_data="a|edit|daily_quota")],
-        [Btn(f"🛠 Maintenance {flag(snap['maintenance'])}", callback_data="a|toggle|maintenance"),
-         Btn(f"🔞 NSFW {flag(snap['nsfw_enabled'])}", callback_data="a|toggle|nsfw_enabled")],
+        [Btn(text.t(lang, "set_ttl", v=snap["link_ttl_hours"]), callback_data="a|edit|link_ttl_hours")],
+        [Btn(text.t(lang, "set_upload", v=snap["max_upload_mb"]), callback_data="a|edit|max_upload_mb"),
+         Btn(text.t(lang, "set_link", v=snap["max_link_mb"]), callback_data="a|edit|max_link_mb")],
+        [Btn(text.t(lang, "set_rate", v=snap["rate_limit_seconds"]), callback_data="a|edit|rate_limit_seconds"),
+         Btn(text.t(lang, "set_quota", v=snap["daily_quota"]), callback_data="a|edit|daily_quota")],
+        [Btn(text.t(lang, "set_maintenance", flag=flag(snap["maintenance"])), callback_data="a|toggle|maintenance"),
+         Btn(text.t(lang, "set_nsfw", flag=flag(snap["nsfw_enabled"])), callback_data="a|toggle|nsfw_enabled")],
         [Btn(text.t(lang, "btn_back"), callback_data=A_BACK)],
     ])

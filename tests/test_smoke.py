@@ -50,3 +50,30 @@ def test_site_index_builds():
     assert index.match("https://example.invalid/no-media") is None
     assert index.is_nsfw_url("https://www.pornhub.com/view_video.php?viewkey=1") is True
     assert index.search("instagram", 5)
+
+
+def test_quality_menu_callback_data_is_valid():
+    from app.bot import keyboards as kb
+    from app.services.drafts import Draft
+    from app.services.formats import all_options
+
+    formats = [
+        {"height": h, "ext": "mp4", "vcodec": "avc1", "tbr": 1000, "format_id": str(h)}
+        for h in (360, 720, 1080)
+    ]
+    draft = Draft(
+        id="abc123",
+        user_id=1,
+        chat_id=1,
+        url="https://x.com/a",
+        title="t",
+        options=all_options(formats),
+    )
+    menu = kb.quality_menu("fa", draft)
+    datas = [b.callback_data for row in menu.inline_keyboard for b in row if b.callback_data]
+    assert datas
+    for data in datas:
+        assert len(data.encode()) <= 64, data
+        assert data.count("|") <= 3
+    assert any(d.startswith("q|abc123|1080|v") for d in datas)
+    assert any(d.startswith("q|abc123|mp3|a") for d in datas)

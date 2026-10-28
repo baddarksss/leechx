@@ -155,16 +155,28 @@ class JobManager:
 
     # ── صف ──────────────────────────────────────────────────
     def _take_next(self) -> JobTask | None:
+        """اولین کاری که کاربرش ظرفیت دارد را برمی‌دارد.
+
+        کارهای لغوشده از صف حذف و «لغو شد» ثبت می‌شوند (بدون گرفتن slot).
+        کارهای کاربرِ پرمشغله در صف می‌مانند تا نوبت بقیه از دست نرود.
+        """
         limit = self.cfg.per_user_concurrency
-        for _index, task in enumerate(self._queue):
+        canceled: list[JobTask] = []
+        picked: JobTask | None = None
+
+        for task in list(self._queue):
             if task.cancel.is_set():
                 self._queue.remove(task)
                 self._tasks.pop(task.id, None)
-                return task
-            if self.limiter.acquire_slot(task.user_id, limit):
+                canceled.append(task)
+                continue
+            if picked is None and self.limiter.acquire_slot(task.user_id, limit):
                 self._queue.remove(task)
-                return task
-        return None
+                picked = task
+
+        for task in canceled:
+            asyncio.create_task(self._finish_canceled(task))
+        return picked
 
     async def _next_or_wait(self) -> JobTask | None:
         while not self._stop.is_set():
@@ -184,11 +196,6 @@ class JobManager:
             task = await self._next_or_wait()
             if task is None:
                 break
-            if task.cancel.is_set():
-                await self._finish_canceled(task)
-                self.limiter.release_slot(task.user_id)
-                self._tasks.pop(task.id, None)
-                continue
             try:
                 await self._run(task)
             except asyncio.CancelledError:
