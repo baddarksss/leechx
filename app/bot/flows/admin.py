@@ -5,25 +5,32 @@ import asyncio
 import logging
 import time
 
-from telegram import Update
+from telegram import MessageOriginUser, Update
 from telegram.constants import ParseMode
-from telegram.ext import ContextTypes
+from telegram.error import TelegramError
+from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from app.bot import keyboards as kb
 from app.bot.common import edit, fmt_ts, lang_of, reply, safe_answer, services
 from app.bot.guards import is_admin, require_admin
 from app.bot.states import (
     ST_ADD_ADMIN,
+    ST_BAN,
     ST_BROADCAST,
+    ST_COOKIE_ADD,
+    ST_GROUP_ID,
     ST_LOOKUP_USER,
+    ST_RUNTIME_VALUE,
     ST_SET_VALUE,
     clear_state,
     get_data,
+    get_state,
     set_state,
 )
 from app.core import human, text
 from app.db import repo
-from app.services.runtime_settings import SCHEMA
+from app.services.cookies import CookieError
+from app.services.runtime_settings import RUNTIME_KEYS, SCHEMA
 
 log = logging.getLogger("leechx.admin")
 
@@ -33,6 +40,14 @@ STATUS_ICON = {
     "done": "✅",
     "failed": "❌",
     "canceled": "✖️",
+}
+
+# تغییر این مقادیر فقط بعد از ری‌استارت کامل اثر می‌گذارد.
+RESTART_KEYS = {
+    "telegram_api_url",
+    "telegram_api_file_url",
+    "telegram_api_id",
+    "telegram_api_hash",
 }
 
 
@@ -167,6 +182,135 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         )
         return
 
+    if action == "cookies":
+        await safe_answer(query)
+        await _render_cookies(update, context)
+        return
+
+    if action == "ckadd":
+        await safe_answer(query)
+        set_state(context, ST_COOKIE_ADD)
+        await edit(msg, text.t(lang, "cookie_add_prompt"))
+        return
+
+    if action == "cktest":
+        await safe_answer(query)
+        await _render_cookie_test(update, context)
+        return
+
+    if action == "ckdel":
+        await safe_answer(query)
+        if args:
+            name = args[0]
+            ok = svc.cookies.delete(name)
+            await safe_answer(
+                query,
+                text.t(lang, "cookie_deleted" if ok else "cookie_missing", name=human.esc(name)),
+            )
+            await _render_cookies(update, context)
+        return
+
+    if action == "banmenu":
+        await safe_answer(query)
+        set_state(context, ST_BAN)
+        await edit(
+            msg,
+            text.t(lang, "admin_ban_prompt") + "\n\n" + text.t(lang, "admin_forward_hint"),
+            reply_markup=kb.back_home(lang),
+        )
+        return
+
+    if action == "group":
+        await safe_answer(query)
+        await _render_group(update, context)
+        return
+
+    if action == "groupid":
+        await safe_answer(query)
+        set_state(context, ST_GROUP_ID)
+        await edit(
+            msg,
+            text.t(lang, "admin_group_prompt")
+            + "\n\n"
+            + text.t(lang, "admin_group_hint_setup"),
+            reply_markup=kb.back_home(lang),
+        )
+        return
+
+    if action == "grouptest":
+        await safe_answer(query)
+        ok = False
+        if svc.admin_group.configured:
+            ok = await svc.admin_group.send(
+                "logs",
+                "🧪 <b>LeechX</b> — admin group test message.",
+            )
+        await safe_answer(
+            query,
+            text.t(lang, "admin_group_test_ok" if ok else "admin_group_test_fail"),
+            alert=True,
+        )
+        return
+
+    if action == "groupoff":
+        await safe_answer(query)
+        await svc.admin_group.disable()
+        await safe_answer(query, text.t(lang, "admin_group_off_done"))
+        await _render_group(update, context)
+        return
+
+    if action == "reports":
+        await safe_answer(query)
+        await _render_reports(update, context)
+        return
+
+    if action == "rpclose":
+        if args:
+            rid = int(args[0])
+            ok = await repo.set_report_status(rid)
+            await safe_answer(
+                query,
+                text.t(lang, "admin_report_closed" if ok else "admin_report_missing", id=rid),
+            )
+            await _render_reports(update, context)
+        else:
+            await safe_answer(query)
+        return
+
+    if action == "logs":
+        await safe_answer(query)
+        await _render_logs(update, context)
+        return
+
+    if action == "logclear":
+        await safe_answer(query)
+        count = await repo.clear_logs()
+        await safe_answer(query, text.t(lang, "admin_logs_cleared", count=count))
+        await _render_logs(update, context)
+        return
+
+    if action == "runtime":
+        await safe_answer(query)
+        await _render_runtime(update, context)
+        return
+
+    if action == "redit":
+        if not args:
+            await safe_answer(query)
+            return
+        key = args[0]
+        if key not in RUNTIME_KEYS or key not in SCHEMA:
+            await safe_answer(query)
+            return
+        await safe_answer(query)
+        set_state(context, ST_RUNTIME_VALUE, key=key)
+        await edit(
+            msg,
+            text.t(lang, "admin_runtime_prompt", label=svc.settings.label(key)),
+            reply_markup=kb.back_home(lang),
+        )
+        return
+
     if action in ("ban", "unban") and args:
         uid = int(args[0])
         await repo.set_banned(uid, action == "ban")
@@ -180,22 +324,28 @@ async def _render_stats(context: ContextTypes.DEFAULT_TYPE) -> str:
     svc = services(context)
     lang = lang_of(context)
     users = await repo.count_users()
+    active_users = await repo.count_active_users(7)
+    banned = await repo.count_banned_users()
     admins = await repo.count_admins() + len(svc.cfg.owners)
     jobs, done, failed = await repo.jobs_count_today()
-    shared = await repo.count_shared()
+    active_links = await repo.count_active_shared()
+    reports = await repo.count_open_reports()
     shared_size = await repo.shared_total_size()
     used = svc.store.total_size() + shared_size
     return text.t(
         lang,
         "admin_stats",
         users=users,
+        active_users=active_users,
+        banned=banned,
+        uploading=svc.jobs.uploading_users,
+        active_links=active_links,
+        reports=reports,
         admins=admins,
         jobs=jobs,
         done=done,
         failed=failed,
         active=svc.jobs.active_count,
-        shared=shared,
-        shared_size=human.human_bytes(shared_size),
         disk=f"{human.human_bytes(used)} / {human.human_bytes(svc.store.disk_free())} free",
         uptime=human.human_duration(svc.uptime),
     )
@@ -254,13 +404,177 @@ def _render_settings(context: ContextTypes.DEFAULT_TYPE) -> str:
     )
 
 
+async def _render_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    files = svc.cookies.list_files()
+    lines = [svc.cookies.describe(cookie) for cookie in files]
+    if not lines:
+        lines = [text.t(lang, "cookie_empty")]
+    body = text.t(lang, "admin_cookies", count=len(files), list="\n".join(lines))
+    menu = kb.cookies_menu(lang, [cookie.name for cookie in files])
+    query = update.callback_query
+    if query is not None:
+        await edit(query.message, body, reply_markup=menu)
+    else:
+        await reply(update, body, reply_markup=menu)
+
+
+async def _render_cookie_test(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    files = svc.cookies.list_files()
+    lines: list[str] = []
+    for cookie in files:
+        problems = svc.cookies.problems(cookie)
+        if problems:
+            status = text.t(
+                lang,
+                "cookie_problem",
+                reason=human.esc("; ".join(problems)),
+            )
+        else:
+            status = text.t(lang, "cookie_ok")
+        lines.append(f"• <b>{cookie.name}</b> — {status}")
+    if not lines:
+        lines = [text.t(lang, "cookie_empty")]
+    body = text.t(lang, "cookie_test_result", list="\n".join(lines))
+    menu = kb.cookies_menu(lang, [cookie.name for cookie in files])
+    query = update.callback_query
+    if query is not None:
+        await edit(query.message, body, reply_markup=menu)
+    else:
+        await reply(update, body, reply_markup=menu)
+
+
+async def _render_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    group = svc.admin_group
+    status = text.t(
+        lang,
+        "admin_group_configured" if group.configured else "admin_group_not_configured",
+    )
+    hint = text.t(
+        lang,
+        "admin_group_hint_ok" if group.configured else "admin_group_hint_setup",
+    )
+    body = text.t(
+        lang,
+        "admin_group_panel",
+        status=status,
+        title=human.esc(group.title or "—"),
+        chat=group.chat_id or "—",
+        downloads=svc.settings.get_str("topic_downloads") or "—",
+        uploads=svc.settings.get_str("topic_uploads") or "—",
+        reports=svc.settings.get_str("topic_reports") or "—",
+        logs=svc.settings.get_str("topic_logs") or "—",
+        hint=hint,
+    )
+    menu = kb.group_menu(lang, group.configured)
+    query = update.callback_query
+    if query is not None:
+        await edit(query.message, body, reply_markup=menu)
+    else:
+        await reply(update, body, reply_markup=menu)
+
+
+async def _render_reports(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = lang_of(context)
+    rows = await repo.recent_reports(limit=10, status="open")
+    if not rows:
+        body = text.t(lang, "admin_reports", count=0, list=text.t(lang, "admin_reports_empty"))
+    else:
+        items = []
+        for row in rows:
+            kind = text.t(
+                lang,
+                "admin_report_kind_contact"
+                if row.kind == "contact"
+                else "admin_report_kind_unsupported",
+            )
+            icon = "✉️" if row.kind == "contact" else "🌐"
+            parts = []
+            if row.url:
+                parts.append(f"🔗 <code>{human.esc(human.truncate(row.url, 300))}</code>")
+            if row.text:
+                parts.append(f"💬 {human.esc(human.truncate(row.text, 500))}")
+            items.append(
+                text.t(
+                    lang,
+                    "admin_report_item",
+                    icon=icon,
+                    id=row.id,
+                    kind=kind,
+                    when=time.strftime("%m-%d %H:%M", time.localtime(row.created_at)),
+                    name=human.esc(row.first_name or "—"),
+                    username=human.esc(row.username or "—"),
+                    uid=row.user_id,
+                    body="\n".join(parts) or "—",
+                )
+            )
+        body = text.t(lang, "admin_reports", count=len(rows), list="\n\n".join(items))
+    menu = kb.reports_menu(lang, [row.id for row in rows])
+    query = update.callback_query
+    if query is not None:
+        await edit(query.message, body, reply_markup=menu)
+    else:
+        await reply(update, body, reply_markup=menu)
+
+
+async def _render_logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = lang_of(context)
+    rows = await repo.recent_logs(15)
+    if not rows:
+        body = text.t(lang, "admin_logs", count=0, list=text.t(lang, "admin_logs_empty"))
+    else:
+        icons = {"ERROR": "❌", "WARNING": "⚠️", "INFO": "ℹ️"}
+        lines = []
+        for row in rows:
+            when = time.strftime("%m-%d %H:%M", time.localtime(row.created_at))
+            line = (
+                f"{icons.get(row.level, '•')} <b>{human.esc(row.level)}</b> · "
+                f"<code>{human.esc(row.source)}</code> · {when}\n"
+                f"{human.esc(human.truncate(row.message, 400))}"
+            )
+            if row.user_id:
+                line += f"\n👤 <code>{row.user_id}</code> · #{row.id}"
+            lines.append(line)
+        body = text.t(lang, "admin_logs", count=len(rows), list="\n\n".join(lines))
+    menu = kb.logs_menu(lang)
+    query = update.callback_query
+    if query is not None:
+        await edit(query.message, body, reply_markup=menu)
+    else:
+        await reply(update, body, reply_markup=menu)
+
+
+async def _render_runtime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    items = [
+        (key, svc.settings.label(key), svc.settings.masked(key))
+        for key in RUNTIME_KEYS
+    ]
+    body = text.t(lang, "admin_runtime")
+    menu = kb.runtime_menu(lang, items)
+    query = update.callback_query
+    if query is not None:
+        await edit(query.message, body, reply_markup=menu)
+    else:
+        await reply(update, body, reply_markup=menu)
+
+
 async def _show_user(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
     svc = services(context)
     lang = lang_of(context)
     user = await repo.get_user(uid)
     msg = update.callback_query.message if update.callback_query else update.effective_message
     if user is None:
-        await edit(msg, text.t(lang, "admin_add_fail"))
+        if update.callback_query is not None:
+            await edit(msg, text.t(lang, "admin_add_fail"))
+        else:
+            await reply(update, text.t(lang, "admin_add_fail"))
         return
     body = text.t(
         lang,
@@ -275,11 +589,11 @@ async def _show_user(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: in
     )
     action = "unban" if user.is_banned else "ban"
     label = text.t(lang, "btn_unban" if user.is_banned else "btn_ban")
-    await edit(
-        msg,
-        body,
-        reply_markup=kb.back_home(lang, [[kb.Btn(label, callback_data=f"a|{action}|{uid}")]]),
-    )
+    markup = kb.back_home(lang, [[kb.Btn(label, callback_data=f"a|{action}|{uid}")]])
+    if update.callback_query is not None:
+        await edit(msg, body, reply_markup=markup)
+    else:
+        await reply(update, body, reply_markup=markup)
 
 
 # ── ورودی متنی حالت‌ها ─────────────────────────────────────
@@ -305,7 +619,7 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         return
 
     if state == ST_ADD_ADMIN:
-        user = await _resolve_user(raw)
+        user = await _resolve_user(raw, context=context)
         clear_state(context)
         if user is None:
             await reply(update, text.t(lang, "admin_add_fail"))
@@ -345,21 +659,186 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
 
     if state == ST_LOOKUP_USER:
         clear_state(context)
-        user = await _resolve_user(raw)
+        user = await _resolve_user(raw, context=context)
         if user is None:
             await reply(update, text.t(lang, "admin_add_fail"))
             return
         await _show_user(update, context, user.id)
         return
 
+    if state == ST_BAN:
+        clear_state(context)
+        user = await _resolve_user(raw, context=context, create=True)
+        if user is None:
+            await reply(update, text.t(lang, "admin_add_fail"))
+            return
+        await _show_user(update, context, user.id)
+        return
+
+    if state == ST_GROUP_ID:
+        clear_state(context)
+        token = raw.strip()
+        if not token.lstrip("-").isdigit() or int(token) >= 0:
+            await reply(update, text.t(lang, "admin_group_bad_id"))
+            return
+        chat_id = int(token)
+        title = ""
+        try:
+            chat = await context.bot.get_chat(chat_id)
+            title = getattr(chat, "title", "") or ""
+        except TelegramError:
+            pass
+        created = await svc.admin_group.configure(chat_id, title)
+        ok = sum(1 for value in created.values() if value)
+        failed = len(created) - ok
+        await reply(
+            update,
+            text.t(lang, "admin_group_saved", created=ok, failed=failed),
+            reply_markup=kb.group_menu(lang, True),
+        )
+        return
+
+    if state == ST_RUNTIME_VALUE:
+        key = get_data(context).get("key", "")
+        clear_state(context)
+        if key not in RUNTIME_KEYS or key not in SCHEMA:
+            await reply(update, text.t(lang, "admin_bad_value"))
+            return
+        value = "" if raw.strip() == "-" else raw.strip()
+        if key == "public_base_url" and value and not value.startswith(
+            ("http://", "https://")
+        ):
+            await reply(update, text.t(lang, "admin_bad_value"))
+            return
+        await svc.settings.set(key, value)
+        svc.settings.apply_to_config()
+        if key == "rate_limit_seconds":
+            svc.limiter.set_interval(svc.settings.rate_limit_seconds)
+        body = text.t(
+            lang,
+            "admin_runtime_saved",
+            label=svc.settings.label(key),
+            value=human.esc(svc.settings.masked(key)),
+        )
+        if key in RESTART_KEYS:
+            body += "\n\n" + text.t(lang, "admin_runtime_restart")
+        items = [
+            (item, svc.settings.label(item), svc.settings.masked(item))
+            for item in RUNTIME_KEYS
+        ]
+        await reply(update, body, reply_markup=kb.runtime_menu(lang, items))
+        return
+
+    if state == ST_COOKIE_ADD:
+        clear_state(context)
+        try:
+            cookie = svc.cookies.save_text(raw)
+        except CookieError as exc:
+            await reply(update, text.t(lang, "cookie_bad", reason=human.esc(str(exc)[:150])))
+            return
+        await reply(
+            update,
+            text.t(
+                lang,
+                "cookie_saved",
+                name=human.esc(cookie.name),
+                domains=human.esc(", ".join(cookie.domains[:5]) or "—"),
+            ),
+        )
+        return
+
     clear_state(context)
 
 
-async def _resolve_user(raw: str):
-    token = raw.strip().lstrip("@")
+async def _resolve_user(raw: str, context: ContextTypes.DEFAULT_TYPE | None = None, create: bool = False):
+    """کاربر را با آیدی عددی یا @یوزرنیم پیدا می‌کند.
+
+    برای بن کردن، اگر کاربر هنوز /start نزده باشد یک رکورد خالی ساخته می‌شود.
+    """
+    token = raw.strip()
     if token.lstrip("-").isdigit():
-        return await repo.get_user(int(token))
-    return await repo.find_user_by_username(token)
+        uid = int(token)
+        user = await repo.get_user(uid)
+        if user is None and create:
+            user = await repo.upsert_user(uid)
+        return user
+
+    handle = token.lstrip("@").strip()
+    if not handle:
+        return None
+    user = await repo.find_user_by_username(handle)
+    if user is not None or context is None:
+        return user
+    try:
+        chat = await context.bot.get_chat(f"@{handle}")
+    except Exception:  # noqa: BLE001 — یوزرنیم نامعتبر/خصوصی
+        return None
+    return await repo.upsert_user(
+        chat.id,
+        getattr(chat, "username", None),
+        getattr(chat, "first_name", None),
+    )
+
+
+# ── راه‌اندازی گروه با /setup ────────────────────────────────
+async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """گروه ادمین را از داخل خود گروه تنظیم می‌کند (قابل‌اعتمادترین راه)."""
+    svc = services(context)
+    lang = lang_of(context)
+    chat = update.effective_chat
+    user = update.effective_user
+    if chat is None or chat.type not in ("group", "supergroup"):
+        await reply(update, text.t(lang, "setup_not_group"))
+        return
+    if user is None:
+        return
+
+    allowed = await is_admin(svc.cfg, user.id)
+    if not allowed:
+        try:
+            member = await context.bot.get_chat_member(chat.id, user.id)
+            allowed = getattr(member, "status", "") in ("administrator", "creator")
+        except TelegramError:
+            allowed = False
+    if not allowed:
+        await reply(update, text.t(lang, "setup_need_admin"))
+        return
+
+    created = await svc.admin_group.configure(chat.id, chat.title or "")
+    body = text.t(
+        lang,
+        "setup_done",
+        downloads=created.get("downloads") or "—",
+        uploads=created.get("uploads") or "—",
+        reports=created.get("reports") or "—",
+        logs=created.get("logs") or "—",
+    )
+    await reply(update, body)
+
+
+async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """در حالت «بن کردن»، پیام فورواردشده را به کاربر اصلی تبدیل می‌کند."""
+    if get_state(context) != ST_BAN:
+        return
+    lang = lang_of(context)
+    if not await require_admin(update, context):
+        clear_state(context)
+        raise ApplicationHandlerStop
+
+    message = update.effective_message
+    origin = getattr(message, "forward_origin", None)
+    if not isinstance(origin, MessageOriginUser):
+        await reply(
+            update,
+            text.t(lang, "admin_forward_hint")
+            + "\n\n"
+            + text.t(lang, "admin_ban_prompt"),
+        )
+        raise ApplicationHandlerStop
+
+    clear_state(context)
+    await _show_user(update, context, origin.sender_user.id)
+    raise ApplicationHandlerStop
 
 
 # ── پیام همگانی ────────────────────────────────────────────

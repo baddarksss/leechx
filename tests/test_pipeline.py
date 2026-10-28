@@ -27,7 +27,7 @@ class StubUploader:
         self.results = []
         self.progress = []
 
-    async def send(self, bot, chat_id, result, progress, source_url=""):
+    async def send(self, bot, chat_id, result, progress, source_url="", **kwargs):
         self.results.append(result)
         self.progress.append(progress.uploaded)
         return SimpleNamespace(message_id=1)
@@ -108,6 +108,44 @@ async def test_direct_job_full_pipeline(db, file_server):
     assert not (store.jobs / "pipe1").exists()
     assert manager.active_count == 0
     assert manager.limiter.active_count(42) == 0
+
+
+@pytest.mark.asyncio
+async def test_link_mode_stores_shared_file_and_cleans_job_dir(db, file_server):
+    cfg = db
+    store = FileStore(cfg.files_dir, cfg.tmp_dir)
+    downloader = Downloader(cfg)
+    uploader = StubUploader()
+    settings = RuntimeSettings(cfg)
+    await settings.load()
+
+    manager = JobManager(cfg, settings, store, downloader, uploader, RateLimiter(0))
+    manager.bot = StubBot()
+
+    info = await downloader.probe(file_server)
+    task = JobTask(
+        id="pipe3",
+        user_id=43,
+        chat_id=43,
+        url=file_server,
+        option=FormatOption(kind="direct", code="direct", label="direct", selector=""),
+        title=info.title,
+        info=info,
+        lang="fa",
+        mode="link",
+    )
+
+    await manager.submit(task)
+    await manager._run(task)
+
+    assert uploader.results == []            # در حالت لینک چیزی به تلگرام آپلود نمی‌شود
+    shared = await repo.get_shared("pipe3")
+    assert shared is not None
+    assert shared.size == len(PAYLOAD)
+    assert store.link_path("pipe3", shared.name).exists()
+    assert not (store.jobs / "pipe3").exists()  # پوشهٔ کار پاک شده
+    assert manager.active_count == 0
+    assert manager.limiter.active_count(43) == 0
 
 
 @pytest.mark.asyncio

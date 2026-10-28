@@ -20,7 +20,35 @@ SCHEMA: dict[str, tuple[str, str]] = {
     "daily_quota": ("int", "سهمیهٔ روزانه (0=بی‌نهایت)"),
     "maintenance": ("bool", "حالت تعمیر"),
     "nsfw_enabled": ("bool", "سایت‌های بزرگسال"),
+    # ── مقادیر متنی که ادمین از خود ربات وارد می‌کند ──
+    "public_base_url": ("text", "آدرس عمومی لینک‌ها"),
+    "proxy": ("text", "پروکسی دانلود"),
+    "telegram_api_url": ("text", "آدرس Local Bot API"),
+    "telegram_api_file_url": ("text", "آدرس فایل Local Bot API"),
+    "telegram_api_id": ("text", "Telegram API ID"),
+    "telegram_api_hash": ("secret", "Telegram API Hash"),
+    # ── مالک و گروه ادمین (داخلی) ──
+    "owner_id": ("text", "مالک ربات"),
+    "admin_group_id": ("text", "شناسهٔ گروه ادمین"),
+    "admin_group_title": ("text", "نام گروه ادمین"),
+    "topic_downloads": ("text", "تاپیک دانلود"),
+    "topic_uploads": ("text", "تاپیک آپلود"),
+    "topic_reports": ("text", "تاپیک گزارش‌ها"),
+    "topic_logs": ("text", "تاپیک لاگ‌ها"),
 }
+
+# کلیدهایی که در پنل «متغیرهای اجرا» نمایش داده می‌شوند.
+RUNTIME_KEYS: tuple[str, ...] = (
+    "public_base_url",
+    "proxy",
+    "telegram_api_url",
+    "telegram_api_file_url",
+    "telegram_api_id",
+    "telegram_api_hash",
+)
+
+# کلیدهایی که مقدارشان نباید در پیام‌ها کامل نمایش داده شود.
+SECRET_KEYS = {"telegram_api_hash"}
 
 
 class RuntimeSettings:
@@ -44,6 +72,19 @@ class RuntimeSettings:
             "daily_quota": self.cfg.daily_quota,
             "maintenance": False,
             "nsfw_enabled": self.cfg.nsfw_enabled,
+            "public_base_url": self.cfg.public_base_url,
+            "proxy": self.cfg.proxy,
+            "telegram_api_url": self.cfg.telegram_api_url,
+            "telegram_api_file_url": self.cfg.telegram_api_file_url,
+            "telegram_api_id": self.cfg.telegram_api_id,
+            "telegram_api_hash": self.cfg.telegram_api_hash,
+            "owner_id": "",
+            "admin_group_id": "",
+            "admin_group_title": "",
+            "topic_downloads": "",
+            "topic_uploads": "",
+            "topic_reports": "",
+            "topic_logs": "",
         }.get(key)
 
     def get_float(self, key: str) -> float:
@@ -56,6 +97,42 @@ class RuntimeSettings:
         default = bool(self._default(key))
         raw = self._raw(key)
         return parse_bool(raw, default) if raw is not None else default
+
+    def get_str(self, key: str) -> str:
+        raw = self._raw(key)
+        if raw is None:
+            return str(self._default(key) or "").strip()
+        return raw.strip()
+
+    def get_optional_int(self, key: str) -> int | None:
+        raw = self.get_str(key)
+        return int(raw) if raw.lstrip("-").isdigit() else None
+
+    def masked(self, key: str) -> str:
+        """مقدار قابل‌نمایش؛ مقادیر حساس فقط «تنظیم‌شده» بودنشان مشخص می‌شود."""
+        value = self.get_str(key)
+        if not value:
+            return "—"
+        if key in SECRET_KEYS:
+            return "••••••" if value else "—"
+        return value
+
+    def runtime_snapshot(self) -> dict[str, str]:
+        return {key: self.masked(key) for key in RUNTIME_KEYS}
+
+    def apply_to_config(self) -> None:
+        """مقادیر ذخیره‌شده را روی Config زنده اعمال می‌کند.
+
+        آدرس Bot API فقط هنگام ساخت اپلیکیشن خوانده می‌شود؛ تغییرش ری‌استارت
+        لازم دارد. بقیه (آدرس عمومی/پروکسی) بلافاصله اثر می‌کنند.
+        """
+        for key in RUNTIME_KEYS:
+            raw = self._raw(key)
+            if raw is not None and hasattr(self.cfg, key):
+                setattr(self.cfg, key, raw.strip())
+        owner = self.get_str("owner_id")
+        if owner.isdigit() and not self.cfg.owners:
+            self.cfg.owner_ids = owner
 
     # ── ویژگی‌های پرکاربرد ────────────────────────────────
     @property

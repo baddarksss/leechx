@@ -23,6 +23,7 @@ from yt_dlp.utils import DownloadError, ExtractorError
 
 from app.config import Config
 from app.core import errors, human, urlcheck
+from app.services.cookies import CookieStore
 from app.services.formats import FormatOption
 
 log = logging.getLogger("leechx.downloader")
@@ -129,7 +130,7 @@ def _cookie_file(cfg: Config, url: str) -> Path | None:
     return None
 
 
-def _base_opts(cfg: Config, url: str) -> dict[str, Any]:
+def _base_opts(cfg: Config, url: str, cookie: Path | None = None) -> dict[str, Any]:
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
@@ -145,7 +146,7 @@ def _base_opts(cfg: Config, url: str) -> dict[str, Any]:
         "overwrites": True,
         "trim_file_name": 120,
     }
-    cookie = _cookie_file(cfg, url)
+    cookie = cookie or _cookie_file(cfg, url)
     if cookie:
         opts["cookiefile"] = str(cookie)
     if cfg.proxy.strip():
@@ -229,8 +230,17 @@ async def fetch_thumbnail(url: str | None, dest: Path, proxy: str = "") -> Path 
 #  دانلودر
 # ─────────────────────────────────────────────────────────────
 class Downloader:
-    def __init__(self, cfg: Config) -> None:
+    def __init__(self, cfg: Config, cookies: CookieStore | None = None) -> None:
         self.cfg = cfg
+        self.cookies = cookies
+
+    def cookie_for(self, url: str) -> Path | None:
+        """فایل کوکی مناسب این لینک (اگر ادمین آپلود کرده باشد)."""
+        if self.cookies is not None:
+            found = self.cookies.find_for_url(url)
+            if found is not None:
+                return found
+        return _cookie_file(self.cfg, url)
 
     # ── بررسی لینک ──────────────────────────────────────────
     async def probe(self, url: str, depth: int = 0) -> MediaInfo:
@@ -253,7 +263,7 @@ class Downloader:
             raise map_error(exc) from exc
 
     def _probe_blocking(self, url: str) -> MediaInfo:
-        opts = _base_opts(self.cfg, url)
+        opts = _base_opts(self.cfg, url, self.cookie_for(url))
         opts.update({"skip_download": True, "extract_flat": False})
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -381,7 +391,7 @@ class Downloader:
                 if filename:
                     finished.append(filename)
 
-        opts = _base_opts(self.cfg, url)
+        opts = _base_opts(self.cfg, url, self.cookie_for(url))
         opts.update(
             {
                 "format": option.selector,

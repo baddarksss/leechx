@@ -66,6 +66,8 @@ class Config(BaseSettings):
     cookies_dir: Path = BASE_DIR / "data" / "cookies"
     telegram_api_url: str = ""
     telegram_api_file_url: str = ""
+    telegram_api_id: str = ""
+    telegram_api_hash: str = ""
 
     # ── رفتار ───────────────────────────────────────────────
     default_lang: str = "fa"
@@ -146,8 +148,7 @@ class Config(BaseSettings):
             problems.append("BOT_TOKEN خالی است.")
         elif ":" not in token or len(token) < 20:
             problems.append("BOT_TOKEN شکل درستی ندارد (باید شبیه 123456:ABC-DEF... باشد).")
-        if not self.owners:
-            problems.append("OWNER_IDS خالی است؛ بدون آن هیچ‌کس به پنل ادمین دسترسی ندارد.")
+        # OWNER_IDS اجباری نیست: اولین /start مالک را تعیین می‌کند.
         if self.workers < 1:
             problems.append("WORKERS باید حداقل ۱ باشد.")
         if self.per_user_concurrency < 1:

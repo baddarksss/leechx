@@ -13,6 +13,8 @@ from pathlib import Path
 
 from app.config import Config
 from app.db import repo
+from app.services.admin_group import AdminGroup
+from app.services.cookies import CookieStore
 from app.services.downloader import Downloader
 from app.services.drafts import DraftStore
 from app.services.filestore import FileStore
@@ -36,6 +38,8 @@ class Services:
     limiter: RateLimiter
     jobs: JobManager
     server: LinkServer
+    cookies: CookieStore
+    admin_group: AdminGroup
     drafts: DraftStore = field(default_factory=DraftStore)
     sites: object = sites
     started_at: float = field(default_factory=time.time)
@@ -45,10 +49,14 @@ class Services:
     def create(cls, cfg: Config) -> Services:
         settings = RuntimeSettings(cfg)
         store = FileStore(cfg.files_dir, cfg.tmp_dir)
-        downloader = Downloader(cfg)
+        cookies = CookieStore(cfg.cookies_dir)
+        downloader = Downloader(cfg, cookies)
         uploader = Uploader(cfg, settings)
         limiter = RateLimiter(cfg.rate_limit_seconds)
-        jobs = JobManager(cfg, settings, store, downloader, uploader, limiter)
+        admin_group = AdminGroup(cfg, settings)
+        jobs = JobManager(
+            cfg, settings, store, downloader, uploader, limiter, hub=admin_group
+        )
         server = LinkServer(cfg, settings, store)
         return cls(
             cfg=cfg,
@@ -59,6 +67,8 @@ class Services:
             limiter=limiter,
             jobs=jobs,
             server=server,
+            cookies=cookies,
+            admin_group=admin_group,
         )
 
     @property
@@ -67,6 +77,8 @@ class Services:
 
     async def setup(self, bot) -> None:
         await self.settings.load()
+        self.settings.apply_to_config()
+        self.admin_group.attach(bot)
         self.limiter.set_interval(self.settings.rate_limit_seconds)
         await asyncio.to_thread(self.sites.build)
         await self.server.start()

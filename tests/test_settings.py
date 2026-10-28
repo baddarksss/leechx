@@ -60,3 +60,63 @@ async def test_snapshot(db):
         "maintenance",
         "nsfw_enabled",
     }
+
+
+@pytest.mark.asyncio
+async def test_runtime_values_and_masking(db):
+    settings = RuntimeSettings(db)
+    await settings.load()
+
+    assert settings.get_str("telegram_api_url") == ""
+    assert settings.get_optional_int("admin_group_id") is None
+    assert settings.masked("telegram_api_hash") == "—"
+
+    await settings.set("telegram_api_url", "http://127.0.0.1:8081")
+    await settings.set("telegram_api_hash", "secret-hash")
+    await settings.set("admin_group_id", "-1001234567890")
+    await settings.set("public_base_url", "https://files.example.com")
+
+    assert settings.masked("telegram_api_hash") == "••••••"
+    assert settings.get_optional_int("admin_group_id") == -1001234567890
+
+    settings.apply_to_config()
+    assert db.telegram_api_url == "http://127.0.0.1:8081"
+    assert db.telegram_api_hash == "secret-hash"
+    assert db.public_base_url == "https://files.example.com"
+
+
+@pytest.mark.asyncio
+async def test_owner_from_settings_applies_only_without_env_owner(db, monkeypatch):
+    monkeypatch.setenv("OWNER_IDS", "")
+    db.owner_ids = ""
+    settings = RuntimeSettings(db)
+    await settings.load()
+    await settings.set("owner_id", "42")
+    settings.apply_to_config()
+    assert db.owners == [42]
+
+    db.owner_ids = "7"
+    settings.apply_to_config()
+    assert db.owners == [7]
+
+
+@pytest.mark.asyncio
+async def test_admin_group_configure_without_bot(db):
+    from app.services.admin_group import AdminGroup
+
+    settings = RuntimeSettings(db)
+    await settings.load()
+    hub = AdminGroup(db, settings)
+
+    assert hub.configured is False
+    created = await hub.configure(123, "Team")
+    assert set(created) == {"downloads", "uploads", "reports", "logs"}
+    assert all(value is None for value in created.values())
+    assert hub.configured is True
+    assert hub.chat_id == 123
+    assert hub.title == "Team"
+    assert await hub.send("logs", "hello") is False
+
+    await hub.disable()
+    assert hub.configured is False
+    assert hub.title == ""

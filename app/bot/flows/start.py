@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes
 from app.bot import keyboards as kb
 from app.bot.common import edit, fmt_ts, lang_of, reply, safe_answer, services
 from app.bot.guards import is_admin
-from app.bot.states import clear_state
+from app.bot.states import ST_CONTACT, clear_state, set_state
 from app.core import human, text
 from app.db import repo
 
@@ -20,7 +20,20 @@ log = logging.getLogger("leechx.start")
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
     lang = lang_of(context)
-    admin = await is_admin(svc.cfg, update.effective_user.id)
+    user = update.effective_user
+
+    # اولین کاربری که /start بزند مالک ربات می‌شود (مگر اینکه OWNER_IDS در env ست شده باشد).
+    if not svc.cfg.owners:
+        try:
+            owner_id, claimed = await repo.claim_owner(user.id)
+            if claimed:
+                await svc.settings.set("owner_id", str(owner_id))
+                svc.settings.apply_to_config()
+                await reply(update, text.t(lang, "owner_claimed"))
+        except Exception:  # noqa: BLE001 — دیتابیس نباید /start را بشکند
+            log.exception("owner claim failed")
+
+    admin = await is_admin(svc.cfg, user.id)
     body = text.t(lang, "start", ttl=_fmt_hours(svc.settings.ttl_hours))
     await reply(update, body, reply_markup=kb.main_menu(lang, admin))
 
@@ -109,6 +122,40 @@ async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await reply(update, "🌍", reply_markup=kb.Kb(rows))
 
 
+async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """پیام کاربر در حالت «ارتباط با ادمین» را ذخیره و به گروه ادمین می‌فرستد."""
+    svc = services(context)
+    lang = lang_of(context)
+    user = update.effective_user
+    message = update.effective_message
+    raw = (message.text or "").strip() if message else ""
+    clear_state(context)
+    if not raw:
+        await reply(update, text.t(lang, "contact_prompt"))
+        return
+
+    try:
+        report = await repo.add_report(
+            "contact",
+            user.id,
+            username=user.username,
+            first_name=user.first_name,
+            text=raw[:4000],
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("could not store contact message")
+        await reply(update, text.t(lang, "contact_failed"))
+        return
+
+    hub = getattr(svc, "admin_group", None)
+    if hub is not None:
+        try:
+            await hub.notify_report(report)
+        except Exception:  # noqa: BLE001
+            log.exception("could not forward contact message")
+    await reply(update, text.t(lang, "contact_sent"))
+
+
 # ── callbackهای منو ────────────────────────────────────────
 async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str) -> None:
     query = update.callback_query
@@ -184,6 +231,15 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
             query.message,
             f"<b>{text.t(lang, 'btn_settings')}</b>",
             reply_markup=kb.Kb(rows),
+        )
+        return
+
+    if action == "contact":
+        set_state(context, ST_CONTACT)
+        await edit(
+            query.message,
+            text.t(lang, "contact_prompt"),
+            reply_markup=kb.back_home(lang),
         )
         return
 

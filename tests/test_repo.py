@@ -119,6 +119,63 @@ async def test_events(db):
 
 
 @pytest.mark.asyncio
+async def test_logs_and_reports(db):
+    await repo.add_log("error", "job", "boom", 5)
+    await repo.add_log("WARNING", "report", "weird site")
+    logs = await repo.recent_logs(10)
+    assert len(logs) == 2
+    assert {row.level for row in logs} == {"ERROR", "WARNING"}
+    assert {row.source for row in logs} == {"job", "report"}
+
+    report = await repo.add_report(
+        "unsupported", 5, username="u", first_name="U", text="bad url", url="https://x/a"
+    )
+    assert report.status == "open"
+    assert await repo.count_open_reports() == 1
+    opened = await repo.recent_reports()
+    assert len(opened) == 1 and opened[0].url == "https://x/a"
+
+    assert await repo.set_report_status(report.id) is True
+    assert await repo.set_report_status(99999) is False
+    assert await repo.count_open_reports() == 0
+    assert len(await repo.recent_reports()) == 0
+    assert len(await repo.recent_reports(status=None)) == 1
+
+    assert await repo.clear_logs() == 2
+    assert await repo.recent_logs() == []
+
+
+@pytest.mark.asyncio
+async def test_stats_helpers(db):
+    await repo.upsert_user(1, "a", "A")
+    await repo.upsert_user(2, "b", "B")
+    await repo.set_banned(2, True)
+    assert await repo.count_users() == 2
+    assert await repo.count_banned_users() == 1
+    assert await repo.count_active_users(7) == 2
+
+    await repo.create_shared("s1", 1, "/tmp/a", "a", "video/mp4", 10, 3600)
+    await repo.create_shared("s2", 1, "/tmp/b", "b", "video/mp4", 10, -1)
+    assert await repo.count_active_shared() == 1
+
+    await repo.create_job("j1", 1, 1, "https://x/a")
+    await repo.create_job("j2", 2, 2, "https://x/b")
+    await repo.update_job("j2", status="running")
+    await repo.create_job("j3", 1, 1, "https://x/c")
+    await repo.update_job("j3", status="done")
+    assert await repo.count_active_job_users() == 2
+
+
+@pytest.mark.asyncio
+async def test_claim_owner_is_first_come(db):
+    owner, claimed = await repo.claim_owner(10)
+    assert owner == 10 and claimed is True
+    owner, claimed = await repo.claim_owner(20)
+    assert owner == 10 and claimed is False
+    assert await repo.get_setting("owner_id") == "10"
+
+
+@pytest.mark.asyncio
 async def test_user_events_since_is_per_user(db):
     await repo.log_event(1, "download_done", 2)
     await repo.log_event(1, "download_done", 3)

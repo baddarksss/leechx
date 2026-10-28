@@ -118,8 +118,12 @@ def build_app(cfg: Config) -> Application:
     app.add_handler(CommandHandler("lang", start_flow.cmd_lang))
     app.add_handler(CommandHandler("cancel", start_flow.cmd_cancel))
     app.add_handler(CommandHandler("admin", admin_flow.cmd_admin))
+    app.add_handler(CommandHandler("setup", admin_flow.cmd_setup))
 
     app.add_handler(CallbackQueryHandler(callbacks_flow.on_callback))
+    app.add_handler(
+        MessageHandler(filters.FORWARDED & ~filters.COMMAND, admin_flow.handle_forwarded)
+    )
     app.add_handler(MessageHandler(filters.ATTACHMENT, files_flow.handle_file))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router.on_text))
 

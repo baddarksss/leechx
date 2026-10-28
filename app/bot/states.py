@@ -7,6 +7,23 @@ ST_BROADCAST = "broadcast"
 ST_ADD_ADMIN = "add_admin"
 ST_SET_VALUE = "set_value"
 ST_LOOKUP_USER = "lookup_user"
+ST_COOKIE_ADD = "cookie_add"
+ST_RENAME = "rename"
+ST_GROUP_ID = "group_id"
+ST_BAN = "ban"
+ST_RUNTIME_VALUE = "runtime_value"
+ST_CONTACT = "contact"
+
+ADMIN_STATES = {
+    ST_BROADCAST,
+    ST_ADD_ADMIN,
+    ST_SET_VALUE,
+    ST_LOOKUP_USER,
+    ST_COOKIE_ADD,
+    ST_GROUP_ID,
+    ST_BAN,
+    ST_RUNTIME_VALUE,
+}
 
 
 def set_state(context: ContextTypes.DEFAULT_TYPE, state: str, **data) -> None:

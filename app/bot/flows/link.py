@@ -1,21 +1,38 @@
-"""جریان «لینک → انتخاب کیفیت → آپلود»."""
+"""جریان «لینک → کیفیت → نحوهٔ تحویل → دانلود/آپلود».
+
+مسیر کاربر:
+1. لینک می‌فرستد.
+2. اگر چند کیفیت دارد، کیفیت را انتخاب می‌کند (لینک مستقیم این مرحله را ندارد).
+3. صفحهٔ «نحوهٔ تحویل» می‌آید: ویدیو / فایل / لینک مستقیم / تغییر نام.
+4. فقط بعد از انتخاب، کار در صف قرار می‌گیرد.
+"""
 from __future__ import annotations
 
 import logging
 import secrets
 import time
+from pathlib import Path
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.bot import keyboards as kb
 from app.bot.common import edit, lang_of, reply, services
+from app.bot.states import ST_RENAME, clear_state, get_data, set_state
 from app.core import errors, human, text
 from app.db import repo
 from app.services.drafts import Draft
 from app.services.formats import FormatOption, all_options
 
 log = logging.getLogger("leechx.link")
+
+# پسوندهایی که اگر انتهای عنوان بودند، با پسوند کیفیت انتخاب‌شده جایگزین می‌شوند
+_MEDIA_SUFFIXES = {
+    ".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".3gp", ".ts",
+    ".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".opus",
+    ".jpg", ".jpeg", ".png", ".webp", ".gif",
+    ".pdf", ".zip", ".rar", ".7z", ".apk",
+}
 
 
 def new_job_id() -> str:
@@ -31,10 +48,85 @@ async def _quota_left(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     return used < quota
 
 
+REPORTABLE = {"unsupported", "live_unsupported"}
+
+
 def error_text(lang: str, exc: errors.LeechError) -> str:
     kwargs = dict(exc.extra)
     kwargs.setdefault("reason", human.esc(exc.reason or "?"))
     return text.t(lang, exc.key, **kwargs)
+
+
+async def _report_issue(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    url: str,
+    reason: str,
+) -> None:
+    """مشکل را به ادمین می‌فرستد؛ اگر گروه تنظیم نشده باشد فقط لاگ می‌شود."""
+    svc = services(context)
+    hub = getattr(svc, "admin_group", None)
+    user = update.effective_user
+    if hub is None or user is None:
+        return
+    try:
+        await hub.report_issue(
+            user.id,
+            user.username,
+            user.first_name,
+            url,
+            reason,
+        )
+    except Exception:  # noqa: BLE001 — گزارش نباید تجربهٔ کاربر را خراب کند
+        log.exception("could not report issue")
+
+
+def draft_extension(draft: Draft) -> str:
+    if draft.option is not None and draft.option.ext:
+        return "." + draft.option.ext.lstrip(".").lower()
+    return ""
+
+
+def draft_name(draft: Draft) -> str:
+    """نام نمایشی فایل؛ تغییر نام کاربر هم لحاظ می‌شود."""
+    ext = draft_extension(draft)
+    base = human.safe_filename(draft.custom_name or draft.title, 150)
+    suffix = Path(base).suffix.lower()
+    if suffix and suffix in _MEDIA_SUFFIXES:
+        if not ext or suffix == ext:
+            return base
+        base = base[: -len(suffix)].rstrip(" .") or "file"
+    if ext and not base.lower().endswith(ext):
+        base = f"{base}{ext}"
+    return base
+
+
+def delivery_text(lang: str, draft: Draft) -> str:
+    size = draft.option.filesize if draft.option is not None else None
+    return text.t(
+        lang,
+        "delivery_panel",
+        title=human.esc(draft.title),
+        quality=human.esc(draft.option.label if draft.option is not None else "—"),
+        size=human.human_bytes(size) if size else "—",
+        name=human.esc(draft_name(draft)),
+    )
+
+
+def quality_text(lang: str, draft: Draft, note: str = "") -> str:
+    lines = [f"<b>{human.esc(draft.title)}</b>"]
+    meta = []
+    if draft.duration:
+        meta.append(f"⏱ {human.human_duration(draft.duration)}")
+    if draft.uploader:
+        meta.append(f"👤 {human.esc(draft.uploader)}")
+    if meta:
+        lines.append(" • ".join(meta))
+    if note:
+        lines.append(note)
+    lines.append("")
+    lines.append(text.t(lang, "choose_quality", title="").replace("<b></b>", "").strip())
+    return "\n".join(lines)
 
 
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str) -> None:
@@ -66,14 +158,24 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
     try:
         info = await svc.downloader.probe(url)
     except errors.LeechError as exc:
-        await edit(status, error_text(lang, exc))
+        body = error_text(lang, exc)
+        if exc.key in REPORTABLE:
+            body += "\n\n" + text.t(lang, "issue_reported")
+            await _report_issue(update, context, url, f"{exc.key}: {exc.reason}")
+        await edit(status, body)
         return
     except Exception as exc:  # noqa: BLE001
         log.exception("probe crashed")
-        await edit(status, text.t(lang, "failed", reason=human.esc(str(exc)[:150])))
+        await edit(
+            status,
+            text.t(lang, "failed", reason=human.esc(str(exc)[:150]))
+            + "\n\n"
+            + text.t(lang, "issue_reported"),
+        )
+        await _report_issue(update, context, url, f"probe crashed: {exc}")
         return
 
-    # ── لینک مستقیم: بدون انتخاب کیفیت ──────────────────────
+    # ── لینک مستقیم: بدون انتخاب کیفیت، مستقیم به صفحهٔ تحویل ──
     if info.direct:
         option = FormatOption(
             kind="direct",
@@ -83,7 +185,23 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
             ext=info.ext,
             filesize=info.filesize,
         )
-        await _enqueue(context, status, url, info, option, lang, user.id, kind="direct")
+        draft = Draft(
+            id=svc.drafts.new_id(),
+            user_id=user.id,
+            chat_id=update.effective_chat.id,
+            url=info.url,
+            title=info.title,
+            options=[option],
+            option=option,
+            duration=info.duration,
+            thumbnail=info.thumbnail,
+            uploader=info.uploader,
+            extractor=info.extractor,
+            kind="direct",
+            lang=lang,
+        )
+        svc.drafts.put(draft)
+        await edit(status, delivery_text(lang, draft), reply_markup=kb.delivery_menu(lang, draft))
         return
 
     # ── صفحهٔ انتخاب کیفیت ──────────────────────────────────
@@ -104,46 +222,95 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
     )
     svc.drafts.put(draft)
 
-    lines = [f"<b>{human.esc(info.title)}</b>"]
-    meta = []
-    if info.duration:
-        meta.append(f"⏱ {human.human_duration(info.duration)}")
-    if info.uploader:
-        meta.append(f"👤 {human.esc(info.uploader)}")
-    if meta:
-        lines.append(" • ".join(meta))
-    if info.playlist:
-        lines.append(text.t(lang, "playlist_detected"))
-    lines.append("")
-    lines.append(text.t(lang, "choose_quality", title="").strip())
-
-    await edit(status, "\n".join(lines), reply_markup=kb.quality_menu(lang, draft))
+    note = text.t(lang, "playlist_detected") if info.playlist else ""
+    await edit(status, quality_text(lang, draft, note), reply_markup=kb.quality_menu(lang, draft))
 
 
-async def _enqueue(
+async def start_rename(update: Update, context: ContextTypes.DEFAULT_TYPE, draft: Draft) -> None:
+    """حالت انتظار برای نام جدید؛ پیام راهنما را ویرایش می‌کند."""
+    lang = lang_of(context)
+    set_state(context, ST_RENAME, draft_id=draft.id)
+    query = update.callback_query
+    body = text.t(lang, "rename_prompt", name=human.esc(draft_name(draft)))
+    if query is not None:
+        await edit(query.message, body)
+    else:
+        await reply(update, body)
+
+
+async def handle_rename(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """متن ارسالی کاربر در حالت تغییر نام."""
+    svc = services(context)
+    lang = lang_of(context)
+    message = update.effective_message
+    raw = (message.text or "").strip() if message else ""
+    draft_id = get_data(context).get("draft_id", "")
+    draft = svc.drafts.get(draft_id, update.effective_user.id)
+    clear_state(context)
+
+    if draft is None:
+        await reply(update, text.t(lang, "expired_draft"))
+        return
+    if not raw:
+        await reply(update, text.t(lang, "rename_bad"))
+        return
+
+    name = human.safe_filename(raw, 150)
+    if not name or name == "file":
+        await reply(update, text.t(lang, "rename_bad"))
+        return
+
+    draft.custom_name = name
+    await reply(
+        update,
+        text.t(lang, "rename_done", name=human.esc(draft_name(draft)))
+        + "\n\n"
+        + delivery_text(lang, draft),
+        reply_markup=kb.delivery_menu(lang, draft),
+    )
+
+
+async def enqueue(
     context: ContextTypes.DEFAULT_TYPE,
     status,
-    url: str,
-    info,
-    option: FormatOption,
-    lang: str,
-    user_id: int,
-    kind: str = "link",
+    draft: Draft,
+    mode: str,
+    lang: str | None = None,
 ) -> None:
+    """ساخت کار با کیفیت/نام انتخاب‌شده و گذاشتن در صف."""
+    from app.services.downloader import MediaInfo
     from app.services.jobs import JobTask
 
     svc = services(context)
+    lang = lang or draft.lang or "fa"
+    option = draft.option
+    if option is None:
+        return
+
+    info = MediaInfo(
+        url=draft.url,
+        title=draft.title,
+        duration=draft.duration,
+        uploader=draft.uploader,
+        thumbnail=draft.thumbnail,
+        extractor=draft.extractor,
+        direct=option.kind == "direct",
+        ext=option.ext,
+        filesize=option.filesize,
+    )
     task = JobTask(
         id=new_job_id(),
-        user_id=user_id,
+        user_id=draft.user_id,
         chat_id=status.chat_id,
-        url=url,
+        url=draft.url,
         option=option,
-        title=info.title,
+        title=draft.title,
         status_message_id=status.message_id,
         info=info,
         lang=lang,
-        kind=kind,
+        kind=draft.kind,
+        mode=mode,
+        custom_name=draft.custom_name,
     )
     position = await svc.jobs.submit(task)
     await edit(
@@ -151,3 +318,7 @@ async def _enqueue(
         text.t(lang, "queued", pos=position),
         reply_markup=kb.cancel_job(lang, task.id),
     )
+
+
+# نام قبلی برای سازگاری با تست‌ها و کدهای قدیمی
+_enqueue = enqueue

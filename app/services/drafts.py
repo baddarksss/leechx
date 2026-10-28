@@ -31,6 +31,8 @@ class Draft:
     extractor: str = ""
     kind: str = "link"
     lang: str = "fa"
+    option: FormatOption | None = None
+    custom_name: str = ""
     created_at: float = field(default_factory=time.time)
 
 

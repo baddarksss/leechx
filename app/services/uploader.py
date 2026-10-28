@@ -3,11 +3,17 @@
 ``ProgressReader`` یک فایل را می‌پیچد و هر بار که PTB/httpx از آن می‌خواند
 شمارنده را به‌روز می‌کند؛ به این ترتیب بدون تغییر در کتابخانه، درصد آپلود
 واقعی داریم.
+
+سه حالت تحویل پشتیبانی می‌شود (انتخاب با کاربر است):
+* ``video``  → ``send_video`` / ``send_audio`` / ``send_photo``
+* ``document`` → ``send_document`` (فایل خام، بدون پیش‌نمایش)
+* ``link``   → در ``JobManager`` به لینک مستقیم تبدیل می‌شود (اینجا نیست)
 """
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import BinaryIO
 
 from telegram import InputFile, Message
@@ -15,6 +21,7 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
 from app.config import Config
+from app.core import caption as caption_mod
 from app.core import errors, human
 from app.services.downloader import DownloadResult, Progress
 from app.services.runtime_settings import RuntimeSettings
@@ -22,6 +29,9 @@ from app.services.runtime_settings import RuntimeSettings
 log = logging.getLogger("leechx.uploader")
 
 BOT_API_LIMIT = 50 * 1024 * 1024  # سقف آپلود Bot API بدون سرور محلی
+
+# فرمت‌هایی که تلگرام به‌عنوان ویدیو قابل پخش می‌داند
+PLAYABLE_VIDEO_EXT = {".mp4", ".m4v", ".mov"}
 
 
 class ProgressReader:
@@ -57,11 +67,14 @@ class ProgressReader:
         return False
 
 
-def _caption(title: str, extra: str = "") -> str:
-    text = human.esc(title)
-    if extra:
-        text += f"\n<code>{human.esc(extra)}</code>"
-    return text[:1000]
+def media_kind(result: DownloadResult) -> str:
+    if result.is_audio or result.mime.startswith("audio/"):
+        return "audio"
+    if result.mime.startswith("image/"):
+        return "image"
+    if result.mime.startswith("video/"):
+        return "video"
+    return "document"
 
 
 class Uploader:
@@ -91,6 +104,10 @@ class Uploader:
         result: DownloadResult,
         progress: Progress,
         source_url: str = "",
+        *,
+        as_document: bool = False,
+        filename: str | None = None,
+        caption_title: str | None = None,
     ) -> Message:
         self._check_size(result.size)
         progress.stage = "uploading"
@@ -98,60 +115,85 @@ class Uploader:
         progress.uploaded = 0
         progress.total = result.size
 
-        def on_read(n: int) -> None:
-            progress.uploaded += n
-            if progress.total:
-                progress.pct = min(99.9, progress.uploaded * 100.0 / progress.total)
+        kind = media_kind(result)
+        display_name = human.safe_filename(
+            filename or result.path.name,
+            150,
+        )
+        title = caption_title or result.title or Path(display_name).stem
+        caption = caption_mod.build_caption(title, source_url, kind)
+        common = {"caption": caption, "parse_mode": ParseMode.HTML}
 
-        thumb_path = result.thumbnail
-        caption = _caption(result.title, source_url)
-        fh = result.path.open("rb")
-        reader = ProgressReader(fh, on_read)
-        filename = result.path.name
-        input_file = InputFile(reader, filename=filename)
-
+        opened: list[BinaryIO] = []
         thumb_handle = None
         thumb_file = None
+
+        def open_media() -> InputFile:
+            fh = result.path.open("rb")
+            opened.append(fh)
+
+            def on_read(n: int) -> None:
+                progress.uploaded += n
+                if progress.total:
+                    progress.pct = min(99.9, progress.uploaded * 100.0 / progress.total)
+
+            return InputFile(ProgressReader(fh, on_read), filename=display_name)
+
+        def reset() -> None:
+            progress.pct = 0.0
+            progress.uploaded = 0
+
         try:
-            if thumb_path and thumb_path.exists():
-                thumb_handle = thumb_path.open("rb")
+            if result.thumbnail and result.thumbnail.exists():
+                thumb_handle = result.thumbnail.open("rb")
                 thumb_file = InputFile(thumb_handle, filename="thumb.jpg")
 
-            common = {"caption": caption, "parse_mode": ParseMode.HTML}
-
-            if result.is_audio or result.mime.startswith("audio/"):
+            if not as_document and kind == "audio":
                 return await bot.send_audio(
                     chat_id=chat_id,
-                    audio=input_file,
-                    title=result.title[:64],
+                    audio=open_media(),
+                    title=title[:64],
                     duration=result.duration or 0,
-                    filename=filename,
+                    filename=display_name,
+                    thumbnail=thumb_file,
                     **common,
                 )
 
-            if result.mime.startswith("image/"):
-                return await bot.send_photo(chat_id=chat_id, photo=input_file, **common)
+            if not as_document and kind == "image":
+                return await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=open_media(),
+                    **common,
+                )
 
-            if result.mime.startswith("video/"):
+            if not as_document and kind == "video" and result.suffix in PLAYABLE_VIDEO_EXT:
                 extra = {}
                 if result.width and result.height:
                     extra["width"] = result.width
                     extra["height"] = result.height
-                return await bot.send_video(
-                    chat_id=chat_id,
-                    video=input_file,
-                    duration=result.duration or 0,
-                    supports_streaming=True,
-                    thumbnail=thumb_file,
-                    filename=filename,
-                    **extra,
-                    **common,
-                )
+                try:
+                    return await bot.send_video(
+                        chat_id=chat_id,
+                        video=open_media(),
+                        duration=result.duration or 0,
+                        supports_streaming=True,
+                        thumbnail=thumb_file,
+                        filename=display_name,
+                        **extra,
+                        **common,
+                    )
+                except TelegramError as exc:
+                    # بعضی کدک‌ها را تلگرام به‌عنوان ویدیو قبول نمی‌کند؛
+                    # همان فایل را به‌صورت document می‌فرستیم تا کار شکست نخورد.
+                    if "too big" in str(exc).lower():
+                        raise
+                    log.info("video upload rejected (%s); retrying as document", exc)
+                    reset()
 
             return await bot.send_document(
                 chat_id=chat_id,
-                document=input_file,
-                filename=filename,
+                document=open_media(),
+                filename=display_name,
                 thumbnail=thumb_file,
                 **common,
             )
@@ -165,12 +207,10 @@ class Uploader:
                 ) from exc
             raise
         finally:
-            try:
-                fh.close()
-            except OSError:
-                pass
-            if thumb_handle is not None:
+            for handle in [*opened, thumb_handle]:
+                if handle is None:
+                    continue
                 try:
-                    thumb_handle.close()
+                    handle.close()
                 except OSError:
                     pass

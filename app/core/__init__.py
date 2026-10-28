@@ -1,3 +1,3 @@
-from app.core import errors, human, text, urlcheck
+from app.core import caption, errors, human, text, urlcheck
 
-__all__ = ["errors", "human", "text", "urlcheck"]
+__all__ = ["caption", "errors", "human", "text", "urlcheck"]

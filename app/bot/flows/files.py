@@ -13,9 +13,11 @@ from telegram.ext import ContextTypes
 
 from app.bot import keyboards as kb
 from app.bot.common import edit, lang_of, reply, services
-from app.bot.states import get_state
+from app.bot.guards import require_admin
+from app.bot.states import ST_COOKIE_ADD, clear_state, get_state
 from app.core import human, text
 from app.db import repo
+from app.services.cookies import MAX_COOKIE_BYTES, CookieError
 from app.services.linktoken import make_token
 
 log = logging.getLogger("leechx.files")
@@ -28,6 +30,60 @@ def _attachment(message):
     return att
 
 
+async def _handle_cookie_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """فایل ``cookies.txt`` ارسالی ادمین را ذخیره می‌کند."""
+    svc = services(context)
+    lang = lang_of(context)
+    if not await require_admin(update, context):
+        clear_state(context)
+        return
+
+    att = _attachment(update.effective_message)
+    if att is None:
+        return
+
+    size = int(getattr(att, "file_size", 0) or 0)
+    if size > MAX_COOKIE_BYTES:
+        await reply(
+            update,
+            text.t(
+                lang,
+                "cookie_bad",
+                reason=human.esc(f"file is too large ({size} bytes)"),
+            ),
+        )
+        return
+
+    try:
+        tg_file = await att.get_file()
+        data = bytes(await tg_file.download_as_bytearray())
+    except Exception as exc:  # noqa: BLE001 — خطای شبکه/تلگرام
+        log.warning("cookie file download failed: %s", exc)
+        await reply(update, text.t(lang, "cookie_bad", reason=human.esc(str(exc)[:150])))
+        return
+
+    if len(data) > MAX_COOKIE_BYTES:
+        await reply(update, text.t(lang, "cookie_bad", reason=human.esc("file is too large")))
+        return
+
+    try:
+        cookie = svc.cookies.save_text(data)
+    except CookieError as exc:
+        await reply(update, text.t(lang, "cookie_bad", reason=human.esc(str(exc)[:150])))
+        return
+
+    clear_state(context)
+    await reply(
+        update,
+        text.t(
+            lang,
+            "cookie_saved",
+            name=human.esc(cookie.name),
+            domains=human.esc(", ".join(cookie.domains[:5]) or "—"),
+        ),
+    )
+
+
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
     lang = lang_of(context)
@@ -36,7 +92,11 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if message is None:
         return
 
-    if get_state(context):
+    state = get_state(context)
+    if state == ST_COOKIE_ADD:
+        await _handle_cookie_upload(update, context)
+        return
+    if state:
         await reply(update, text.t(lang, "state_text_only"))
         return
 
@@ -110,6 +170,14 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     await repo.create_shared(file_id, user.id, str(dest), name, mime, real_size, ttl)
     await repo.log_event(user.id, "link_created", real_size)
+    if getattr(svc, "admin_group", None) is not None:
+        await svc.admin_group.notify_file_upload(
+            user.id,
+            user.username,
+            user.first_name,
+            name,
+            real_size,
+        )
 
     token = make_token(file_id, svc.cfg.link_secret, ttl, user_id=user.id)
     url = f"{svc.cfg.public_base_url.rstrip('/')}/f/{token}"

@@ -14,6 +14,23 @@ log = logging.getLogger("leechx.errors")
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.exception("unhandled error", exc_info=context.error)
+    user_id = None
+    if isinstance(update, Update) and update.effective_user is not None:
+        user_id = update.effective_user.id
+
+    services = context.bot_data.get("services")
+    hub = getattr(services, "admin_group", None) if services is not None else None
+    if hub is not None:
+        try:
+            await hub.record_log(
+                "ERROR",
+                "handler",
+                f"{type(context.error).__name__}: {context.error}"[:2000],
+                user_id,
+            )
+        except Exception:  # noqa: BLE001 — ثبت خطا نباید خطای دیگری بسازد
+            log.debug("could not record handler error", exc_info=True)
+
     if not isinstance(update, Update) or update.effective_message is None:
         return
     try:

@@ -92,3 +92,33 @@ class StatEvent(Base):
     kind: Mapped[str] = mapped_column(String(32), index=True)
     value: Mapped[float] = mapped_column(Float, default=1.0)
     created_at: Mapped[int] = mapped_column(Integer, default=now, index=True)
+
+
+class LogEntry(Base):
+    """خطای/رویداد مهم برای بخش «لاگ‌ها» و تاپیک لاگ گروه ادمین."""
+
+    __tablename__ = "bot_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    level: Mapped[str] = mapped_column(String(16), index=True, default="ERROR")
+    source: Mapped[str] = mapped_column(String(64), default="bot")
+    message: Mapped[str] = mapped_column(Text, default="")
+    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    created_at: Mapped[int] = mapped_column(Integer, default=now, index=True)
+
+
+class Report(Base):
+    """گزارش کاربر: سایت پشتیبانی‌نشده یا پیام به ادمین."""
+
+    __tablename__ = "reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(16), index=True, default="unsupported")
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    text: Mapped[str] = mapped_column(Text, default="")
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    created_at: Mapped[int] = mapped_column(Integer, default=now, index=True)
+

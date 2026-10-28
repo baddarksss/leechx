@@ -5,9 +5,10 @@ import time
 from collections.abc import Sequence
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 
 from app.db.base import session
-from app.db.models import Admin, Job, Setting, SharedFile, StatEvent, User
+from app.db.models import Admin, Job, LogEntry, Report, Setting, SharedFile, StatEvent, User
 
 
 # ── کاربران ────────────────────────────────────────────────
@@ -332,3 +333,183 @@ async def purge_events(older_than_days: int = 90) -> int:
         res = await s.execute(delete(StatEvent).where(StatEvent.created_at < cutoff))
         await s.commit()
         return int(res.rowcount or 0)
+
+
+async def count_active_users(days: int = 7) -> int:
+    """کاربرانی که در بازهٔ اخیر حداقل یک‌بار ربات را باز کرده‌اند."""
+    cutoff = int(time.time()) - max(1, days) * 86400
+    async with session() as s:
+        return int(
+            (
+                await s.scalar(
+                    select(func.count()).select_from(User).where(User.last_seen >= cutoff)
+                )
+            )
+            or 0
+        )
+
+
+async def count_banned_users() -> int:
+    async with session() as s:
+        return int(
+            (
+                await s.scalar(
+                    select(func.count()).select_from(User).where(User.is_banned.is_(True))
+                )
+            )
+            or 0
+        )
+
+
+async def count_active_shared() -> int:
+    """لینک‌های مستقیمی که هنوز منقضی نشده‌اند."""
+    now_ts = int(time.time())
+    async with session() as s:
+        return int(
+            (
+                await s.scalar(
+                    select(func.count())
+                    .select_from(SharedFile)
+                    .where(SharedFile.expires_at > now_ts)
+                )
+            )
+            or 0
+        )
+
+
+async def count_active_job_users() -> int:
+    """تعداد کاربرانی که همین حالا کار در صف/در حال اجرا دارند."""
+    async with session() as s:
+        return int(
+            (
+                await s.scalar(
+                    select(func.count(func.distinct(Job.user_id))).where(
+                        Job.status.in_(("queued", "running"))
+                    )
+                )
+            )
+            or 0
+        )
+
+
+# ── لاگ‌ها ─────────────────────────────────────────────────
+async def add_log(
+    level: str,
+    source: str,
+    message: str,
+    user_id: int | None = None,
+) -> LogEntry:
+    async with session() as s:
+        row = LogEntry(
+            level=(level or "ERROR").upper()[:16],
+            source=(source or "bot")[:64],
+            message=(message or "")[:4000],
+            user_id=user_id,
+        )
+        s.add(row)
+        await s.commit()
+        await s.refresh(row)
+        return row
+
+
+async def recent_logs(limit: int = 20) -> Sequence[LogEntry]:
+    async with session() as s:
+        return (
+            await s.execute(select(LogEntry).order_by(LogEntry.created_at.desc()).limit(limit))
+        ).scalars().all()
+
+
+async def clear_logs() -> int:
+    async with session() as s:
+        res = await s.execute(delete(LogEntry))
+        await s.commit()
+        return int(res.rowcount or 0)
+
+
+# ── گزارش‌ها ───────────────────────────────────────────────
+async def add_report(
+    kind: str,
+    user_id: int,
+    username: str | None = None,
+    first_name: str | None = None,
+    text: str = "",
+    url: str | None = None,
+) -> Report:
+    async with session() as s:
+        row = Report(
+            kind=(kind or "unsupported")[:16],
+            user_id=user_id,
+            username=username,
+            first_name=first_name,
+            text=(text or "")[:4000],
+            url=url,
+            status="open",
+        )
+        s.add(row)
+        await s.commit()
+        await s.refresh(row)
+        return row
+
+
+async def recent_reports(limit: int = 15, status: str | None = "open") -> Sequence[Report]:
+    query = select(Report).order_by(Report.created_at.desc()).limit(limit)
+    if status:
+        query = query.where(Report.status == status)
+    async with session() as s:
+        return (await s.execute(query)).scalars().all()
+
+
+async def count_open_reports() -> int:
+    async with session() as s:
+        return int(
+            (
+                await s.scalar(
+                    select(func.count())
+                    .select_from(Report)
+                    .where(Report.status == "open")
+                )
+            )
+            or 0
+        )
+
+
+async def set_report_status(report_id: int, status: str = "closed") -> bool:
+    async with session() as s:
+        row = await s.get(Report, report_id)
+        if row is None:
+            return False
+        row.status = status
+        await s.commit()
+        return True
+
+
+# ── مالک اول ───────────────────────────────────────────────
+async def claim_owner(user_id: int) -> tuple[int, bool]:
+    """اولین کسی که /start بزند مالک می‌شود؛ بقیه مالک را تغییر نمی‌دهند.
+
+    درج با کلید یکتا انجام می‌شود تا اگر دو نفر هم‌زمان /start بزنند فقط یکی
+    مالک شود (روی SQLite و Postgres یکسان کار می‌کند).
+
+    خروجی: (شناسهٔ مالک، آیا همین کاربر الان مالک شد)
+    """
+    async with session() as s:
+        existing = await s.get(Setting, "owner_id")
+        if existing is not None and existing.value.strip().isdigit():
+            return int(existing.value.strip()), False
+        if existing is None:
+            s.add(Setting(key="owner_id", value=str(user_id), updated_at=int(time.time())))
+            try:
+                await s.commit()
+                return user_id, True
+            except IntegrityError:
+                await s.rollback()
+        else:
+            existing.value = str(user_id)
+            existing.updated_at = int(time.time())
+            await s.commit()
+            return user_id, True
+
+        row = await s.get(Setting, "owner_id")
+        if row is not None and row.value.strip().isdigit():
+            return int(row.value.strip()), False
+        return user_id, False

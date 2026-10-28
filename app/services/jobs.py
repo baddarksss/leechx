@@ -9,10 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from telegram import InlineKeyboardButton as Btn
+from telegram import InlineKeyboardMarkup as Kb
+from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
 from app.config import Config
@@ -21,6 +26,7 @@ from app.db import repo
 from app.services.downloader import Downloader, MediaInfo, Progress, fetch_thumbnail
 from app.services.filestore import FileStore
 from app.services.formats import FormatOption
+from app.services.linktoken import make_token
 from app.services.ratelimit import RateLimiter
 from app.services.runtime_settings import RuntimeSettings
 from app.services.uploader import Uploader
@@ -28,6 +34,31 @@ from app.services.uploader import Uploader
 log = logging.getLogger("leechx.jobs")
 
 EDIT_INTERVAL = 2.2
+
+DELIVERY_MODES = ("video", "document", "link")
+
+
+def apply_custom_name(result, custom: str):
+    """نام دلخواه کاربر را روی فایل دانلودشده اعمال می‌کند."""
+    name = human.safe_filename(custom, 150)
+    if not name or name == "file":
+        return result
+    ext = result.path.suffix
+    provided = Path(name).suffix
+    if provided and ext and provided.lower() != ext.lower():
+        name = name[: -len(provided)].rstrip(" .") or name
+    if ext and not name.lower().endswith(ext.lower()):
+        name = f"{name}{ext}"
+    target = result.path.with_name(name)
+    if target != result.path:
+        try:
+            result.path.rename(target)
+            result.path = target
+        except OSError:
+            log.debug("could not rename %s -> %s", result.path, target, exc_info=True)
+            return result
+    result.title = human.safe_filename(Path(name).stem, 150)
+    return result
 
 
 @dataclass
@@ -42,6 +73,8 @@ class JobTask:
     info: MediaInfo | None = None
     lang: str = "fa"
     kind: str = "link"
+    mode: str = "video"
+    custom_name: str = ""
     cancel: asyncio.Event = field(default_factory=asyncio.Event)
     progress: Progress = field(default_factory=Progress)
     created_at: float = field(default_factory=time.time)
@@ -59,6 +92,7 @@ class JobManager:
         downloader: Downloader,
         uploader: Uploader,
         limiter: RateLimiter,
+        hub=None,
     ) -> None:
         self.cfg = cfg
         self.settings = settings
@@ -66,6 +100,7 @@ class JobManager:
         self.downloader = downloader
         self.uploader = uploader
         self.limiter = limiter
+        self.hub = hub
 
         self.bot = None
         self._queue: deque[JobTask] = deque()
@@ -153,6 +188,17 @@ class JobManager:
     def active_count(self) -> int:
         return len(self._tasks)
 
+    @property
+    def uploading_users(self) -> int:
+        """کاربرانی که همین حالا فایلی را در تلگرام آپلود می‌کنند."""
+        return len(
+            {
+                task.user_id
+                for task in self._tasks.values()
+                if task.mode in ("video", "document") and task.progress.stage == "uploading"
+            }
+        )
+
     # ── صف ──────────────────────────────────────────────────
     def _take_next(self) -> JobTask | None:
         """اولین کاری که کاربرش ظرفیت دارد را برمی‌دارد.
@@ -211,6 +257,8 @@ class JobManager:
             await repo.update_job(task.id, status="running", started_at=started)
             task.progress.stage = "downloading"
             await self._edit_progress(task, force=True)
+            if self.hub is not None:
+                await self.hub.notify_job("download", task)
 
             result = await self.downloader.download(
                 task.url,
@@ -224,18 +272,34 @@ class JobManager:
             if task.cancel.is_set():
                 raise errors.JobCancelled()
 
-            if result.thumbnail is None:
-                result.thumbnail = await fetch_thumbnail(
-                    task.info.thumbnail if task.info else None,
-                    workdir / "thumb.jpg",
-                    self.cfg.proxy,
+            if task.custom_name:
+                result = apply_custom_name(result, task.custom_name)
+
+            if task.mode == "link":
+                await self._deliver_link(task, result)
+            else:
+                if result.thumbnail is None:
+                    result.thumbnail = await fetch_thumbnail(
+                        task.info.thumbnail if task.info else None,
+                        workdir / "thumb.jpg",
+                        self.cfg.proxy,
+                    )
+
+                task.progress.stage = "uploading"
+                task.progress.pct = 0.0
+                await self._edit_progress(task, force=True)
+                if self.hub is not None:
+                    await self.hub.notify_job("upload", task, result)
+
+                await self.uploader.send(
+                    self.bot,
+                    task.chat_id,
+                    result,
+                    task.progress,
+                    task.url,
+                    as_document=task.mode == "document",
+                    filename=result.path.name,
                 )
-
-            task.progress.stage = "uploading"
-            task.progress.pct = 0.0
-            await self._edit_progress(task, force=True)
-
-            await self.uploader.send(self.bot, task.chat_id, result, task.progress, task.url)
 
             await repo.update_job(
                 task.id,
@@ -247,10 +311,11 @@ class JobManager:
             await repo.bump_downloads(task.user_id)
             await repo.log_event(task.user_id, "download_done")
             await repo.log_event(task.user_id, "bytes", float(result.size))
-            await self._edit_final(
-                task,
-                text.t(task.lang, "done") + f"\n<b>{human.esc(task.title)}</b>",
-            )
+            if task.mode != "link":
+                await self._edit_final(
+                    task,
+                    text.t(task.lang, "done") + f"\n<b>{human.esc(result.title)}</b>",
+                )
 
         except errors.JobCancelled:
             await self._finish_canceled(task)
@@ -263,7 +328,11 @@ class JobManager:
                 finished_at=int(time.time()),
             )
             await repo.log_event(task.user_id, "download_failed")
-            await self._edit_final(task, self._error_text(task.lang, exc))
+            body = self._error_text(task.lang, exc)
+            if exc.key in ("unsupported", "live_unsupported"):
+                body += "\n\n" + text.t(task.lang, "issue_reported")
+                await self._report_error(task, f"{exc.key}: {exc.reason}")
+            await self._edit_final(task, body)
         except Exception as exc:  # noqa: BLE001
             log.exception("job %s crashed", task.id)
             await repo.update_job(
@@ -277,11 +346,34 @@ class JobManager:
                 task,
                 text.t(task.lang, "failed", reason=human.esc(str(exc)[:150])),
             )
+            await self._report_error(task, f"crash: {exc}")
         finally:
             self.store.drop_job_dir(task.id)
             self.limiter.release_slot(task.user_id)
             self._tasks.pop(task.id, None)
             self._wake.set()
+
+    async def _report_error(self, task: JobTask, reason: str) -> None:
+        """خطای کار را در لاگ‌ها و تاپیک گزارش‌های گروه ادمین ثبت می‌کند."""
+        if self.hub is None:
+            return
+        try:
+            user = await repo.get_user(task.user_id)
+            await self.hub.report_issue(
+                task.user_id,
+                user.username if user else None,
+                user.first_name if user else None,
+                task.url,
+                reason,
+            )
+            await self.hub.record_log(
+                "ERROR",
+                "job",
+                f"کار {task.id} شکست خورد: {reason}",
+                task.user_id,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("could not report job error")
 
     async def _finish_canceled(self, task: JobTask) -> None:
         await repo.update_job(task.id, status="canceled", finished_at=int(time.time()))
@@ -291,6 +383,42 @@ class JobManager:
         kwargs = dict(exc.extra)
         kwargs.setdefault("reason", human.esc(exc.reason or "?"))
         return text.t(lang, exc.key, **kwargs)
+
+    async def _deliver_link(self, task: JobTask, result) -> None:
+        """فایل دانلودشده را به پوشهٔ لینک مستقیم منتقل و لینک امضاشده می‌سازد."""
+        dest = self.store.link_path(task.id, result.path.name)
+        try:
+            shutil.move(str(result.path), str(dest))
+        except OSError as exc:
+            raise errors.UnsupportedUrl(f"Could not store link file: {exc}") from exc
+        result.path = dest
+
+        ttl = self.settings.ttl_seconds
+        await repo.create_shared(
+            task.id,
+            task.user_id,
+            str(dest),
+            dest.name,
+            result.mime or "application/octet-stream",
+            result.size,
+            ttl,
+        )
+        await repo.log_event(task.user_id, "link_created", float(result.size))
+
+        token = make_token(task.id, self.cfg.link_secret, ttl, user_id=task.user_id)
+        url = f"{self.cfg.public_base_url.rstrip('/')}/f/{token}"
+        expires = time.strftime("%H:%M UTC", time.gmtime(int(time.time()) + ttl))
+        body = text.t(
+            task.lang,
+            "link_ready",
+            url=url,
+            name=human.esc(dest.name),
+            size=human.human_bytes(result.size),
+            ttl=f"{self.settings.ttl_hours:g}",
+            expires=expires,
+        )
+        markup = Kb([[Btn(text.t(task.lang, "open_link_btn"), url=url)]])
+        await self._edit_final(task, body, reply_markup=markup)
 
     # ── پیام وضعیت ──────────────────────────────────────────
     def _progress_text(self, task: JobTask) -> str:
@@ -342,11 +470,12 @@ class JobManager:
                 chat_id=task.chat_id,
                 message_id=task.status_message_id,
                 text=body,
+                parse_mode=ParseMode.HTML,
             )
         except TelegramError:
             pass
 
-    async def _edit_final(self, task: JobTask, body: str) -> None:
+    async def _edit_final(self, task: JobTask, body: str, reply_markup=None) -> None:
         if not task.status_message_id or self.bot is None:
             return
         try:
@@ -354,6 +483,8 @@ class JobManager:
                 chat_id=task.chat_id,
                 message_id=task.status_message_id,
                 text=body,
+                parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup,
             )
         except TelegramError:
             pass
