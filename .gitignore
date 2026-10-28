@@ -1,0 +1,30 @@
+# --- secrets & runtime data ---
+.env
+.env.*
+!.env.example
+data/
+!data/.gitkeep
+*.session
+*.session-journal
+cookies/
+*.db
+*.db-wal
+*.db-shm
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+
+# --- os / editors ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

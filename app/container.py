@@ -1,0 +1,122 @@
+"""ظرف سرویس‌ها — یک‌جا ساخته و بین هندلرها به اشتراک گذاشته می‌شود.
+
+اضافه‌کردن قابلیت جدید: سرویس را اینجا بساز، در ``setup`` راه بینداز و
+در ``teardown`` ببند. هندلرها از ``context.bot_data["services"]`` می‌گیرند.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from app.config import Config
+from app.db import repo
+from app.services.downloader import Downloader
+from app.services.drafts import DraftStore
+from app.services.filestore import FileStore
+from app.services.jobs import JobManager
+from app.services.link_server import LinkServer
+from app.services.ratelimit import RateLimiter
+from app.services.runtime_settings import RuntimeSettings
+from app.services.sites import sites
+from app.services.uploader import Uploader
+
+log = logging.getLogger("leechx.container")
+
+
+@dataclass
+class Services:
+    cfg: Config
+    settings: RuntimeSettings
+    store: FileStore
+    downloader: Downloader
+    uploader: Uploader
+    limiter: RateLimiter
+    jobs: JobManager
+    server: LinkServer
+    drafts: DraftStore = field(default_factory=DraftStore)
+    sites: object = sites
+    started_at: float = field(default_factory=time.time)
+    _cleanup: asyncio.Task | None = None
+
+    @classmethod
+    def create(cls, cfg: Config) -> Services:
+        settings = RuntimeSettings(cfg)
+        store = FileStore(cfg.files_dir, cfg.tmp_dir)
+        downloader = Downloader(cfg)
+        uploader = Uploader(cfg, settings)
+        limiter = RateLimiter(cfg.rate_limit_seconds)
+        jobs = JobManager(cfg, settings, store, downloader, uploader, limiter)
+        server = LinkServer(cfg, settings, store)
+        return cls(
+            cfg=cfg,
+            settings=settings,
+            store=store,
+            downloader=downloader,
+            uploader=uploader,
+            limiter=limiter,
+            jobs=jobs,
+            server=server,
+        )
+
+    @property
+    def uptime(self) -> int:
+        return int(time.time() - self.started_at)
+
+    async def setup(self, bot) -> None:
+        await self.settings.load()
+        self.limiter.set_interval(self.settings.rate_limit_seconds)
+        await asyncio.to_thread(self.sites.build)
+        await self.server.start()
+        await self.jobs.start(bot)
+        self._cleanup = asyncio.create_task(self._cleanup_loop(), name="cleanup")
+        log.info("services ready")
+
+    async def teardown(self) -> None:
+        if self._cleanup is not None:
+            self._cleanup.cancel()
+            try:
+                await self._cleanup
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        await self.jobs.stop()
+        await self.server.stop()
+        log.info("services stopped")
+
+    # ── پاک‌سازی دوره‌ای ────────────────────────────────────
+    async def _cleanup_loop(self) -> None:
+        interval = max(30, int(self.cfg.cleanup_interval_seconds))
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                await self.cleanup_once()
+            except asyncio.CancelledError:
+                break
+            except Exception:  # noqa: BLE001
+                log.exception("cleanup failed")
+
+    async def cleanup_once(self) -> tuple[int, int]:
+        """(تعداد فایل حذف‌شده، بایت آزادشده)"""
+        removed, freed = 0, 0
+        for row in await repo.expired_shared():
+            try:
+                path = Path(row.path)
+                size = path.stat().st_size if path.exists() else 0
+                self.store.remove(path)
+                self.store.drop_link_dir(row.id)
+                await repo.delete_shared(row.id)
+                removed += 1
+                freed += size
+            except Exception:  # noqa: BLE001
+                log.exception("failed to delete shared %s", row.id)
+
+        # پوشه‌های کارِ رهاشده (مثلاً اگر پروسه وسط کار کشته شد)
+        extra_files, extra_bytes = self.store.purge_older_than(6 * 3600)
+        removed += extra_files
+        freed += extra_bytes
+
+        self.drafts.prune()
+        log.debug("cleanup: %d files, %d bytes", removed, freed)
+        return removed, freed

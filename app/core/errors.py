@@ -1,0 +1,60 @@
+"""خطاهای دامنه — هر خطا یک «کلید پیام» قابل‌ترجمه دارد."""
+from __future__ import annotations
+
+
+class LeechError(Exception):
+    """خطای قابل‌نمایش به کاربر."""
+
+    key = "unsupported"
+    reason = ""
+
+    def __init__(self, reason: str = "", key: str | None = None, **extra):
+        super().__init__(reason or self.key)
+        self.reason = reason
+        if key:
+            self.key = key
+        self.extra = extra
+
+
+class UnsupportedUrl(LeechError):
+    key = "unsupported"
+
+
+class NothingDownloadable(LeechError):
+    key = "unsupported"
+
+
+class TooLarge(LeechError):
+    key = "too_big"
+
+
+class FileTooLargeForLink(LeechError):
+    key = "file_too_big_link"
+
+
+class NotMedia(LeechError):
+    key = "not_media"
+
+
+class LiveUnsupported(LeechError):
+    key = "live_unsupported"
+
+
+class JobCancelled(Exception):
+    """کاربر کار را لغو کرد (کنترل‌شده، خطا نیست)."""
+
+
+class Banned(LeechError):
+    key = "banned"
+
+
+class QuotaExceeded(LeechError):
+    key = "quota_exceeded"
+
+
+class RateLimited(LeechError):
+    key = "rate_limited"
+
+
+class Maintenance(LeechError):
+    key = "maintenance"

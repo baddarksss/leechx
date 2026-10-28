@@ -1,0 +1,94 @@
+"""مدل‌های دیتابیس."""
+from __future__ import annotations
+
+import time
+
+from sqlalchemy import BigInteger, Boolean, Float, Index, Integer, String, Text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def now() -> int:
+    return int(time.time())
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lang: Mapped[str] = mapped_column(String(8), default="fa")
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
+    downloads: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[int] = mapped_column(Integer, default=now)
+    last_seen: Mapped[int] = mapped_column(Integer, default=now)
+
+
+class Admin(Base):
+    __tablename__ = "admins"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    added_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, default=now)
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id: Mapped[str] = mapped_column(String(16), primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="link")   # link | direct
+    url: Mapped[str] = mapped_column(Text)
+    selector: Mapped[str] = mapped_column(String(64), default="")
+    quality: Mapped[str] = mapped_column(String(32), default="")
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size: Mapped[int] = mapped_column(BigInteger, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, default=now, index=True)
+    started_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    finished_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+Index("ix_jobs_user_created", Job.user_id, Job.created_at)
+
+
+class SharedFile(Base):
+    __tablename__ = "shared_files"
+
+    id: Mapped[str] = mapped_column(String(16), primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    path: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text)
+    mime: Mapped[str] = mapped_column(String(128), default="application/octet-stream")
+    size: Mapped[int] = mapped_column(BigInteger, default=0)
+    downloads: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[int] = mapped_column(Integer, default=now)
+    expires_at: Mapped[int] = mapped_column(Integer, index=True)
+    last_access: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class Setting(Base):
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[int] = mapped_column(Integer, default=now)
+
+
+class StatEvent(Base):
+    """رویدادهای سبک برای آمار — عمداً بدون کلید خارجی تا با حذف کاربر پاک نشود."""
+    __tablename__ = "stat_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    value: Mapped[float] = mapped_column(Float, default=1.0)
+    created_at: Mapped[int] = mapped_column(Integer, default=now, index=True)

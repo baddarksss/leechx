@@ -1,0 +1,47 @@
+name: leechx
+
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      # فایل‌های موقت و دیتابیس — با پاک‌شدن کانتینر از بین نمی‌روند
+      - ./data:/app/data
+      # کوکی‌ها (اختیاری)
+      - ./cookies:/app/data/cookies:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ───────────────────────────────────────────────────────────
+  #  Local Bot API Server — برای آپلود/دانلود فایل تا 2GB
+  #  اجرا:  docker compose --profile localapi up -d
+  #  سپس در .env:
+  #    TELEGRAM_API_URL=http://telegram-bot-api:8081/bot
+  #    TELEGRAM_API_FILE_URL=http://telegram-bot-api:8081/file/bot
+  #  و API_ID / API_HASH را از my.telegram.org بگیر.
+  # ───────────────────────────────────────────────────────────
+  telegram-bot-api:
+    image: tdlib/telegram-bot-api:latest
+    profiles: ["localapi"]
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_LOCAL: "1"
+    command:
+      - "--api-id=${TELEGRAM_API_ID}"
+      - "--api-hash=${TELEGRAM_API_HASH}"
+      - "--local"
+      - "--http-port=8081"
+      - "--dir=/var/lib/telegram-bot-api"
+    volumes:
+      - ./data/tg-bot-api:/var/lib/telegram-bot-api
+    ports:
+      - "8081:8081"
