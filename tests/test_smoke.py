@@ -77,3 +77,18 @@ def test_quality_menu_callback_data_is_valid():
         assert data.count("|") <= 3
     assert any(d.startswith("q|abc123|1080|v") for d in datas)
     assert any(d.startswith("q|abc123|mp3|a") for d in datas)
+
+
+def test_config_rejects_bad_token_and_missing_owner(tmp_path, monkeypatch):
+    from app.config import get_config
+
+    monkeypatch.setenv("BOT_TOKEN", "not-a-token")
+    monkeypatch.setenv("OWNER_IDS", "")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "bad"))
+    get_config.cache_clear()
+    try:
+        problems = get_config().validate_runtime()
+        assert any("BOT_TOKEN" in p for p in problems)
+        assert any("OWNER_IDS" in p for p in problems)
+    finally:
+        get_config.cache_clear()

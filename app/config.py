@@ -141,10 +141,13 @@ class Config(BaseSettings):
 
     def validate_runtime(self) -> list[str]:
         problems: list[str] = []
-        if not self.bot_token.strip():
+        token = self.bot_token.strip()
+        if not token:
             problems.append("BOT_TOKEN خالی است.")
-        if not self.link_secret.strip():
-            pass  # خودکار ساخته می‌شود
+        elif ":" not in token or len(token) < 20:
+            problems.append("BOT_TOKEN شکل درستی ندارد (باید شبیه 123456:ABC-DEF... باشد).")
+        if not self.owners:
+            problems.append("OWNER_IDS خالی است؛ بدون آن هیچ‌کس به پنل ادمین دسترسی ندارد.")
         if self.workers < 1:
             problems.append("WORKERS باید حداقل ۱ باشد.")
         if self.per_user_concurrency < 1:

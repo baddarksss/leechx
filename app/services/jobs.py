@@ -245,7 +245,8 @@ class JobManager:
                 finished_at=int(time.time()),
             )
             await repo.bump_downloads(task.user_id)
-            await repo.log_event(task.user_id, "download_done", result.size)
+            await repo.log_event(task.user_id, "download_done")
+            await repo.log_event(task.user_id, "bytes", float(result.size))
             await self._edit_final(
                 task,
                 text.t(task.lang, "done") + f"\n<b>{human.esc(task.title)}</b>",

@@ -116,3 +116,16 @@ async def test_events(db):
     assert stats["download_done"] == 15
     assert stats["link_created"] == 1
     assert await repo.purge_events(-1) == 3
+
+
+@pytest.mark.asyncio
+async def test_user_events_since_is_per_user(db):
+    await repo.log_event(1, "download_done", 2)
+    await repo.log_event(1, "download_done", 3)
+    await repo.log_event(2, "download_done", 10)
+    await repo.log_event(1, "link_created", 99)
+    since = int(time.time()) - 60
+    assert await repo.user_events_since(1, "download_done", since) == 5
+    assert await repo.user_events_since(2, "download_done", since) == 10
+    assert await repo.user_events_since(3, "download_done", since) == 0
+    assert await repo.user_events_since(1, "unknown", since) == 0

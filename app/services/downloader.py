@@ -33,6 +33,22 @@ USER_AGENT = (
 )
 
 MEDIA_MIME_PREFIXES = ("video/", "audio/", "image/")
+DIRECT_MIME_TYPES = {
+    "application/octet-stream",
+    "application/pdf",
+    "application/zip",
+    "application/x-zip-compressed",
+    "application/x-7z-compressed",
+    "application/x-rar-compressed",
+    "application/vnd.rar",
+    "application/vnd.android.package-archive",
+}
+
+
+def is_direct_mime(ctype: str) -> bool:
+    """آیا این Content-Type یک فایل قابل تحویل مستقیم است؟"""
+    ctype = (ctype or "").split(";")[0].strip().lower()
+    return ctype.startswith(MEDIA_MIME_PREFIXES) or ctype in DIRECT_MIME_TYPES
 
 
 # ─────────────────────────────────────────────────────────────
@@ -276,6 +292,7 @@ class Downloader:
         """آیا این URL یک فایل قابل دانلود مستقیم است؟ (بدون استخراج yt-dlp)"""
         timeout = aiohttp.ClientTimeout(total=20)
         headers = {"User-Agent": USER_AGENT, "Accept": "*/*"}
+        retry_statuses = (403, 405, 501)  # بعضی CDNها HEAD را دوست ندارند
         try:
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
                 try:
@@ -286,17 +303,22 @@ class Downloader:
                         final = str(resp.url)
                 except aiohttp.ClientError:
                     status, ctype, length, final = 0, "", None, url
-                if status >= 400 or (ctype and not ctype.startswith(MEDIA_MIME_PREFIXES) and "octet-stream" not in ctype):
+
+                if status >= 400 and status not in retry_statuses:
                     return None
-                if not ctype:
+                if status < 400 and ctype and not is_direct_mime(ctype):
+                    return None
+                if not ctype or status == 0 or status >= 400:
                     async with sess.get(url, allow_redirects=True, headers={"Range": "bytes=0-0"}) as resp:
+                        if resp.status >= 400:
+                            return None
                         ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
                         length = resp.headers.get("Content-Range", "").rpartition("/")[2] or length
                         final = str(resp.url)
         except (TimeoutError, aiohttp.ClientError, OSError):
             return None
 
-        if not ctype.startswith(MEDIA_MIME_PREFIXES) and "octet-stream" not in ctype:
+        if not is_direct_mime(ctype):
             return None
 
         name = urlcheck.filename_from_url(final, "download")
@@ -419,10 +441,6 @@ class Downloader:
         height = info.get("height")
         mime = _mime_for(output)
         is_audio = option.kind == "audio" or mime.startswith("audio/")
-
-        if size > self.cfg.max_link_bytes and option.kind == "video":
-            # سقف نهایی در زمان آپلود هم بررسی می‌شود؛ اینجا فقط برای پیام بهتر
-            pass
 
         return DownloadResult(
             path=output,

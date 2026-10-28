@@ -313,6 +313,19 @@ async def events_since(ts: int) -> dict[str, float]:
         return {k: float(v or 0) for k, v in rows}
 
 
+async def user_events_since(user_id: int, kind: str, ts: int) -> float:
+    """مجموع یک رویداد برای یک کاربر — پایهٔ سهمیهٔ روزانه."""
+    async with session() as s:
+        total = await s.scalar(
+            select(func.coalesce(func.sum(StatEvent.value), 0)).where(
+                StatEvent.user_id == user_id,
+                StatEvent.kind == kind,
+                StatEvent.created_at >= ts,
+            )
+        )
+        return float(total or 0)
+
+
 async def purge_events(older_than_days: int = 90) -> int:
     cutoff = int(time.time()) - older_than_days * 86400
     async with session() as s:

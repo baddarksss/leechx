@@ -27,8 +27,8 @@ async def _quota_left(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     quota = svc.settings.daily_quota
     if quota <= 0:
         return True
-    counts = await repo.events_since(int(time.time()) - 86400)
-    return counts.get("download_done", 0) < quota
+    used = await repo.user_events_since(user_id, "download_done", int(time.time()) - 86400)
+    return used < quota
 
 
 def error_text(lang: str, exc: errors.LeechError) -> str:

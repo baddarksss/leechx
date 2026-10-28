@@ -78,10 +78,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     try:
         tg_file = await att.get_file()
-        if svc.cfg.uses_local_api:
-            await tg_file.download_to_drive(custom_path=str(dest))
-        else:
-            await tg_file.download_to_drive(custom_path=str(dest))
+        await tg_file.download_to_drive(custom_path=str(dest))
     except TelegramError as exc:
         log.warning("telegram download failed: %s", exc)
         svc.store.drop_link_dir(file_id)

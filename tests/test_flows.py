@@ -173,3 +173,26 @@ async def test_quality_selection_from_other_user_is_rejected():
 
     assert jobs.tasks == []
     assert query.answers  # پیام «منقضی شده» به کاربر غریبه
+
+
+@pytest.mark.asyncio
+async def test_daily_quota_is_per_user(monkeypatch):
+    info = MediaInfo(url="https://cdn.example.com/a.mp4", title="a.mp4", direct=True,
+                     ext="mp4", mime="video/mp4")
+    context, services, jobs = make_context(info)
+    services.settings.daily_quota = 1
+
+    async def fake_events(user_id: int, kind: str, ts: int) -> float:
+        return 1.0 if user_id == 1 else 0.0
+
+    monkeypatch.setattr("app.bot.flows.link.repo.user_events_since", fake_events)
+
+    blocked = make_update(user_id=1)
+    await link_flow.handle_link(blocked, context, info.url)
+    assert jobs.tasks == []
+    assert "سهمیه" in blocked.effective_message.texts[-1]
+
+    allowed = make_update(user_id=2)
+    await link_flow.handle_link(allowed, context, info.url)
+    assert len(jobs.tasks) == 1
+    assert jobs.tasks[0].user_id == 2

@@ -13,6 +13,7 @@ from app.db import base as db_base
 @pytest.fixture()
 def cfg(tmp_path, monkeypatch):
     monkeypatch.setenv("BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+    monkeypatch.setenv("OWNER_IDS", "1")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("DATABASE_URL", "")
     monkeypatch.setenv("LINK_SECRET", "test-secret")

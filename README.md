@@ -1,5 +1,7 @@
 # 🔥 LeechX — Telegram Leecher Bot
 
+[![CI](https://github.com/baddarksss/leechx/actions/workflows/ci.yml/badge.svg)](https://github.com/baddarksss/leechx/actions/workflows/ci.yml)
+
 Download from **any site** and upload straight to Telegram, or turn any file into
 a **direct link** with automatic expiry. Built for high traffic: job queue,
 per-user concurrency limits, automatic disk cleanup and a modular design.
