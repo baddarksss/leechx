@@ -25,7 +25,7 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
             await hub.record_log(
                 "ERROR",
                 "handler",
-                f"{type(context.error).__name__}: {context.error}"[:2000],
+                f"{type(context.error).__name__} (details retained in server logs)",
                 user_id,
             )
         except Exception:  # noqa: BLE001 — ثبت خطا نباید خطای دیگری بسازد

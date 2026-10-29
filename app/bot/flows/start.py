@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes
 from app.bot import keyboards as kb
 from app.bot.common import edit, fmt_ts, lang_of, reply, safe_answer, services
 from app.bot.guards import is_admin
-from app.bot.states import ST_CONTACT, clear_state, set_state
+from app.bot.states import ST_CONTACT, clear_state, get_state, set_state
 from app.core import human, text
 from app.db import repo
 
@@ -21,6 +21,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
     lang = lang_of(context)
     user = update.effective_user
+    clear_state(context)  # /start must recover from unfinished forms
 
     # اولین کاربری که /start بزند مالک ربات می‌شود (مگر اینکه OWNER_IDS در env ست شده باشد).
     if not svc.cfg.owners:
@@ -36,6 +37,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     admin = await is_admin(svc.cfg, user.id)
     body = text.t(lang, "start", ttl=_fmt_hours(svc.settings.ttl_hours))
     await reply(update, body, reply_markup=kb.main_menu(lang, admin))
+    if admin and update.effective_chat.type == "private":
+        await reply(update, "📌 منوی ثابت مدیریت", reply_markup=kb.admin_persistent_menu(lang))
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -102,16 +105,30 @@ async def cmd_sites(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
     lang = lang_of(context)
+    previous_state = get_state(context)
     clear_state(context)
     user = update.effective_user
+    discarded = svc.drafts.clear_user(user.id)
     canceled = 0
     for task in svc.jobs.tasks_for_user(user.id):
         if svc.jobs.cancel(task.id, user.id):
             canceled += 1
-    if canceled:
+    transfers = getattr(svc, "file_transfers", None)
+    if transfers is not None:
+        for transfer in transfers.tasks_for_user(user.id):
+            if transfers.cancel(transfer.id, user.id):
+                canceled += 1
+    if canceled or previous_state or discarded:
         await reply(update, text.t(lang, "canceled"))
     else:
-        await reply(update, text.t(lang, "send_link_or_file"))
+        await reply(update, text.t(lang, "cancel_nothing"))
+
+
+async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = lang_of(context)
+    rows = [[kb.Btn(text.LANGS[code], callback_data=f"l|{code}")] for code in text.LANGS]
+    rows.append([kb.Btn(text.t(lang, "btn_back"), callback_data=kb.M_HOME)])
+    await reply(update, f"<b>{text.t(lang, 'btn_settings')}</b>", reply_markup=kb.Kb(rows))
 
 
 async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -162,6 +179,7 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
     svc = services(context)
     lang = lang_of(context)
     admin = await is_admin(svc.cfg, update.effective_user.id)
+    clear_state(context)
     await safe_answer(query)
 
     if action == "close":
@@ -258,6 +276,7 @@ async def on_lang(update: Update, context: ContextTypes.DEFAULT_TYPE, code: str)
         return
     query = update.callback_query
     svc = services(context)
+    clear_state(context)
     await repo.set_lang(update.effective_user.id, code)
     context.user_data["lang"] = code
     admin = await is_admin(svc.cfg, update.effective_user.id)

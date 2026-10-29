@@ -12,6 +12,7 @@ import logging
 import secrets
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -33,6 +34,29 @@ _MEDIA_SUFFIXES = {
     ".jpg", ".jpeg", ".png", ".webp", ".gif",
     ".pdf", ".zip", ".rar", ".7z", ".apk",
 }
+
+
+SOCIAL_AUTO_QUALITY_DOMAINS = (
+    "instagram.com",
+    "instagr.am",
+    "tiktok.com",
+)
+
+
+def auto_quality_for_social(url: str, extractor: str = "") -> bool:
+    """Instagram/TikTok URLs, including vm/vt short links and extractor redirects.
+
+    Match whole domain boundaries only: not-actually-tiktok.com is not TikTok.
+    """
+    try:
+        host = (urlsplit(url).hostname or "").rstrip(".").lower()
+    except ValueError:
+        host = ""
+    if any(host == domain or host.endswith("." + domain)
+           for domain in SOCIAL_AUTO_QUALITY_DOMAINS):
+        return True
+    key = (extractor or "").casefold()
+    return key.startswith(("instagram", "tiktok"))
 
 
 def new_job_id() -> str:
@@ -62,23 +86,25 @@ async def _report_issue(
     context: ContextTypes.DEFAULT_TYPE,
     url: str,
     reason: str,
-) -> None:
-    """مشکل را به ادمین می‌فرستد؛ اگر گروه تنظیم نشده باشد فقط لاگ می‌شود."""
+) -> bool:
+    """Return true only if the issue was actually recorded for admins."""
     svc = services(context)
     hub = getattr(svc, "admin_group", None)
     user = update.effective_user
     if hub is None or user is None:
-        return
+        return False
     try:
-        await hub.report_issue(
+        report = await hub.report_issue(
             user.id,
             user.username,
             user.first_name,
             url,
             reason,
         )
+        return report is not None
     except Exception:  # noqa: BLE001 — گزارش نباید تجربهٔ کاربر را خراب کند
         log.exception("could not report issue")
+        return False
 
 
 def draft_extension(draft: Draft) -> str:
@@ -101,15 +127,24 @@ def draft_name(draft: Draft) -> str:
     return base
 
 
-def delivery_text(lang: str, draft: Draft) -> str:
+def delivery_text(lang: str, draft: Draft, ttl_hours: float = 6.0) -> str:
+    """Explain *what happens* before the user starts any network transfer."""
     size = draft.option.filesize if draft.option is not None else None
+    quality = (
+        text.t(lang, "quality_auto")
+        if draft.auto_quality
+        else text.t(lang, "quality_original") if draft.kind == "direct"
+        else draft.option.label if draft.option is not None
+        else "—"
+    )
     return text.t(
         lang,
         "delivery_panel",
         title=human.esc(draft.title),
-        quality=human.esc(draft.option.label if draft.option is not None else "—"),
-        size=human.human_bytes(size) if size else "—",
+        quality=human.esc(quality),
+        size=human.human_bytes(size) if size else text.t(lang, "size_unknown"),
         name=human.esc(draft_name(draft)),
+        ttl=f"{ttl_hours:g}",
     )
 
 
@@ -156,12 +191,14 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
         return
 
     try:
-        info = await svc.downloader.probe(url)
+        info = (await svc.cache.probe(user.id, url, svc.downloader.probe)
+                if getattr(svc, "cache", None) is not None
+                else await svc.downloader.probe(url))
     except errors.LeechError as exc:
         body = error_text(lang, exc)
         if exc.key in REPORTABLE:
-            body += "\n\n" + text.t(lang, "issue_reported")
-            await _report_issue(update, context, url, f"{exc.key}: {exc.reason}")
+            if await _report_issue(update, context, url, f"{exc.key}: {exc.reason}"):
+                body += "\n\n" + text.t(lang, "issue_reported")
         await edit(status, body)
         return
     except Exception as exc:  # noqa: BLE001
@@ -169,10 +206,9 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
         await edit(
             status,
             text.t(lang, "failed", reason=human.esc(str(exc)[:150]))
-            + "\n\n"
-            + text.t(lang, "issue_reported"),
+            + ("\n\n" + text.t(lang, "issue_reported")
+               if await _report_issue(update, context, url, f"probe crashed: {exc}") else ""),
         )
-        await _report_issue(update, context, url, f"probe crashed: {exc}")
         return
 
     # ── لینک مستقیم: بدون انتخاب کیفیت، مستقیم به صفحهٔ تحویل ──
@@ -201,7 +237,8 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
             lang=lang,
         )
         svc.drafts.put(draft)
-        await edit(status, delivery_text(lang, draft), reply_markup=kb.delivery_menu(lang, draft))
+        await edit(status, delivery_text(lang, draft, svc.settings.ttl_hours),
+                   reply_markup=kb.delivery_menu(lang, draft))
         return
 
     # ── صفحهٔ انتخاب کیفیت ──────────────────────────────────
@@ -220,8 +257,27 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
         kind="link",
         lang=lang,
     )
-    svc.drafts.put(draft)
+    if auto_quality_for_social(url, info.extractor) or auto_quality_for_social(info.url):
+        # Skip the quality menu only for Instagram/TikTok. Let yt-dlp pick the
+        # best available media, then ask only how the user wants to receive it.
+        # No download begins before delivery mode has been chosen.
+        draft.auto_quality = True
+        draft.option = FormatOption(
+            kind="video",
+            code="auto",
+            label=text.t(lang, "quality_auto"),
+            selector="bv*+ba/b",
+            ext="mp4",
+        )
+        draft.options = [draft.option]
+        svc.drafts.put(draft)
+        await edit(
+            status, delivery_text(lang, draft, svc.settings.ttl_hours),
+            reply_markup=kb.delivery_menu(lang, draft),
+        )
+        return
 
+    svc.drafts.put(draft)
     note = text.t(lang, "playlist_detected") if info.playlist else ""
     await edit(status, quality_text(lang, draft, note), reply_markup=kb.quality_menu(lang, draft))
 
@@ -265,7 +321,7 @@ async def handle_rename(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         update,
         text.t(lang, "rename_done", name=human.esc(draft_name(draft)))
         + "\n\n"
-        + delivery_text(lang, draft),
+        + delivery_text(lang, draft, svc.settings.ttl_hours),
         reply_markup=kb.delivery_menu(lang, draft),
     )
 

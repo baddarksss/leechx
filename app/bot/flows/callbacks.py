@@ -11,6 +11,7 @@ from app.bot.common import edit, lang_of, safe_answer, services
 from app.bot.flows import admin as admin_flow
 from app.bot.flows import link as link_flow
 from app.bot.flows import start as start_flow
+from app.bot.flows import user_links as links_flow
 from app.core import text
 from app.services.formats import find_option
 
@@ -40,6 +41,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await _on_delivery(update, context, args)
         elif prefix == "x":
             await _on_cancel(update, context, args)
+        elif prefix == "u":
+            await links_flow.on_callback(update, context, args)
         elif prefix == "d":
             await _on_dismiss(update, context, args)
         else:
@@ -76,7 +79,7 @@ async def _on_quality(update: Update, context: ContextTypes.DEFAULT_TYPE, args: 
     await safe_answer(query, option.label)
     await edit(
         query.message,
-        link_flow.delivery_text(draft.lang, draft),
+        link_flow.delivery_text(draft.lang, draft, svc.settings.ttl_hours),
         reply_markup=kb.delivery_menu(draft.lang, draft),
     )
 
@@ -105,7 +108,7 @@ async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
 
     if action == "q":
         await safe_answer(query)
-        if draft.kind == "direct":
+        if draft.kind == "direct" or draft.auto_quality:
             return
         draft.option = None
         await edit(query.message, link_flow.quality_text(user_lang, draft), reply_markup=kb.quality_menu(user_lang, draft))
@@ -137,6 +140,8 @@ async def _on_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, args: l
         await safe_answer(update.callback_query)
         return
     ok = svc.jobs.cancel(args[0], update.effective_user.id)
+    if not ok and getattr(svc, "file_transfers", None) is not None:
+        ok = svc.file_transfers.cancel(args[0], update.effective_user.id)
     if ok:
         await safe_answer(update.callback_query, text.t(lang, "canceled"))
     else:

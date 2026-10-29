@@ -3,22 +3,15 @@ from __future__ import annotations
 
 import logging
 import mimetypes
-import secrets
-import time
-from datetime import UTC, datetime
 
 from telegram import Update
-from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
-from app.bot import keyboards as kb
-from app.bot.common import edit, lang_of, reply, services
+from app.bot.common import lang_of, reply, services
 from app.bot.guards import require_admin
 from app.bot.states import ST_COOKIE_ADD, clear_state, get_state
 from app.core import human, text
-from app.db import repo
 from app.services.cookies import MAX_COOKIE_BYTES, CookieError
-from app.services.linktoken import make_token
 
 log = logging.getLogger("leechx.files")
 
@@ -129,70 +122,9 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         name += guessed
     name = human.safe_filename(name, 120)
 
-    status = await reply(update, text.t(lang, "file_received"))
-    if status is None:
+    # Run asynchronously so the user can cancel the transfer with a button
+    # while Telegram's file bytes arrive in bounded chunks.
+    if svc.file_transfers.tasks_for_user(user.id):
+        await reply(update, text.t(lang, "too_many_active"))
         return
-
-    file_id = secrets.token_hex(6)
-    dest = svc.store.link_path(file_id, name)
-
-    try:
-        tg_file = await att.get_file()
-        await tg_file.download_to_drive(custom_path=str(dest))
-    except TelegramError as exc:
-        log.warning("telegram download failed: %s", exc)
-        svc.store.drop_link_dir(file_id)
-        await edit(
-            status,
-            text.t(
-                lang,
-                "failed",
-                reason=human.esc(
-                    "Telegram download failed — for files >20MB enable a local Bot API server"
-                ),
-            ),
-        )
-        return
-    except Exception as exc:  # noqa: BLE001
-        log.exception("file download crashed")
-        svc.store.drop_link_dir(file_id)
-        await edit(status, text.t(lang, "failed", reason=human.esc(str(exc)[:150])))
-        return
-
-    if not dest.exists() or dest.stat().st_size == 0:
-        svc.store.drop_link_dir(file_id)
-        await edit(status, text.t(lang, "failed", reason="empty file"))
-        return
-
-    real_size = dest.stat().st_size
-    mime = getattr(att, "mime_type", None) or mimetypes.guess_type(name)[0] or "application/octet-stream"
-    ttl = svc.settings.ttl_seconds
-
-    await repo.create_shared(file_id, user.id, str(dest), name, mime, real_size, ttl)
-    await repo.log_event(user.id, "link_created", real_size)
-    if getattr(svc, "admin_group", None) is not None:
-        await svc.admin_group.notify_file_upload(
-            user.id,
-            user.username,
-            user.first_name,
-            name,
-            real_size,
-        )
-
-    token = make_token(file_id, svc.cfg.link_secret, ttl, user_id=user.id)
-    url = f"{svc.cfg.public_base_url.rstrip('/')}/f/{token}"
-    expires = datetime.fromtimestamp(int(time.time()) + ttl, tz=UTC).strftime("%H:%M UTC")
-
-    await edit(
-        status,
-        text.t(
-            lang,
-            "link_ready",
-            url=url,
-            name=human.esc(name),
-            size=human.human_bytes(real_size),
-            ttl=f"{svc.settings.ttl_hours:g}",
-            expires=expires,
-        ),
-        reply_markup=kb.link_actions(lang, url),
-    )
+    await svc.file_transfers.start(update, lang, att, name, size)

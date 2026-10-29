@@ -6,7 +6,9 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from app.bot.common import lang_of, reply
+from app.bot.common import lang_of, reply, services
+from app.bot import keyboards as kb
+from app.bot.flows import user_links as links_flow
 from app.bot.flows import admin as admin_flow
 from app.bot.flows import link as link_flow
 from app.bot.flows import start as start_flow
@@ -19,6 +21,32 @@ log = logging.getLogger("leechx.text")
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     if message is None or not message.text:
+        return
+
+    labels = kb.persistent_admin_labels(lang_of(context))
+    if context.user_data.get("is_admin") and message.text in labels.values():
+        clear_state(context)
+        key = next(k for k, v in labels.items() if v == message.text)
+        if key == "panel":
+            await admin_flow.show_panel(update, context)
+        elif key == "stats":
+            await reply(update, await admin_flow._render_stats(context),
+                        reply_markup=kb.admin_menu(lang_of(context)))
+        elif key == "jobs":
+            await reply(update, await admin_flow._render_jobs(),
+                        reply_markup=kb.admin_menu(lang_of(context)))
+        elif key == "settings":
+            svc = services(context)
+            await reply(update, admin_flow._render_settings(context),
+                        reply_markup=kb.settings_menu(lang_of(context), svc.settings.snapshot()))
+        elif key == "reports":
+            await admin_flow._render_reports(update, context)
+        elif key == "links":
+            await links_flow.cmd_links(update, context)
+        elif key == "cancel":
+            await start_flow.cmd_cancel(update, context)
+        elif key == "home":
+            await start_flow.cmd_start(update, context)
         return
 
     state = get_state(context)

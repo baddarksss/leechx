@@ -57,6 +57,8 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     lang = lang_of(context)
     await reply(update, text.t(lang, "admin_panel"), reply_markup=kb.admin_menu(lang))
+    if update.effective_chat.type == "private":
+        await reply(update, "📌 منوی ثابت مدیریت", reply_markup=kb.admin_persistent_menu(lang))
 
 
 async def show_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -74,6 +76,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         return
     svc = services(context)
     lang = lang_of(context)
+    clear_state(context)  # menu actions always supersede stale input forms
     query = update.callback_query
     msg = query.message if query else None
 
@@ -111,6 +114,8 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
                 await safe_answer(query, text.t(lang, "admin_owner_immutable"), alert=True)
                 return
             ok = await repo.remove_admin(uid)
+            await svc.admin_group.audit("security", "admin_removed",
+                                        update.effective_user.id, f"target={uid}, changed={ok}")
             await safe_answer(query, text.t(lang, "admin_remove_ok" if ok else "admin_remove_fail", uid=uid))
             if uid in svc.cfg.extra_admins:
                 await safe_answer(
@@ -134,8 +139,10 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         if not args:
             return
         key = args[0]
-        if key in SCHEMA:
+        if key in SCHEMA and SCHEMA[key][0] == "bool":
             value = await svc.settings.toggle(key)
+            await svc.admin_group.audit("security", "setting_toggled",
+                                        update.effective_user.id, f"{key}={value}")
             await safe_answer(query, f"{svc.settings.label(key)}: {'ON' if value else 'OFF'}")
             await edit(
                 msg,
@@ -254,6 +261,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
 
     if action == "groupoff":
         await safe_answer(query)
+        await svc.admin_group.audit("security", "group_disconnected", update.effective_user.id)
         await svc.admin_group.disable()
         await safe_answer(query, text.t(lang, "admin_group_off_done"))
         await _render_group(update, context)
@@ -314,6 +322,8 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
     if action in ("ban", "unban") and args:
         uid = int(args[0])
         await repo.set_banned(uid, action == "ban")
+        await svc.admin_group.audit("security", f"user_{action}", update.effective_user.id,
+                                    f"target={uid}")
         await safe_answer(query, "✅")
         await _show_user(update, context, uid)
         return
@@ -471,6 +481,11 @@ async def _render_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         logs=svc.settings.get_str("topic_logs") or "—",
         hint=hint,
     )
+    body += (
+        f"\n\n📦 کش رسانه‌ها: {group.topic_id('cache') or '—'}"
+        f"\n🧾 ممیزی عملیات: {group.topic_id('audit') or '—'}"
+        f"\n🔐 امنیت و تنظیمات: {group.topic_id('security') or '—'}"
+    )
     menu = kb.group_menu(lang, group.configured)
     query = update.callback_query
     if query is not None:
@@ -616,6 +631,8 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         await reply(update, text.t(lang, "admin_broadcast_started", count=len(ids)))
         ok, fail = await broadcast(context, ids, message.text_html or human.esc(raw), lang)
         await reply(update, text.t(lang, "admin_broadcast_done", ok=ok, fail=fail))
+        await svc.admin_group.audit("security", "broadcast_completed",
+                                    update.effective_user.id, f"sent={ok}, failed={fail}")
         return
 
     if state == ST_ADD_ADMIN:
@@ -628,6 +645,8 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
             await reply(update, text.t(lang, "admin_limit_reached", max=svc.cfg.max_admins))
             return
         await repo.add_admin(user.id, update.effective_user.id)
+        await svc.admin_group.audit("security", "admin_added",
+                                    update.effective_user.id, f"new_admin={user.id}")
         await reply(update, text.t(lang, "admin_add_ok", uid=user.id))
         return
 
@@ -649,6 +668,8 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
             await reply(update, text.t(lang, "admin_bad_value"))
             return
         await svc.settings.set(key, value)
+        await svc.admin_group.audit("security", "setting_updated",
+                                    update.effective_user.id, f"key={key} (value hidden)")
         svc.limiter.set_interval(svc.settings.rate_limit_seconds)
         await reply(
             update,
@@ -685,9 +706,14 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         title = ""
         try:
             chat = await context.bot.get_chat(chat_id)
+            if (chat.type != "supergroup" or not getattr(chat, "is_forum", False)
+                    or getattr(chat, "username", None)):
+                await reply(update, "⚠️ یک سوپرگروه خصوصی با Topics فعال وارد کن.")
+                return
             title = getattr(chat, "title", "") or ""
         except TelegramError:
-            pass
+            await reply(update, text.t(lang, "admin_group_test_fail"))
+            return
         created = await svc.admin_group.configure(chat_id, title)
         ok = sum(1 for value in created.values() if value)
         failed = len(created) - ok
@@ -711,6 +737,8 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
             await reply(update, text.t(lang, "admin_bad_value"))
             return
         await svc.settings.set(key, value)
+        await svc.admin_group.audit("security", "runtime_updated",
+                                    update.effective_user.id, f"key={key} (value hidden)")
         svc.settings.apply_to_config()
         if key == "rate_limit_seconds":
             svc.limiter.set_interval(svc.settings.rate_limit_seconds)
@@ -795,15 +823,14 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     allowed = await is_admin(svc.cfg, user.id)
     if not allowed:
-        try:
-            member = await context.bot.get_chat_member(chat.id, user.id)
-            allowed = getattr(member, "status", "") in ("administrator", "creator")
-        except TelegramError:
-            allowed = False
-    if not allowed:
         await reply(update, text.t(lang, "setup_need_admin"))
         return
 
+    # All operational messages and archived media belong in one private forum.
+    if (chat.type != "supergroup" or not getattr(chat, "is_forum", False)
+            or getattr(chat, "username", None)):
+        await reply(update, "⚠️ گروه باید سوپرگروه خصوصی با قابلیت Topics فعال باشد.")
+        return
     created = await svc.admin_group.configure(chat.id, chat.title or "")
     body = text.t(
         lang,
@@ -813,12 +840,28 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reports=created.get("reports") or "—",
         logs=created.get("logs") or "—",
     )
+    body += (
+        f"\n📦 کش: <code>{created.get('cache') or '—'}</code>"
+        f"\n🧾 ممیزی: <code>{created.get('audit') or '—'}</code>"
+        f"\n🔐 امنیت: <code>{created.get('security') or '—'}</code>"
+    )
     await reply(update, body)
+    await svc.admin_group.audit("security", "group_setup", user.id,
+                                f"group {chat.id}; topics {sum(bool(x) for x in created.values())}/7")
 
 
 async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """در حالت «بن کردن»، پیام فورواردشده را به کاربر اصلی تبدیل می‌کند."""
     if get_state(context) != ST_BAN:
+        message = update.effective_message
+        if message is None:
+            return
+        if message.effective_attachment is not None:
+            from app.bot.flows import files as files_flow
+            await files_flow.handle_file(update, context)
+        elif message.text:
+            from app.bot.flows import text_router
+            await text_router.on_text(update, context)
         return
     lang = lang_of(context)
     if not await require_admin(update, context):
