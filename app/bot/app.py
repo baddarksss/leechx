@@ -100,6 +100,10 @@ async def gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     staff = await is_staff(cfg, user.id)
     context.user_data["is_admin"] = staff and not preview
 
+    # پنل مدیریت همیشه فارسی است؛ تغییر زبان مخصوص کاربران عادی (و حالت پیش‌نمایش) است.
+    if staff and not preview:
+        context.user_data["lang"] = text.DEFAULT_LANG
+
     if row.is_banned:
         await reply(update, text.t(lang_of(context), "banned"))
         raise ApplicationHandlerStop

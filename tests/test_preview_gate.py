@@ -227,3 +227,65 @@ async def test_maintenance_blocks_users_but_not_staff(db):
     staff_update = make_update(1)
     await app_module.gate(staff_update, make_context(services, GateBot()))
     assert staff_update.effective_message.texts == []
+
+
+# ── زبان ادمین ──────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_admin_ui_is_always_persian(db):
+    """ادمین همیشه فارسی می‌بیند، حتی اگر زبان دیگری ذخیره شده باشد."""
+    services, bot = await make_gate(db, enabled=False)
+    await repo.upsert_user(1, "owner", "O")
+    await repo.set_lang(1, "en")
+
+    update = make_update(1, language_code="en")
+    context = make_context(services, bot, lang="en")
+    await app_module.gate(update, context)
+    assert context.user_data["lang"] == "fa"
+
+    # در پیش‌نمایش کاربر، ادمین مثل یک کاربر عادی است و زبانش عوض نمی‌شود.
+    preview_update = make_update(1, language_code="en")
+    preview_context = make_context(services, bot, lang="en", preview=True)
+    await app_module.gate(preview_update, preview_context)
+    assert preview_context.user_data["lang"] == "en"
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_change_language(db):
+    from app.bot.flows import start as start_flow
+
+    services = SimpleNamespace(cfg=db)
+    await repo.upsert_user(1, "owner", "O")
+    await repo.set_lang(1, "fa")
+
+    answered: list[str] = []
+
+    async def answer(body=None, **kwargs):
+        answered.append(body or "")
+
+    query = SimpleNamespace(data="l|en", answer=answer)
+    update = make_update(1, query=query)
+    context = make_context(services, bot=None, lang="fa")
+    await start_flow.on_lang(update, context, "en")
+
+    assert context.user_data["lang"] == "fa"
+    assert (await repo.get_user(1)).lang == "fa"
+    assert answered == [text.t("fa", "admin_lang_fixed")]
+
+
+@pytest.mark.asyncio
+async def test_admin_lang_command_points_to_user_only(db):
+    from app.bot.flows import start as start_flow
+
+    services = SimpleNamespace(cfg=db)
+    update = make_update(1)
+    context = make_context(services, bot=None)
+    await start_flow.cmd_lang(update, context)
+
+    assert update.effective_message.texts == [text.t("fa", "admin_lang_fixed")]
+    markup = update.effective_message.markups[-1]
+    assert hasattr(markup, "keyboard")  # کیبورد ثابت ادمین
+
+    # کاربر عادی همچنان منوی انتخاب زبان را می‌گیرد.
+    user_update = make_update(42)
+    await start_flow.cmd_lang(user_update, make_context(services, bot=None))
+    assert hasattr(user_update.effective_message.markups[-1], "inline_keyboard")

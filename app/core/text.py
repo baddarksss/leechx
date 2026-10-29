@@ -403,6 +403,9 @@ FA: dict[str, str] = {
         "Language · Язык · زبان"
     ),
     "lang_saved": "✅ زبان به <b>{lang}</b> تغییر کرد.",
+    "admin_lang_fixed": (
+        "🔒 پنل مدیریت همیشه فارسی است؛ تغییر زبان فقط برای کاربران عادی است."
+    ),
     "version_info": (
         "<b>🤖 LeechX v{version}</b> · {codename}\n"
         "📅 انتشار: {date}\n"
@@ -1006,6 +1009,9 @@ EN: dict[str, str] = {
         "Language · Язык · زبان"
     ),
     "lang_saved": "✅ Language changed to <b>{lang}</b>.",
+    "admin_lang_fixed": (
+        "🔒 The admin panel is always in Persian; language switching is for regular users only."
+    ),
     "version_info": (
         "<b>🤖 LeechX v{version}</b> · {codename}\n"
         "📅 Released: {date}\n"
@@ -1558,6 +1564,9 @@ RU: dict[str, str] = {
     "settings_panel": "<b>⚙️ Настройки</b>\n\n🌍 Язык: <b>{lang}</b>\n🤖 Версия: <b>{version}</b>\n\nИспользуй кнопки ниже:",
     "lang_title": "<b>🌍 Выбор языка</b>\n\nТекущий: <b>{current}</b>\n\nLanguage · Язык · زبان",
     "lang_saved": "✅ Язык изменён на <b>{lang}</b>.",
+    "admin_lang_fixed": (
+        "🔒 Панель администратора всегда на персидском; смена языка доступна только обычным пользователям."
+    ),
     "version_info": (
         "<b>🤖 LeechX v{version}</b> · {codename}\n"
         "📅 Выпуск: {date}\n🐍 Python: {python}\n🎬 yt-dlp: {ytdlp}\n"

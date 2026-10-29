@@ -7,6 +7,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.1.2] - 2026-10-29 · "Clean Deck"
+
+### Fixed
+- **Admin UI is always Persian**: staff accounts (outside preview mode) now always
+  get `fa`, no matter what language is stored for them or what Telegram reports.
+- **Language switching is for regular users**: `/lang`, the `m|lang` menu button
+  and the `l|<code>` callbacks are blocked for admins with a short notice; in
+  «preview as user» mode the admin behaves exactly like a normal user and may
+  still change the language (the working panel snaps back to Persian on exit).
+
 ## [5.1.1] - 2026-10-29 · "Clean Deck"
 
 ### Fixed

@@ -148,7 +148,16 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
     lang = lang_of(context)
+    # زبان پنل مدیریت ثابت فارسی است؛ بخش تغییر زبان فقط برای کاربران عادی است.
+    if await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context):
+        await reply(
+            update,
+            text.t(text.DEFAULT_LANG, "admin_lang_fixed"),
+            reply_markup=kb.admin_persistent_menu(text.DEFAULT_LANG),
+        )
+        return
     await reply(
         update,
         text.t(lang, "lang_title", current=text.LANGS[lang]),
@@ -274,6 +283,9 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
         return
 
     if action == "lang":
+        if admin:
+            await safe_answer(query, text.t(text.DEFAULT_LANG, "admin_lang_fixed"), alert=True)
+            return
         await edit(
             query.message,
             text.t(lang, "lang_title", current=text.LANGS[lang]),
@@ -325,6 +337,9 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
             return
         context.user_data["preview"] = False
         context.user_data["is_admin"] = True
+        # بعد از خروج از پیش‌نمایش، پنل ادمین فوراً فارسی می‌شود.
+        context.user_data["lang"] = text.DEFAULT_LANG
+        lang = text.DEFAULT_LANG
         await reply(
             update,
             text.t(lang, "preview_exit_done") + "\n\n" + version_badge(),
@@ -372,6 +387,15 @@ def _join_list(targets) -> str:
 
 
 async def on_lang(update: Update, context: ContextTypes.DEFAULT_TYPE, code: str) -> None:
+    svc = services(context)
+    # ادمین در حالت کاری همیشه فارسی می‌ماند؛ تغییر زبان فقط برای کاربر عادی است.
+    if await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context):
+        await safe_answer(
+            update.callback_query,
+            text.t(text.DEFAULT_LANG, "admin_lang_fixed"),
+            alert=True,
+        )
+        return
     if code not in text.LANGS:
         return
     query = update.callback_query
