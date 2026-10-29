@@ -8,7 +8,59 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db.base import session
-from app.db.models import Admin, Job, LogEntry, Report, Setting, SharedFile, StatEvent, User
+from app.db.models import Admin, Job, LogEntry, MediaCacheEntry, Report, Setting, SharedFile, StatEvent, User
+
+
+# ── آرشیو کش رسانه در سوپرگروه ─────────────────────────────
+async def get_media_cache(key: str, user_id: int, group_id: int) -> MediaCacheEntry | None:
+    async with session() as s:
+        return (await s.execute(
+            select(MediaCacheEntry).where(
+                MediaCacheEntry.cache_key == key,
+                MediaCacheEntry.user_id == user_id,
+                MediaCacheEntry.group_id == group_id,
+                MediaCacheEntry.expires_at > int(time.time()),
+            )
+        )).scalar_one_or_none()
+
+
+async def put_media_cache(
+    key: str, user_id: int, group_id: int, message_id: int,
+    mode: str, filename: str, size: int, ttl: int,
+) -> None:
+    ts = int(time.time())
+    async with session() as s:
+        entry = await s.get(MediaCacheEntry, key)
+        if entry is None:
+            entry = MediaCacheEntry(
+                cache_key=key, user_id=user_id, group_id=group_id,
+                message_id=message_id, mode=mode, filename=filename,
+                size=size, created_at=ts, expires_at=ts + ttl,
+            )
+            s.add(entry)
+        else:
+            entry.user_id = user_id
+            entry.group_id = group_id
+            entry.message_id = message_id
+            entry.mode = mode
+            entry.filename = filename
+            entry.size = size
+            entry.expires_at = ts + ttl
+        await s.commit()
+
+
+async def delete_media_cache(key: str) -> None:
+    async with session() as s:
+        await s.execute(delete(MediaCacheEntry).where(MediaCacheEntry.cache_key == key))
+        await s.commit()
+
+
+async def expired_media_cache(now_ts: int | None = None) -> Sequence[MediaCacheEntry]:
+    ts = int(time.time()) if now_ts is None else now_ts
+    async with session() as s:
+        return (await s.execute(
+            select(MediaCacheEntry).where(MediaCacheEntry.expires_at <= ts)
+        )).scalars().all()
 
 
 # ── کاربران ────────────────────────────────────────────────
@@ -259,6 +311,52 @@ async def create_shared(
 async def get_shared(file_id: str) -> SharedFile | None:
     async with session() as s:
         return await s.get(SharedFile, file_id)
+
+
+async def user_shared(user_id: int, limit: int = 5, offset: int = 0) -> Sequence[SharedFile]:
+    now = int(time.time())
+    async with session() as s:
+        return (await s.execute(
+            select(SharedFile).where(
+                SharedFile.user_id == user_id, SharedFile.expires_at > now
+            ).order_by(SharedFile.created_at.desc(), SharedFile.id.desc())
+            .limit(max(1, min(limit, 20))).offset(max(0, offset))
+        )).scalars().all()
+
+
+async def count_user_shared(user_id: int) -> int:
+    now = int(time.time())
+    async with session() as s:
+        return int(await s.scalar(
+            select(func.count()).select_from(SharedFile).where(
+                SharedFile.user_id == user_id, SharedFile.expires_at > now
+            )
+        ) or 0)
+
+
+async def get_user_shared(file_id: str, user_id: int) -> SharedFile | None:
+    async with session() as s:
+        return (await s.execute(
+            select(SharedFile).where(
+                SharedFile.id == file_id, SharedFile.user_id == user_id,
+                SharedFile.expires_at > int(time.time()),
+            )
+        )).scalar_one_or_none()
+
+
+async def pop_user_shared(file_id: str, user_id: int) -> str | None:
+    """Atomically revoke one owned, unexpired link; return the stored path."""
+    async with session() as s:
+        result = await s.execute(
+            delete(SharedFile).where(
+                SharedFile.id == file_id,
+                SharedFile.user_id == user_id,
+                SharedFile.expires_at > int(time.time()),
+            ).returning(SharedFile.path)
+        )
+        row = result.first()
+        await s.commit()
+        return row[0] if row is not None else None
 
 
 async def touch_shared(file_id: str) -> None:

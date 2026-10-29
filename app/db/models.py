@@ -75,6 +75,21 @@ class SharedFile(Base):
     last_access: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class MediaCacheEntry(Base):
+    """Telegram-group cache, scoped to the requester for private-source safety."""
+    __tablename__ = "media_cache"
+
+    cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    group_id: Mapped[int] = mapped_column(BigInteger)
+    message_id: Mapped[int] = mapped_column(BigInteger)
+    mode: Mapped[str] = mapped_column(String(16))
+    filename: Mapped[str] = mapped_column(Text)
+    size: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[int] = mapped_column(Integer, default=now)
+    expires_at: Mapped[int] = mapped_column(Integer, index=True)
+
+
 class Setting(Base):
     __tablename__ = "settings"
 
