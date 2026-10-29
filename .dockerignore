@@ -8,9 +8,11 @@ __pycache__
 .ruff_cache
 data
 cookies
-tests
-docs
+# tests/docs/CHANGELOG are needed by the diagnostics API:
+# /debug/pytest runs the suite and /debug/source reads these files.
 *.md
+!CHANGELOG.md
+!AGENTS.md
 .env
 .env.*
 !.env.example

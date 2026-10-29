@@ -7,6 +7,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.1.4] - 2026-10-29 · "Clean Deck"
+
+### Fixed
+- **Diagnostics can really read and test the source**: `tests/`, `docs/`,
+  `CHANGELOG.md` and `AGENTS.md` are no longer stripped from the image by
+  `.dockerignore`, so `GET /debug/source?path=tests/...` and
+  `POST /debug/pytest?path=tests/...` work on a live deployment.
+
 ## [5.1.3] - 2026-10-29 · "Clean Deck"
 
 ### Fixed

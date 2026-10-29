@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.1.3"
+__version__ = "5.1.4"
 CODENAME = "Clean Deck"
 RELEASE_DATE = "2026-10-29"
 
