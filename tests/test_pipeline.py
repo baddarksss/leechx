@@ -22,6 +22,14 @@ from app.services.runtime_settings import RuntimeSettings
 PAYLOAD = b"leechx-test" * 20_000  # ~۲۲۰KB
 
 
+@pytest.fixture(autouse=True)
+def allow_local_test_server(monkeypatch):
+    """The integration fixture explicitly serves on localhost."""
+    async def _allow_fixture_url(url):
+        return True
+    monkeypatch.setattr("app.services.downloader.urlcheck.is_safe_public_url", _allow_fixture_url)
+
+
 class StubUploader:
     def __init__(self) -> None:
         self.results = []

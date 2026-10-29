@@ -110,7 +110,7 @@ async def test_admin_group_configure_without_bot(db):
 
     assert hub.configured is False
     created = await hub.configure(123, "Team")
-    assert set(created) == {"downloads", "uploads", "reports", "logs"}
+    assert set(created) == {"downloads", "uploads", "reports", "logs", "cache", "audit", "security"}
     assert all(value is None for value in created.values())
     assert hub.configured is True
     assert hub.chat_id == 123
