@@ -10,6 +10,8 @@ services:
     volumes:
       # فایل‌های موقت و دیتابیس — با پاک‌شدن کانتینر از بین نمی‌روند
       - ./data:/app/data
+      # مسیر فایل‌های Local Bot API باید در کانتینر بات هم با همان آدرس در دسترس باشد
+      - ./data/tg-bot-api:/var/lib/telegram-bot-api:ro
       # کوکی‌ها (اختیاری)
       - ./cookies:/app/data/cookies:ro
     healthcheck:
@@ -44,4 +46,4 @@ services:
     volumes:
       - ./data/tg-bot-api:/var/lib/telegram-bot-api
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"

@@ -1,0 +1,1264 @@
+--- /dev/null
++++ b/GROUP_SETUP_CACHE_LOGS_FA.md
+@@ -0,0 +1,79 @@
++# راهنمای رسمی نصب کش و لاگ LeechX
++
++## طرح کلی: سه سیستم، یک گروه، هفت تاپیک
++
++**سیستم ۱: کش اطلاعات لینک (Metadata Cache)**
++- اطلاعات استخراج‌شده از لینک‌ها برای هر کاربر تا ۱۰ دقیقه در حافظه می‌ماند.
++- درخواست تکراری همان کاربر در این مدت، دوباره از سایت اصلی اطلاعات نمی‌گیرد.
++- رکوردهای قدیمی با سقف ۱۰۰۰ مدخل از حافظه خارج می‌شوند.
++- رخدادهای HIT و MISS/STORE بدون پارامترهای حساس URL در تاپیک «📦 کش رسانه‌ها» ثبت می‌شوند.
++
++**سیستم ۲: کش فایل رسانه‌ای تلگرام (Media Cache)**
++- بعد از اینکه ربات رسانه‌ای را از لینک عمومی دانلود و برای کاربر ارسال کرد، با copyMessage یک کپی در تاپیک کش گروه ثبت می‌شود.
++- مسیر کش رسانه با ترکیب شناسهٔ کاربر + لینک + کیفیت + روش تحویل + نام خروجی هش می‌شود؛ فایل‌های خصوصی کاربران با یکدیگر مخلوط نمی‌شوند.
++- در تکرار همان درخواست با همان شرایط، ربات می‌تواند از پیام آرشیوشده برای تحویل فوری استفاده کند، بدون دانلود دوباره و بدون آپلود مجدد بایت‌های فایل.
++- اگر پیام کش حذف شده، گروه عوض شده، یا کش قابل دریافت نباشد، دانلود عادی اجرا می‌شود.
++- اعتبار کش رسانه ۲۴ ساعت است؛ رکوردهای منقضی پاک می‌شوند و ربات برای حذف پیام‌های قدیمی تاپیک تلاش می‌کند.
++- در صورت خاموشی طولانی‌تر از محدودیت حذف پیام تلگرام، ممکن است لازم باشد نسخه‌های قدیمی را دستی از تاپیک پاک کنید.
++- فایل‌هایی که خود کاربران برای دریافت لینک مستقیم می‌فرستند، به کش رسانه‌ای گروه کپی نمی‌شوند. آن فایل‌ها روی سرور با TTL لینک اصلی نگهداری می‌شوند.
++
++**سیستم ۳: ثبت مرکزی لاگ، رویداد و امنیت (Audit & Logs)**
++- آغاز دانلود و آپلود، موفقیت، لغو، خطا، خطاهای هندلر، فعالیت فایل/لینک مستقیم، تغییر تنظیمات و مجوزهای ادمین ثبت می‌شوند.
++- رویدادهای مدیریتی در دیتابیس نیز ذخیره می‌شوند تا با حذف ناخواستهٔ یک پیام از گروه از بین نروند.
++- پسورد، توکن ربات، API Hash و query stringهای حساس URL در پیام‌های تازهٔ کش و گزارش‌های جدید عملیات نوشته نمی‌شوند.
++- ارسال لاگ از منطق اصلی جداست؛ خطای ارسال گزارش نباید باعث توقف دانلود شود.
++
++## گروه موردنیاز
++
++نام پیشنهادی: **LeechX | Cache & Logs**.
++نوع: **سوپرگروه خصوصی تلگرام (Private Supergroup)**، قابلیت **Topics / Forum** روشن.
++تنها ادمین‌های مورداعتماد را عضو کنید. این گروه محل نگهداری فایل‌های کش و لاگ داخلی است و نباید عمومی باشد.
++
++### هفت تاپیک اتوماتیک
++
++۱. 📦 **کش رسانه‌ها:** فایل‌های رسانه‌ای کش‌شده، وضعیت ذخیره و استفادهٔ مجدد، رخدادهای کش اطلاعات لینک.
++
++۲. 📥 **دانلودها:** شروع دریافت از سایت‌ها و پایان عملیات ساخت لینک دانلود.
++
++۳. 📤 **آپلودها:** شروع و پایان ارسال رسانه به تلگرام، دریافت فایل ارسالی کاربر و ایجاد لینک مستقیم.
++
++۴. 🚨 **گزارش‌ها:** گزارش خطاهای سایت/لینک و پیام‌های کاربران به ادمین.
++
++۵. 🐞 **لاگ‌ها:** خطاهای هندلرها، استثناها و رخدادهای سیستمیِ قابل بررسی.
++
++۶. 🧾 **ممیزی و وضعیت عملیات:** وضعیت نهایی کارها و رویدادهای سیستمی با شناسهٔ کار.
++
++۷. 🔐 **امنیت و تنظیمات:** تغییرات حساس تنظیمات، مجوز ادمین‌ها، بن/آنبن، اتصال و قطع گروه و حذف لینک‌ها.
++
++## دستورالعمل دقیق راه‌اندازی
++
++۱. در تلگرام یک **گروه خصوصی جدید** با نام دلخواه (پیشنهادی بالا) بسازید. اگر معمولی است، آن را به سوپرگروه ارتقا دهید.
++
++۲. در تنظیمات گروه، **Topics** را فعال کنید. **لازم نیست هفت تاپیک را دستی بسازید.** ربات این کار را انجام می‌دهد.
++
++۳. ربات **@myytdl2026bot** را به همان گروه اضافه و ادمین کنید. دسترسی‌های ضروری: **Manage Topics**، **Post Messages / Send Messages** و **Delete Messages** (برای پاک‌سازی آرشیو). دسترسی کافی برای دیدن پیام‌های مرتبط با فعالیت ربات نیز ضروری است.
++
++۴. از اکانتی که **در خود ربات مالک یا ادمین مجاز** است، داخل همان گروه دستور **/setup** را بفرستید. صرفاً ادمین بودن در گروه کافی نیست.
++
++۵. ربات باید هفت تاپیک را ایجاد کند و شناسهٔ آن‌ها را اعلام کند. اگر هر مورد «—» بود، مجوز مدیریت تاپیک‌ها/حالت Forum را بررسی کنید و دوباره **/setup** را بزنید. این دستور روی همان گروه تکراری‌ساز نیست.
++
++۶. داخل PV ربات با ارسال لینک ویدیویی و انتخاب «🎬 ارسال ویدیو در تلگرام» یک تست واقعی انجام دهید. تاپیک کش باید کپی رسانه را بگیرد؛ با تکرار همان درخواست، کش رسانه قابل استفاده است. آزمون دانلود، آپلود و خطا را در تاپیک‌های مربوط ببینید.
++
++۷. در پنل ادمین ربات، بخش **👥 گروه ادمین** را باز و وجود شناسهٔ هفت تاپیک را بررسی کنید. برای تست ارسال لاگ از دکمهٔ «🧪 تست ارسال» استفاده کنید.
++
++۸. لازم نیست گروه‌های جداگانه یا کانال کش دیگری بسازید. تمام زیرسامانه‌ها به همین یک گروه متصل‌اند.
++
++## نکات استقرار
++
++- **این ZIP یک نسخهٔ سورس اصلاح‌شده است؛ هنوز روی سرویس آنلاین نصب نشده است.**
++- برای استقرار باید روی میزبان اصلی از فایل `.env`، پایگاه داده، پوشهٔ `data` و کوکی‌ها بک‌آپ تهیه کنید.
++- ربات باید پس از جایگزینی سورس مجدداً اجرا شود تا جدول `media_cache` خودکار در دیتابیس ایجاد شود. با `/setup`، تنظیمات گروه و شناسهٔ تاپیک‌ها در دیتابیس ذخیره می‌شود.
++- اگر گروه قبلاً با نسخهٔ قدیمی تنظیم شده، `/setup` همان گروه فقط سه تاپیک جدید را اضافه می‌کند و چهار تاپیک قبلی را حفظ می‌کند.
++- حذف پیام کش در تلگرام تابع محدودیت‌های Bot API است؛ در خاموشی طولانی سرور ممکن است پاک‌سازی دستی لازم باشد.
++- درخواست‌های بازشده از لینک مستقیم همچنان در شمارندهٔ دانلود دیتابیس ثبت می‌شوند؛ همهٔ رنج‌های کوچک HTTP به گروه فرستاده نمی‌شوند تا گروه زیر بار دانلود چندبخشی پر از لاگ بی‌ارزش نشود.
++- کش اطلاعات در حافظه با ری‌استارت صفر می‌شود؛ کش رسانه در دیتابیس ذخیره می‌شود و تا انقضا/حذف پیام کش قابل استفاده است.
++- در صورت محدودیت Bot API برای حجم فایل‌های بزرگ، Local Bot API مطابق فایل compose باید فعال باشد؛ ساخت کش به‌تنهایی محدودیت تلگرام را رفع نمی‌کند.
++
++## پذیرش و کنترل کیفیت
++
++مجموع تست‌ها و نتیجهٔ آخرین اجرای خودکار در کپشن فایل نهایی درج شده است. اجرای واقعی روی سرور تولید، مجوزهای ربات در گروه و فشار هم‌زمان چندکاربره هنوز نیاز به تست پس از استقرار دارند.
+--- /dev/null
++++ b/QA_FEATURES_V4_FA.md
+@@ -0,0 +1,38 @@
++# گزارش توسعهٔ نسخهٔ چهارم LeechX
++
++**مبنای توسعه:** آخرین بستهٔ موجود در Saved Messages، پیام 905114، نسخه `leechx-repaired-v3-20261029.zip`.
++**وضعیت:** سورس آمادهٔ استقرار؛ هنوز روی بات آنلاین نصب نشده است.
++
++## سه سیستم اجراشده
++۱. کش موقت اطلاعات لینک بر مبنای کاربر و URL با TTL ۱۰ دقیقه و سقف ۱۰۰۰ مدخل، جلوگیری از probe تکراری و ثبت HIT/MISS در تاپیک کش.
++
++۲. کش فایل رسانه‌ای در همان سوپرگروه: با `copy_message` و بدون آپلود مجدد از سرور، تاپیک `📦 کش رسانه‌ها`؛ هنگام درخواست یکسان همان کاربر، از آرشیو ارسال می‌شود. کلید SHA256 شامل شناسهٔ کاربر، لینک، selector کیفیت، نوع خروجی و نام دلخواه است. TTL پیش‌فرض ۲۴ ساعت و حذف دوره‌ای. پیام cache با کپشن بی‌اطلاعات حساس نگهداری می‌شود. کش کاربرها مستقل است.
++
++۳. رویدادها، هشدارهای سیستم و عملیات ادمین در SQLite و تاپیک‌های تخصصی ثبت می‌شوند. شامل شروع/اتمام/لغو/خطای دانلود و آپلود، تبدیل فایل به لینک، بازدید HTTP از لینک مستقیم (حداکثر یک گزارش در هر ۵ دقیقه برای هر فایل)، تغییرات تنظیمات، تغییر وضعیت مدیران و کاربران، پخش همگانی و پاک‌سازی. عدم موفقیت در ثبت لاگ نباید جریان اصلی را متوقف کند.
++
++## گروه مرکزی و تاپیک‌ها
++- 📦 کش رسانه‌ها
++- 📥 دانلودها
++- 📤 آپلودها
++- 🚨 گزارش‌ها
++- 🐞 لاگ‌ها
++- 🧾 ممیزی و وضعیت عملیات
++- 🔐 امنیت و تنظیمات
++
++برای ساخت: یک **سوپرگروه خصوصی با Topics فعال** بسازید؛ به ربات دسترسی ادمین، Send Messages، Manage Topics و Delete Messages بدهید؛ مالک/ادمین **خود ربات** داخل آن گروه دستور `/setup` بزند. تاپیک‌ها خودکار ایجاد می‌شوند و شناسهٔ همه در پایگاه داده ذخیره می‌شود؛ اجرای دوباره روی همان گروه تاپیک تکراری ایجاد نمی‌کند. `/setup` در گروه عمومی یا گروه فاقد Topics رد می‌شود.
++
++**راهنمای دقیق راه‌اندازی در فایل `GROUP_SETUP_CACHE_LOGS_FA.md` موجود است.**
++
++## آزمون‌ها
++- ۱۶۰ تست خودکار موفق در محیط ایزوله؛ چندین تست جدید برای ایجاد ۷ تاپیک، راه‌اندازی تکرارشونده، تفکیک کش کاربران، cache hit واقعی با جلوگیری از دانلود مجدد، cleanup پیام کش، برگشت به دانلود در خرابی کش، لاگ امنیت و جلوگیری از ارسال لاگ به بخش General گروه.
++- `ruff check app tests --select F,E9`: موفق.
++- `compileall -q app`: موفق.
++- تست روی گروه واقعی، تست عملکرد ۱۰۰ کاربر و استقرار روی میزبان عملیاتی انجام نشده است.
++
++## موارد امنیتی و محدودیت‌ها
++- گروه باید خصوصی بماند: رسانهٔ کش‌شده و گزارش‌های حاوی شناسه‌های کاربری در دسترس اعضای آن گروه قرار می‌گیرند.
++- ربات فقط فایل‌های دانلودشده از URL را در کش گروه ذخیره می‌کند؛ فایل شخصی آپلودی کاربر برای ساخت لینک به آن تاپیک منتقل نمی‌شود.
++- کش فقط بین درخواست‌های یک کاربر قابل استفاده است و دسترسی به فایل کاربر دیگر داده نمی‌شود.
++- از ذخیرهٔ مستقیم API token، API hash و پارامترهای کوئری لینک‌ها در پیام کش و گزارش‌های جدید عملیات اجتناب می‌شود.
++- پیام‌های cache منقضی بعد از ۲۴ ساعت برای حذف درخواست می‌شوند. به دلیل محدودیت Bot API در حذف پیام‌های بسیار قدیمی، در قطعی طولانی ربات ممکن است نیاز به پاک‌سازی دستی باشد.
++- ذخیرهٔ کش به تنهایی فایل‌ها را از محدودیت حجم سرور Bot API معاف نمی‌کند.
+--- a/app/bot/flows/admin.py
++++ b/app/bot/flows/admin.py
+@@ -114,6 +114,8 @@
+                 await safe_answer(query, text.t(lang, "admin_owner_immutable"), alert=True)
+                 return
+             ok = await repo.remove_admin(uid)
++            await svc.admin_group.audit("security", "admin_removed",
++                                        update.effective_user.id, f"target={uid}, changed={ok}")
+             await safe_answer(query, text.t(lang, "admin_remove_ok" if ok else "admin_remove_fail", uid=uid))
+             if uid in svc.cfg.extra_admins:
+                 await safe_answer(
+@@ -139,6 +141,8 @@
+         key = args[0]
+         if key in SCHEMA and SCHEMA[key][0] == "bool":
+             value = await svc.settings.toggle(key)
++            await svc.admin_group.audit("security", "setting_toggled",
++                                        update.effective_user.id, f"{key}={value}")
+             await safe_answer(query, f"{svc.settings.label(key)}: {'ON' if value else 'OFF'}")
+             await edit(
+                 msg,
+@@ -257,6 +261,7 @@
+ 
+     if action == "groupoff":
+         await safe_answer(query)
++        await svc.admin_group.audit("security", "group_disconnected", update.effective_user.id)
+         await svc.admin_group.disable()
+         await safe_answer(query, text.t(lang, "admin_group_off_done"))
+         await _render_group(update, context)
+@@ -317,6 +322,8 @@
+     if action in ("ban", "unban") and args:
+         uid = int(args[0])
+         await repo.set_banned(uid, action == "ban")
++        await svc.admin_group.audit("security", f"user_{action}", update.effective_user.id,
++                                    f"target={uid}")
+         await safe_answer(query, "✅")
+         await _show_user(update, context, uid)
+         return
+@@ -473,6 +480,11 @@
+         reports=svc.settings.get_str("topic_reports") or "—",
+         logs=svc.settings.get_str("topic_logs") or "—",
+         hint=hint,
++    )
++    body += (
++        f"\n\n📦 کش رسانه‌ها: {group.topic_id('cache') or '—'}"
++        f"\n🧾 ممیزی عملیات: {group.topic_id('audit') or '—'}"
++        f"\n🔐 امنیت و تنظیمات: {group.topic_id('security') or '—'}"
+     )
+     menu = kb.group_menu(lang, group.configured)
+     query = update.callback_query
+@@ -619,6 +631,8 @@
+         await reply(update, text.t(lang, "admin_broadcast_started", count=len(ids)))
+         ok, fail = await broadcast(context, ids, message.text_html or human.esc(raw), lang)
+         await reply(update, text.t(lang, "admin_broadcast_done", ok=ok, fail=fail))
++        await svc.admin_group.audit("security", "broadcast_completed",
++                                    update.effective_user.id, f"sent={ok}, failed={fail}")
+         return
+ 
+     if state == ST_ADD_ADMIN:
+@@ -631,6 +645,8 @@
+             await reply(update, text.t(lang, "admin_limit_reached", max=svc.cfg.max_admins))
+             return
+         await repo.add_admin(user.id, update.effective_user.id)
++        await svc.admin_group.audit("security", "admin_added",
++                                    update.effective_user.id, f"new_admin={user.id}")
+         await reply(update, text.t(lang, "admin_add_ok", uid=user.id))
+         return
+ 
+@@ -652,6 +668,8 @@
+             await reply(update, text.t(lang, "admin_bad_value"))
+             return
+         await svc.settings.set(key, value)
++        await svc.admin_group.audit("security", "setting_updated",
++                                    update.effective_user.id, f"key={key} (value hidden)")
+         svc.limiter.set_interval(svc.settings.rate_limit_seconds)
+         await reply(
+             update,
+@@ -688,9 +706,14 @@
+         title = ""
+         try:
+             chat = await context.bot.get_chat(chat_id)
++            if (chat.type != "supergroup" or not getattr(chat, "is_forum", False)
++                    or getattr(chat, "username", None)):
++                await reply(update, "⚠️ یک سوپرگروه خصوصی با Topics فعال وارد کن.")
++                return
+             title = getattr(chat, "title", "") or ""
+         except TelegramError:
+-            pass
++            await reply(update, text.t(lang, "admin_group_test_fail"))
++            return
+         created = await svc.admin_group.configure(chat_id, title)
+         ok = sum(1 for value in created.values() if value)
+         failed = len(created) - ok
+@@ -714,6 +737,8 @@
+             await reply(update, text.t(lang, "admin_bad_value"))
+             return
+         await svc.settings.set(key, value)
++        await svc.admin_group.audit("security", "runtime_updated",
++                                    update.effective_user.id, f"key={key} (value hidden)")
+         svc.settings.apply_to_config()
+         if key == "rate_limit_seconds":
+             svc.limiter.set_interval(svc.settings.rate_limit_seconds)
+@@ -798,15 +823,14 @@
+ 
+     allowed = await is_admin(svc.cfg, user.id)
+     if not allowed:
+-        try:
+-            member = await context.bot.get_chat_member(chat.id, user.id)
+-            allowed = getattr(member, "status", "") in ("administrator", "creator")
+-        except TelegramError:
+-            allowed = False
+-    if not allowed:
+         await reply(update, text.t(lang, "setup_need_admin"))
+         return
+ 
++    # All operational messages and archived media belong in one private forum.
++    if (chat.type != "supergroup" or not getattr(chat, "is_forum", False)
++            or getattr(chat, "username", None)):
++        await reply(update, "⚠️ گروه باید سوپرگروه خصوصی با قابلیت Topics فعال باشد.")
++        return
+     created = await svc.admin_group.configure(chat.id, chat.title or "")
+     body = text.t(
+         lang,
+@@ -816,7 +840,14 @@
+         reports=created.get("reports") or "—",
+         logs=created.get("logs") or "—",
+     )
++    body += (
++        f"\n📦 کش: <code>{created.get('cache') or '—'}</code>"
++        f"\n🧾 ممیزی: <code>{created.get('audit') or '—'}</code>"
++        f"\n🔐 امنیت: <code>{created.get('security') or '—'}</code>"
++    )
+     await reply(update, body)
++    await svc.admin_group.audit("security", "group_setup", user.id,
++                                f"group {chat.id}; topics {sum(bool(x) for x in created.values())}/7")
+ 
+ 
+ async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+--- a/app/bot/flows/errors.py
++++ b/app/bot/flows/errors.py
+@@ -25,7 +25,7 @@
+             await hub.record_log(
+                 "ERROR",
+                 "handler",
+-                f"{type(context.error).__name__}: {context.error}"[:2000],
++                f"{type(context.error).__name__} (details retained in server logs)",
+                 user_id,
+             )
+         except Exception:  # noqa: BLE001 — ثبت خطا نباید خطای دیگری بسازد
+--- a/app/bot/flows/link.py
++++ b/app/bot/flows/link.py
+@@ -191,7 +191,9 @@
+         return
+ 
+     try:
+-        info = await svc.downloader.probe(url)
++        info = (await svc.cache.probe(user.id, url, svc.downloader.probe)
++                if getattr(svc, "cache", None) is not None
++                else await svc.downloader.probe(url))
+     except errors.LeechError as exc:
+         body = error_text(lang, exc)
+         if exc.key in REPORTABLE:
+--- a/app/bot/flows/user_links.py
++++ b/app/bot/flows/user_links.py
+@@ -129,6 +129,9 @@
+             if (root / file_id).resolve().is_relative_to(root):
+                 svc.store.drop_link_dir(file_id)
+         await repo.log_event(update.effective_user.id, "link_revoked")
++        if getattr(svc, "admin_group", None) is not None:
++            await svc.admin_group.audit("security", "direct_link_deleted",
++                                        update.effective_user.id, f"file_id={file_id}")
+         await safe_answer(query, "Deleted" if lang == "en" else "فایل حذف شد")
+     else:
+         await safe_answer(query, "Already removed" if lang == "en" else "قبلاً حذف شده")
+--- a/app/container.py
++++ b/app/container.py
+@@ -14,6 +14,7 @@
+ from app.config import Config
+ from app.db import repo
+ from app.services.admin_group import AdminGroup
++from app.services.cache import CacheHub
+ from app.services.cookies import CookieStore
+ from app.services.downloader import Downloader
+ from app.services.drafts import DraftStore
+@@ -43,6 +44,7 @@
+     admin_group: AdminGroup
+     drafts: DraftStore = field(default_factory=DraftStore)
+     file_transfers: FileLinkTransfers | None = None
++    cache: CacheHub | None = None
+     sites: object = sites
+     started_at: float = field(default_factory=time.time)
+     _cleanup: asyncio.Task | None = None
+@@ -59,7 +61,7 @@
+         jobs = JobManager(
+             cfg, settings, store, downloader, uploader, limiter, hub=admin_group
+         )
+-        server = LinkServer(cfg, settings, store)
++        server = LinkServer(cfg, settings, store, hub=admin_group)
+         instance = cls(
+             cfg=cfg,
+             settings=settings,
+@@ -73,6 +75,8 @@
+             admin_group=admin_group,
+         )
+         instance.file_transfers = FileLinkTransfers(instance)
++        instance.cache = CacheHub(admin_group)
++        instance.jobs.cache = instance.cache
+         return instance
+ 
+     @property
+@@ -135,5 +139,12 @@
+         freed += extra_bytes
+ 
+         self.drafts.prune()
++        if removed and self.admin_group is not None:
++            await self.admin_group.audit("system", "cleanup", details=f"removed={removed}, bytes={freed}")
++        if self.cache is not None:
++            try:
++                removed += await self.cache.clear_expired(self.jobs.bot)
++            except Exception:
++                log.exception("cache cleanup failed")
+         log.debug("cleanup: %d files, %d bytes", removed, freed)
+         return removed, freed
+--- a/app/core/text.py
++++ b/app/core/text.py
+@@ -303,7 +303,7 @@
+         "این دستور باید <b>داخل گروه</b> فرستاده شود.\n"
+         "ربات را به گروه دارای Topics اضافه کن و آنجا <code>/setup</code> بزن."
+     ),
+-    "setup_need_admin": "⛔️ فقط ادمین‌های ربات یا ادمین‌های گروه می‌توانند گروه را تنظیم کنند.",
++    "setup_need_admin": "⛔️ فقط ادمین‌های خود ربات اجازهٔ اتصال گروه گزارش‌ها را دارند.",
+     "setup_not_group": "این چت گروه نیست.",
+     "setup_done": (
+         "✅ گروه ادمین تنظیم شد.\n\n"
+@@ -608,7 +608,7 @@
+         "This command must be sent <b>inside a group</b>.\n"
+         "Add the bot to a group with Topics enabled and send <code>/setup</code> there."
+     ),
+-    "setup_need_admin": "⛔️ Only bot admins or group admins can configure the group.",
++    "setup_need_admin": "⛔️ Only authorized bot admins can configure the log group.",
+     "setup_not_group": "This chat is not a group.",
+     "setup_done": (
+         "✅ Admin group configured.\n\n"
+--- a/app/db/models.py
++++ b/app/db/models.py
+@@ -75,6 +75,21 @@
+     last_access: Mapped[int | None] = mapped_column(Integer, nullable=True)
+ 
+ 
++class MediaCacheEntry(Base):
++    """Telegram-group cache, scoped to the requester for private-source safety."""
++    __tablename__ = "media_cache"
++
++    cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
++    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
++    group_id: Mapped[int] = mapped_column(BigInteger)
++    message_id: Mapped[int] = mapped_column(BigInteger)
++    mode: Mapped[str] = mapped_column(String(16))
++    filename: Mapped[str] = mapped_column(Text)
++    size: Mapped[int] = mapped_column(BigInteger, default=0)
++    created_at: Mapped[int] = mapped_column(Integer, default=now)
++    expires_at: Mapped[int] = mapped_column(Integer, index=True)
++
++
+ class Setting(Base):
+     __tablename__ = "settings"
+ 
+--- a/app/db/repo.py
++++ b/app/db/repo.py
+@@ -8,7 +8,59 @@
+ from sqlalchemy.exc import IntegrityError
+ 
+ from app.db.base import session
+-from app.db.models import Admin, Job, LogEntry, Report, Setting, SharedFile, StatEvent, User
++from app.db.models import Admin, Job, LogEntry, MediaCacheEntry, Report, Setting, SharedFile, StatEvent, User
++
++
++# ── آرشیو کش رسانه در سوپرگروه ─────────────────────────────
++async def get_media_cache(key: str, user_id: int, group_id: int) -> MediaCacheEntry | None:
++    async with session() as s:
++        return (await s.execute(
++            select(MediaCacheEntry).where(
++                MediaCacheEntry.cache_key == key,
++                MediaCacheEntry.user_id == user_id,
++                MediaCacheEntry.group_id == group_id,
++                MediaCacheEntry.expires_at > int(time.time()),
++            )
++        )).scalar_one_or_none()
++
++
++async def put_media_cache(
++    key: str, user_id: int, group_id: int, message_id: int,
++    mode: str, filename: str, size: int, ttl: int,
++) -> None:
++    ts = int(time.time())
++    async with session() as s:
++        entry = await s.get(MediaCacheEntry, key)
++        if entry is None:
++            entry = MediaCacheEntry(
++                cache_key=key, user_id=user_id, group_id=group_id,
++                message_id=message_id, mode=mode, filename=filename,
++                size=size, created_at=ts, expires_at=ts + ttl,
++            )
++            s.add(entry)
++        else:
++            entry.user_id = user_id
++            entry.group_id = group_id
++            entry.message_id = message_id
++            entry.mode = mode
++            entry.filename = filename
++            entry.size = size
++            entry.expires_at = ts + ttl
++        await s.commit()
++
++
++async def delete_media_cache(key: str) -> None:
++    async with session() as s:
++        await s.execute(delete(MediaCacheEntry).where(MediaCacheEntry.cache_key == key))
++        await s.commit()
++
++
++async def expired_media_cache(now_ts: int | None = None) -> Sequence[MediaCacheEntry]:
++    ts = int(time.time()) if now_ts is None else now_ts
++    async with session() as s:
++        return (await s.execute(
++            select(MediaCacheEntry).where(MediaCacheEntry.expires_at <= ts)
++        )).scalars().all()
+ 
+ 
+ # ── کاربران ────────────────────────────────────────────────
+--- a/app/services/admin_group.py
++++ b/app/services/admin_group.py
+@@ -17,6 +17,7 @@
+ 
+ from app.config import Config
+ from app.core import human
++from app.services.cache import safe_source
+ from app.db import repo
+ from app.services.runtime_settings import RuntimeSettings
+ 
+@@ -27,6 +28,9 @@
+     "uploads": "📤 آپلودها",
+     "reports": "🚨 گزارش‌ها",
+     "logs": "🐞 لاگ‌ها",
++    "cache": "📦 کش رسانه‌ها",
++    "audit": "🧾 ممیزی و وضعیت عملیات",
++    "security": "🔐 امنیت و تنظیمات",
+ }
+ 
+ 
+@@ -74,21 +78,26 @@
+     # ── تنظیم گروه ─────────────────────────────────────────
+     async def configure(self, chat_id: int, title: str = "") -> dict[str, int | None]:
+         """شناسهٔ گروه را ذخیره و تاپیک‌ها را می‌سازد (اگر ممکن باشد)."""
+-        await self.settings.set("admin_group_id", str(chat_id))
+-        await self.settings.set("admin_group_title", (title or "")[:128])
++        # /setup is idempotent: do not duplicate existing topics on each call.
++        same_group = self.chat_id == chat_id
+         created: dict[str, int | None] = {}
+         for key, name in TOPICS.items():
+-            thread: int | None = None
+-            if self.bot is not None:
++            thread: int | None = self.topic_id(key) if same_group else None
++            if thread is None and self.bot is not None:
+                 try:
+                     topic = await self.bot.create_forum_topic(chat_id=chat_id, name=name)
+                     thread = int(getattr(topic, "message_thread_id", 0) or 0) or None
+                 except TelegramError as exc:
+                     log.warning("could not create topic %s: %s", name, exc)
+-                except Exception:  # noqa: BLE001
++                except Exception:
+                     log.exception("unexpected error creating topic %s", name)
++            # Existing topics survive partially failed reconfiguration.
++            created[key] = thread
++        # Only persist new group settings after topic provisioning is attempted.
++        await self.settings.set("admin_group_id", str(chat_id))
++        await self.settings.set("admin_group_title", (title or "")[:128])
++        for key, thread in created.items():
+             await self.settings.set(f"topic_{key}", str(thread or ""))
+-            created[key] = thread
+         return created
+ 
+     async def disable(self) -> None:
+@@ -103,6 +112,9 @@
+         if self.bot is None or chat_id is None:
+             return False
+         thread = self.topic_id(topic)
++        if not thread:
++            log.warning("cannot send %s without a configured topic", topic)
++            return False
+         kwargs: dict[str, Any] = {
+             "parse_mode": ParseMode.HTML,
+             "disable_web_page_preview": True,
+@@ -113,17 +125,57 @@
+             await self.bot.send_message(chat_id, body, reply_markup=reply_markup, **kwargs)
+             return True
+         except TelegramError as exc:
+-            log.warning("admin group send failed (%s): %s", topic, exc)
+-            if not thread:
+-                return False
+-        # تاپیک پاک شده یا شناسه عوض شده: به چت اصلی گروه برمی‌گردیم.
+-        kwargs.pop("message_thread_id", None)
+-        try:
+-            await self.bot.send_message(chat_id, body, reply_markup=reply_markup, **kwargs)
+-            return True
+-        except TelegramError as exc:
+-            log.warning("admin group fallback failed: %s", exc)
+-            return False
++            log.warning("admin group topic send failed (%s): %s", topic, exc)
++            return False
++
++    async def cache_event(self, component: str, action: str, summary: str) -> bool:
++        """Diagnostics without sending user URLs, secrets or file bodies."""
++        if not self.topic_id("cache"):
++            return False
++        body = (
++            f"📦 <b>{human.esc(component)}</b> | <b>{human.esc(action)}</b>\n"
++            f"<code>{human.esc(human.truncate(summary, 140))}</code>"
++        )
++        try:
++            return await self.send("cache", body)
++        except Exception:
++            log.debug("cache event logging failed", exc_info=True)
++            return False
++
++    async def audit(self, category: str, action: str, user_id: int | None = None,
++                    details: str = "", severity: str = "INFO") -> None:
++        """Store events in SQLite and route to audit or security topic."""
++        message = f"{action}" + (f" • {details[:350]}" if details else "")
++        topic = "security" if category == "security" else "audit"
++        try:
++            row = await repo.add_log(severity, category[:64], message[:1300], user_id)
++            label = "🔐" if category == "security" else "🧾"
++            body = (
++                f"{label} <b>{human.esc(action)}</b>\n"
++                f"بخش: <code>{human.esc(category)}</code>\n"
++                f"جزئیات: {human.esc(human.truncate(details or '—', 350))}\n"
++                f"کاربر: <code>{user_id if user_id is not None else '—'}</code>\n"
++                f"لاگ: <code>#{row.id}</code>"
++            )
++            await self.send(topic, body)
++        except Exception:
++            log.warning("audit event could not be saved", exc_info=True)
++
++    async def notify_job_result(self, task, status: str, size: int = 0,
++                                reason: str = "") -> None:
++        """Lifecycle status for every URL download, upload, link or cancel."""
++        mode = getattr(task, "mode", "video")
++        topic = "downloads" if mode == "link" else "uploads"
++        message = (
++            f"🧾 <b>پایان عملیات {human.esc(status)}</b>\n"
++            f"کار: <code>{human.esc(task.id)}</code>\n"
++            f"کاربر: <code>{task.user_id}</code>\n"
++            f"روش تحویل: {human.esc(mode)}\n"
++            f"حجم: {human.human_bytes(size)}\n"
++            f"خطا: {human.esc(human.truncate(reason or '—', 200))}"
++        )
++        await self.send(topic, message)
++        await self.audit("job", status, task.user_id, f"{task.id}, {mode}, {size}B")
+ 
+     # ── اعلان‌های کار ───────────────────────────────────────
+     async def notify_job(self, kind: str, task, result=None) -> None:
+@@ -155,7 +207,7 @@
+                 f"📦 حجم: {human.human_bytes(size)}\n"
+                 f"📤 تحویل: {mode}\n"
+                 f"🆔 کار: <code>{task.id}</code>\n"
+-                f"🌐 {human.esc(human.truncate(task.url, 300))}"
++                f"🌐 {human.esc(human.truncate(safe_source(task.url), 200))}"
+             )
+             await self.send(topic, body)
+         except Exception:  # noqa: BLE001
+--- /dev/null
++++ b/app/services/cache.py
+@@ -0,0 +1,166 @@
++"""Two real caches: short-lived per-user metadata and Telegram media archives.
++
++Telegram media archives use copy_message (no file re-upload on cache hit).
++Keep all private/cookie-dependent content scoped to its original user.
++Never store token-bearing URLs or credentials in group messages or cache keys.
++"""
++from __future__ import annotations
++
++import asyncio
++import hashlib
++import json
++import logging
++import time
++from collections import OrderedDict
++from typing import TYPE_CHECKING, Any
++from urllib.parse import urlsplit, urlunsplit
++
++from telegram.error import TelegramError
++
++from app.db import repo
++
++if TYPE_CHECKING:
++    from app.services.admin_group import AdminGroup
++
++log = logging.getLogger("leechx.cache")
++PROBE_TTL = 600
++MEDIA_TTL = 24 * 3600  # Telegram deleteMessage normally allows only ~48 hours
++MAX_PROBES = 1000
++
++
++def fingerprint(user_id: int, url: str, selector: str, mode: str, custom_name: str) -> str:
++    raw = json.dumps(
++        [user_id, url, selector, mode, custom_name], ensure_ascii=True,
++        separators=(",", ":"),
++    )
++    return hashlib.sha256(raw.encode()).hexdigest()
++
++
++def safe_source(url: str) -> str:
++    """Avoid retaining signed query parameters or embedded credentials in group logs."""
++    try:
++        parts = urlsplit(url)
++        host = parts.hostname or ""
++        return urlunsplit((parts.scheme, host, parts.path[:120], "", ""))
++    except ValueError:
++        return "(invalid URL)"
++
++
++class CacheHub:
++    def __init__(self, group: AdminGroup) -> None:
++        self.group = group
++        self._probes: OrderedDict[tuple[int, str], tuple[float, Any]] = OrderedDict()
++        self._inflight: dict[tuple[int, str], asyncio.Task] = {}
++
++    async def probe(self, user_id: int, url: str, fetch):
++        key = (user_id, url)
++        now = time.monotonic()
++        item = self._probes.get(key)
++        if item and item[0] > now:
++            self._probes.move_to_end(key)
++            await self.group.cache_event("metadata", "HIT", safe_source(url))
++            return item[1]
++        if item:
++            self._probes.pop(key, None)
++        existing = self._inflight.get(key)
++        if existing:
++            return await asyncio.shield(existing)
++        async def do_fetch():
++            info = await fetch(url)
++            self._probes[key] = (time.monotonic() + PROBE_TTL, info)
++            self._probes.move_to_end(key)
++            while len(self._probes) > MAX_PROBES:
++                self._probes.popitem(last=False)
++            return info
++        task = asyncio.create_task(do_fetch())
++        self._inflight[key] = task
++        try:
++            result = await asyncio.shield(task)
++            await self.group.cache_event("metadata", "MISS/STORE", safe_source(url))
++            return result
++        finally:
++            if self._inflight.get(key) is task:
++                self._inflight.pop(key, None)
++
++    async def cached_delivery(self, bot, task) -> bool:
++        group_id = self.group.chat_id
++        if not group_id or not self.group.topic_id("cache"):
++            return False
++        key = fingerprint(
++            task.user_id, task.url, task.option.selector, task.mode, task.custom_name
++        )
++        row = await repo.get_media_cache(key, task.user_id, group_id)
++        if row is None:
++            return False
++        if task.cancel.is_set():
++            return False
++        try:
++            from app.core.caption import build_caption
++            from app.core import human
++            copied = await bot.copy_message(
++                chat_id=task.chat_id,
++                from_chat_id=group_id,
++                message_id=row.message_id,
++                caption=build_caption(
++                    human.safe_filename(task.custom_name or task.title or row.filename, 150),
++                    task.url, "document" if task.mode == "document" else "video",
++                ),
++                parse_mode="HTML",
++            )
++        except TelegramError as exc:
++            log.info("cache copy failed; redownload: %s", exc)
++            await repo.delete_media_cache(key)
++            await self.group.cache_event("media", "STALE", key[:12])
++            return False
++        if task.cancel.is_set():
++            try:
++                await bot.delete_message(task.chat_id, copied.message_id)
++            except TelegramError:
++                pass
++            return False
++        try:
++            await self.group.cache_event("media", "HIT", key[:12])
++        except Exception:
++            log.debug("cache-hit logging failed", exc_info=True)
++        return row.size
++
++    async def record_delivery(self, bot, task, result, uploaded_message) -> None:
++        group_id = self.group.chat_id
++        topic_id = self.group.topic_id("cache")
++        if not group_id or not topic_id or not uploaded_message:
++            return
++        key = fingerprint(
++            task.user_id, task.url, task.option.selector, task.mode, task.custom_name
++        )
++        try:
++            copied = await bot.copy_message(
++                chat_id=group_id,
++                from_chat_id=task.chat_id,
++                message_id=uploaded_message.message_id,
++                message_thread_id=topic_id,
++                caption=f"📦 کش خصوصی رسانه | کاربر: {task.user_id} | شناسه: {key[:12]}",
++            )
++            await repo.put_media_cache(
++                key, task.user_id, group_id, copied.message_id,
++                task.mode, result.path.name, result.size, MEDIA_TTL,
++            )
++            await self.group.cache_event("media", "STORE", f"{key[:12]} • {result.size} B")
++        except Exception:
++            log.warning("media caching failed, normal delivery already succeeded", exc_info=True)
++
++    async def clear_expired(self, bot=None) -> int:
++        removed = 0
++        rows = await repo.expired_media_cache()
++        for row in rows:
++            await repo.delete_media_cache(row.cache_key)
++            removed += 1
++            if bot is not None:
++                try:
++                    await bot.delete_message(row.group_id, row.message_id)
++                except TelegramError:
++                    pass
++        now = time.monotonic()
++        for key in list(self._probes):
++            if self._probes[key][0] <= now:
++                del self._probes[key]
++        return removed
+--- a/app/services/jobs.py
++++ b/app/services/jobs.py
+@@ -103,6 +103,7 @@
+         self.uploader = uploader
+         self.limiter = limiter
+         self.hub = hub
++        self.cache = None
+ 
+         self.bot = None
+         self._queue: deque[JobTask] = deque()
+@@ -263,6 +264,32 @@
+             await self._edit_progress(task, force=True)
+             if self.hub is not None:
+                 await self.hub.notify_job("download", task)
++
++            if task.mode != "link" and self.cache is not None:
++                try:
++                    cached = await self.cache.cached_delivery(self.bot, task)
++                except Exception:
++                    cached = False
++                    log.warning("media cache read failed; proceeding normally", exc_info=True)
++                if cached:
++                    await repo.update_job(
++                        task.id, status="done", size=int(cached),
++                        finished_at=int(time.time()),
++                    )
++                    await repo.bump_downloads(task.user_id)
++                    await repo.log_event(task.user_id, "download_done")
++                    await repo.log_event(task.user_id, "bytes", float(cached))
++                    await self._edit_final(
++                        task, text.t(task.lang, "done") +
++                        ("\n♻️ دریافت سریع از کش" if task.lang == "fa" else
++                         "\n♻️ Delivered from cache")
++                    )
++                    if self.hub is not None:
++                        await self.hub.notify_job_result(task, "cache_hit")
++                    return
++
++            if task.cancel.is_set():
++                raise errors.JobCancelled()
+ 
+             result = await self.downloader.download(
+                 task.url,
+@@ -330,6 +357,8 @@
+                     except TelegramError:
+                         pass
+                     raise errors.JobCancelled()
++                if self.cache is not None:
++                    await self.cache.record_delivery(self.bot, task, result, uploaded_message)
+ 
+             await repo.update_job(
+                 task.id,
+@@ -346,9 +375,13 @@
+                     task,
+                     text.t(task.lang, "done") + f"\n<b>{human.esc(result.title)}</b>",
+                 )
++            if self.hub is not None:
++                await self.hub.notify_job_result(task, "done", result.size)
+ 
+         except errors.JobCancelled:
+             await self._finish_canceled(task)
++            if self.hub is not None:
++                await self.hub.notify_job_result(task, "canceled")
+         except asyncio.CancelledError:
+             if task.cancel.is_set():
+                 await self._finish_canceled(task)
+@@ -368,6 +401,8 @@
+                 if await self._report_error(task, f"{exc.key}: {exc.reason}"):
+                     body += "\n\n" + text.t(task.lang, "issue_reported")
+             await self._edit_final(task, body)
++            if self.hub is not None:
++                await self.hub.notify_job_result(task, "failed", reason=f"{exc.key}: {exc.reason}")
+         except Exception as exc:  # noqa: BLE001
+             log.exception("job %s crashed", task.id)
+             await repo.update_job(
+@@ -382,6 +417,8 @@
+                 text.t(task.lang, "failed", reason=human.esc(str(exc)[:150])),
+             )
+             await self._report_error(task, f"crash: {exc}")
++            if self.hub is not None:
++                await self.hub.notify_job_result(task, "crashed", reason=type(exc).__name__)
+         finally:
+             self.store.drop_job_dir(task.id)
+             self.limiter.release_slot(task.user_id)
+--- a/app/services/link_server.py
++++ b/app/services/link_server.py
+@@ -58,10 +58,12 @@
+ 
+ 
+ class LinkServer:
+-    def __init__(self, cfg: Config, settings: RuntimeSettings, store: FileStore) -> None:
++    def __init__(self, cfg: Config, settings: RuntimeSettings, store: FileStore, hub=None) -> None:
+         self.cfg = cfg
+         self.settings = settings
+         self.store = store
++        self.hub = hub
++        self._access_logged: dict[str, float] = {}
+         self._runner: web.AppRunner | None = None
+ 
+     # ── ساخت اپلیکیشن ──────────────────────────────────────
+@@ -193,6 +195,20 @@
+             await repo.touch_shared(row.id)
+         except Exception:  # noqa: BLE001 — آمار نباید دانلود را خراب کند
+             log.debug("touch_shared failed", exc_info=True)
++        if self.hub is not None:
++            now = time.monotonic()
++            if now - self._access_logged.get(row.id, 0) >= 300:
++                self._access_logged[row.id] = now
++                try:
++                    await self.hub.audit(
++                        "link_http", "direct_link_access", row.user_id,
++                        f"file={row.id}, HTTP {status}, bytes={length}",
++                    )
++                except Exception:
++                    log.debug("HTTP access audit failed", exc_info=True)
++            if len(self._access_logged) > 20000:
++                cutoff = now - 600
++                self._access_logged = {k: v for k, v in self._access_logged.items() if v > cutoff}
+         return response
+ 
+     async def _drop(self, file_id: str, path: str) -> None:
+--- a/app/services/runtime_settings.py
++++ b/app/services/runtime_settings.py
+@@ -35,6 +35,9 @@
+     "topic_uploads": ("text", "تاپیک آپلود"),
+     "topic_reports": ("text", "تاپیک گزارش‌ها"),
+     "topic_logs": ("text", "تاپیک لاگ‌ها"),
++    "topic_cache": ("text", "تاپیک کش رسانه‌ها"),
++    "topic_audit": ("text", "تاپیک ممیزی عملیات"),
++    "topic_security": ("text", "تاپیک امنیت"),
+ }
+ 
+ # کلیدهایی که در پنل «متغیرهای اجرا» نمایش داده می‌شوند.
+@@ -85,6 +88,9 @@
+             "topic_uploads": "",
+             "topic_reports": "",
+             "topic_logs": "",
++    "topic_cache": "",
++    "topic_audit": "",
++    "topic_security": "",
+         }.get(key)
+ 
+     def get_float(self, key: str) -> float:
+--- a/app/services/telegram_transfers.py
++++ b/app/services/telegram_transfers.py
+@@ -174,6 +174,11 @@
+             ttl = svc.settings.ttl_seconds
+             await repo.create_shared(task.id, task.user_id, str(dest), task.name, task.mime, size, ttl)
+             registered = True
++            if svc.admin_group is not None:
++                await svc.admin_group.audit(
++                    "file", "direct_link_created", task.user_id,
++                    f"{task.id} | {size} bytes",
++                )
+             try:
+                 await repo.log_event(task.user_id, "link_created", size)
+             except Exception:
+@@ -196,9 +201,15 @@
+         except asyncio.CancelledError:
+             if not registered:
+                 svc.store.drop_link_dir(task.id)
++            if svc.admin_group is not None:
++                await svc.admin_group.audit("file", "transfer_canceled",
++                                            task.user_id, task.id)
+             await edit(task.status, text.t(task.lang, "canceled"))
+         except Exception as exc:
+             log.warning("Telegram file-to-link transfer failed: %s", type(exc).__name__, exc_info=True)
++            if svc.admin_group is not None:
++                await svc.admin_group.audit("file", "transfer_failed", task.user_id,
++                                            f"{task.id}, {type(exc).__name__}", severity="ERROR")
+             if not registered:
+                 svc.store.drop_link_dir(task.id)
+             await edit(task.status, text.t(task.lang, "failed", reason=human.esc(str(exc)[:120])))
+--- /dev/null
++++ b/tests/test_cache_audit_v4.py
+@@ -0,0 +1,315 @@
++"""Cache, topics and audit regressions, never contacts a real Telegram account."""
++from __future__ import annotations
++
++import asyncio
++import time
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++from sqlalchemy import update
++
++from app.db import repo
++from app.db.base import session
++from app.db.models import MediaCacheEntry
++from app.services.admin_group import AdminGroup, TOPICS
++from app.services.cache import CacheHub, MEDIA_TTL, fingerprint, safe_source
++from app.services.downloader import DownloadResult
++from app.services.formats import FormatOption
++from app.services.jobs import JobTask
++from app.services.runtime_settings import RuntimeSettings
++
++
++class MockForumBot:
++    def __init__(self):
++        self.created = []
++        self.sent = []
++        self.copied = []
++        self.deleted = []
++        self.next_id = 90
++
++    async def create_forum_topic(self, chat_id, name):
++        self.next_id += 1
++        self.created.append((chat_id, name, self.next_id))
++        return SimpleNamespace(message_thread_id=self.next_id)
++
++    async def send_message(self, chat_id, text, **kwargs):
++        self.sent.append((chat_id, text, kwargs))
++        self.next_id += 1
++        return SimpleNamespace(message_id=self.next_id)
++
++    async def copy_message(self, **kwargs):
++        self.copied.append(kwargs)
++        self.next_id += 1
++        return SimpleNamespace(message_id=self.next_id)
++
++    async def delete_message(self, chat_id, message_id):
++        self.deleted.append((chat_id, message_id))
++
++
++@pytest.fixture()
++async def forum(db):
++    settings = RuntimeSettings(db)
++    await settings.load()
++    hub = AdminGroup(db, settings)
++    bot = MockForumBot()
++    hub.attach(bot)
++    topics = await hub.configure(-100123456789, "Private LeechX operations")
++    return hub, bot, topics
++
++
++@pytest.mark.asyncio
++async def test_single_forum_creates_all_seven_topics_and_is_idempotent(forum):
++    hub, bot, topics = forum
++    assert set(topics) == set(TOPICS)
++    assert len(topics) == 7
++    assert all(isinstance(mid, int) and mid > 0 for mid in topics.values())
++    second = await hub.configure(-100123456789, "Private LeechX operations")
++    assert second == topics
++    assert len(bot.created) == 7
++    status = hub.status()
++    assert status["topics"] == topics
++    assert await hub.send("cache", "ready")
++    assert bot.sent[-1][0] == -100123456789
++    assert bot.sent[-1][2]["message_thread_id"] == topics["cache"]
++    assert await hub.send("security", "ready")
++    assert bot.sent[-1][2]["message_thread_id"] == topics["security"]
++
++
++@pytest.mark.asyncio
++async def test_event_audit_persisted_and_routed_to_appropriate_topics(forum):
++    hub, bot, topics = forum
++    await hub.audit("security", "setting_updated", user_id=42, details="key=proxy (value hidden)")
++    assert bot.sent[-1][2]["message_thread_id"] == topics["security"]
++    assert "42" in bot.sent[-1][1]
++    assert "setting_updated" in bot.sent[-1][1]
++    await hub.audit("job", "done", user_id=42, details="task=one")
++    assert bot.sent[-1][2]["message_thread_id"] == topics["audit"]
++    assert await hub.cache_event("media", "HIT", "hash123")
++    assert bot.sent[-1][2]["message_thread_id"] == topics["cache"]
++    await hub.record_log("ERROR", "handler", "unexpected exception", user_id=42)
++    assert bot.sent[-1][2]["message_thread_id"] == topics["logs"]
++
++
++@pytest.mark.asyncio
++async def test_metadata_probe_cache_is_user_scoped_and_singleflight(forum):
++    hub, bot, topics = forum
++    cache = CacheHub(hub)
++    calls = []
++    gate = asyncio.Event()
++
++    async def fetch(url):
++        calls.append(url)
++        await gate.wait()
++        return SimpleNamespace(title="title", url=url)
++
++    a = asyncio.create_task(cache.probe(5, "https://example.com/v?token=SECRET", fetch))
++    await asyncio.sleep(.01)
++    b = asyncio.create_task(cache.probe(5, "https://example.com/v?token=SECRET", fetch))
++    gate.set()
++    one, two = await asyncio.gather(a, b)
++    assert one is two
++    assert len(calls) == 1
++    assert (await cache.probe(5, "https://example.com/v?token=SECRET", fetch)) is one
++    await cache.probe(6, "https://example.com/v?token=SECRET", fetch)
++    assert len(calls) == 2
++    cache_messages = [msg for _, msg, meta in bot.sent if meta.get("message_thread_id") == topics["cache"]]
++    assert not any("SECRET" in msg for msg in cache_messages)
++    assert any("HIT" in msg for msg in cache_messages)
++
++
++def make_task(user_id=10, mode="video", name=""):
++    return JobTask(
++        id="abcd1234", user_id=user_id, chat_id=user_id,
++        url="https://www.youtube.com/watch?v=public",
++        option=FormatOption(kind="video", code="best", label="best", selector="bv*+ba/b"),
++        title="Public video", mode=mode, custom_name=name,
++    )
++
++
++@pytest.mark.asyncio
++async def test_telegram_media_cache_roundtrip_and_owner_isolation(db, forum, tmp_path):
++    hub, bot, topics = forum
++    cache = CacheHub(hub)
++    task = make_task()
++    path = tmp_path / "public.mp4"
++    path.write_bytes(b"x" * 32)
++    result = DownloadResult(path=path, title="Public video", mime="video/mp4", size=32)
++    msg = SimpleNamespace(message_id=42)
++    await cache.record_delivery(bot, task, result, msg)
++    assert len(bot.copied) == 1
++    first = bot.copied[0]
++    assert first["chat_id"] == hub.chat_id
++    assert first["message_thread_id"] == topics["cache"]
++    assert "youtube.com" not in first["caption"]
++    key = fingerprint(task.user_id, task.url, task.option.selector, task.mode, task.custom_name)
++    row = await repo.get_media_cache(key, task.user_id, hub.chat_id)
++    assert row is not None and row.size == 32
++    assert row.expires_at > int(time.time())
++    assert await cache.cached_delivery(bot, make_task(user_id=11)) is False
++    assert len(bot.copied) == 1
++    assert await cache.cached_delivery(bot, make_task(mode="document")) is False
++    assert len(bot.copied) == 1
++    assert await cache.cached_delivery(bot, make_task(name="Custom filename")) is False
++    assert len(bot.copied) == 1
++    assert await cache.cached_delivery(bot, task)
++    assert len(bot.copied) == 2
++    assert bot.copied[-1]["from_chat_id"] == hub.chat_id
++    assert bot.copied[-1]["chat_id"] == task.chat_id
++    assert bot.copied[-1]["message_id"] == row.message_id
++    assert "Public video" in bot.copied[-1]["caption"]
++    assert row.mode == "video"
++
++
++@pytest.mark.asyncio
++async def test_expired_media_cache_db_and_group_cleanup(db, forum, tmp_path):
++    hub, bot, topics = forum
++    cache = CacheHub(hub)
++    key = fingerprint(42, "https://example.com", "b", "video", "")
++    await repo.put_media_cache(key, 42, hub.chat_id, 987, "video", "video.mp4", 42, 24 * 3600)
++    async with session() as s:
++        await s.execute(update(MediaCacheEntry).where(MediaCacheEntry.cache_key == key).values(
++            expires_at=int(time.time()) - 1
++        ))
++        await s.commit()
++    assert await cache.clear_expired(bot) == 1
++    assert bot.deleted == [(hub.chat_id, 987)]
++    assert await repo.get_media_cache(key, 42, hub.chat_id) is None
++
++
++@pytest.mark.asyncio
++async def test_cache_db_disabled_without_group(db):
++    settings = RuntimeSettings(db)
++    await settings.load()
++    hub = AdminGroup(db, settings)
++    bot = MockForumBot()
++    cache = CacheHub(hub)
++    task = make_task()
++    assert not await cache.cached_delivery(bot, task)
++    path = Path(db.tmp_dir) / "dummy.mp4"
++    path.write_bytes(b"x")
++    await cache.record_delivery(bot, task,
++        DownloadResult(path=path, title="x", size=1), SimpleNamespace(message_id=9))
++    assert bot.copied == []
++
++
++def test_cache_fingerprints_are_private_and_no_secrets_in_topic():
++    url = "https://user:pass@service.example/video?q=SECRET"
++    safe = safe_source(url)
++    assert "pass" not in safe and "SECRET" not in safe and "user" not in safe
++    assert safe.startswith("https://service.example/video")
++    key1 = fingerprint(1, url, "720", "video", "")
++    assert key1 != fingerprint(2, url, "720", "video", "")
++    assert key1 != fingerprint(1, url, "1080", "video", "")
++    assert key1 != fingerprint(1, url, "720", "document", "")
++    assert MEDIA_TTL <= 24 * 3600
++
++
++@pytest.mark.asyncio
++async def test_job_cache_hit_skips_downloader_and_updates_bytes(db, forum):
++    from app.services.filestore import FileStore
++    from app.services.jobs import JobManager
++    from app.services.ratelimit import RateLimiter
++    hub, bot, topics = forum
++    store = FileStore(db.files_dir, db.tmp_dir)
++    cache = CacheHub(hub)
++    task = make_task(user_id=10)
++    task.status_message_id = 500
++    key = fingerprint(task.user_id, task.url, task.option.selector, task.mode, task.custom_name)
++    await repo.put_media_cache(
++        key, task.user_id, hub.chat_id, 1122, task.mode, "cached.mp4", 256, 3600
++    )
++    class NeverDownload:
++        def __init__(self):
++            self.calls = 0
++        async def download(self, *args, **kwargs):
++            self.calls += 1
++            raise AssertionError("cache-hit must not download again")
++    class Bot(MockForumBot):
++        async def edit_message_text(self, **kwargs):
++            self.sent.append(("EDIT", kwargs.get("text"), kwargs))
++    downloader=NeverDownload()
++    manager=JobManager(db, RuntimeSettings(db), store, downloader, None, RateLimiter(0), hub)
++    manager.cache=cache
++    manager.bot=Bot()
++    await manager.submit(task)
++    await manager._run(task)
++    assert downloader.calls == 0
++    assert any(x["message_id"] == 1122 for x in manager.bot.copied)
++    row=await repo.get_job(task.id)
++    assert row.status == "done"
++    assert row.size == 256
++    assert manager.active_count == 0
++
++
++@pytest.mark.asyncio
++async def test_change_group_does_not_reuse_cache_from_old_group(db, forum, tmp_path):
++    hub, bot, topics = forum
++    cache = CacheHub(hub)
++    task=make_task(user_id=10)
++    path=tmp_path/"video.mp4"
++    path.write_bytes(b"x")
++    await cache.record_delivery(bot,task,
++        DownloadResult(path=path,title="x",size=1),SimpleNamespace(message_id=77))
++    original_group=hub.chat_id
++    assert await cache.cached_delivery(bot, task)
++    await hub.configure(-100333333, "Another private group")
++    assert hub.chat_id != original_group
++    assert not await cache.cached_delivery(bot, task)
++
++
++@pytest.mark.asyncio
++async def test_cache_error_falls_back_without_throwing(db, forum):
++    from telegram.error import BadRequest
++    hub,bot,topics=forum
++    cache=CacheHub(hub)
++    task=make_task()
++    key=fingerprint(task.user_id,task.url,task.option.selector,task.mode,task.custom_name)
++    await repo.put_media_cache(
++        key,task.user_id,hub.chat_id,555,task.mode,"broken.mp4",100,3600
++    )
++    async def missing_copy(**kwargs):
++        raise BadRequest("Message to copy not found")
++    bot.copy_message=missing_copy
++    assert await cache.cached_delivery(bot,task) is False
++    assert await repo.get_media_cache(key,task.user_id,hub.chat_id) is None
++
++
++@pytest.mark.asyncio
++async def test_topic_missing_never_leaks_log_to_general_chat(db):
++    hub = AdminGroup(db, RuntimeSettings(db))
++    bot = MockForumBot()
++    hub.attach(bot)
++    await hub.settings.set("admin_group_id", "-100123456789")
++    assert await hub.send("security", "private security event") is False
++    assert bot.sent == []
++
++
++@pytest.mark.asyncio
++async def test_direct_link_access_log_is_rate_limited_and_keeps_token_private(db):
++    from aiohttp.test_utils import TestClient, TestServer
++    from app.services.link_server import LinkServer
++    from app.services.linktoken import make_token
++    from app.services.filestore import FileStore
++    class Audit:
++        def __init__(self): self.entries = []
++        async def audit(self, category, action, user_id, details):
++            self.entries.append((category, action, user_id, details))
++    audit = Audit()
++    store = FileStore(db.files_dir, db.tmp_dir)
++    server = LinkServer(db, RuntimeSettings(db), store, hub=audit)
++    path = store.link_path("cachehttp", "file.mp4")
++    path.write_bytes(b"video-abc")
++    await repo.create_shared("cachehttp", 42, str(path), path.name, "video/mp4", 9, 3600)
++    token = make_token("cachehttp", db.link_secret, 3600)
++    async with TestClient(TestServer(server.build_app())) as client:
++        first = await client.get(f"/f/{token}")
++        assert first.status == 200
++        assert await first.read() == b"video-abc"
++        second = await client.get(f"/f/{token}", headers={"Range":"bytes=0-2"})
++        assert second.status == 206
++        assert await second.read() == b"vid"
++    assert len(audit.entries) == 1
++    assert audit.entries[0][0] == "link_http"
++    assert audit.entries[0][2] == 42
++    assert token not in audit.entries[0][-1]
+--- a/tests/test_settings.py
++++ b/tests/test_settings.py
+@@ -110,7 +110,7 @@
+ 
+     assert hub.configured is False
+     created = await hub.configure(123, "Team")
+-    assert set(created) == {"downloads", "uploads", "reports", "logs"}
++    assert set(created) == {"downloads", "uploads", "reports", "logs", "cache", "audit", "security"}
+     assert all(value is None for value in created.values())
+     assert hub.configured is True
+     assert hub.chat_id == 123
