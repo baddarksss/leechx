@@ -23,7 +23,8 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+ && pip install --no-cache-dir "pytest>=8,<9" "pytest-asyncio>=0.24,<2"
 
 COPY . .
 

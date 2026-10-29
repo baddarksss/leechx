@@ -178,6 +178,8 @@ TELEGRAM_API_HASH=abcdef...
 | `401 token expired` | عمر توکن تمام شده | توکن تازه بگیرید |
 | `403 token lacks 'write' scope` | سطح دسترسی کافی نیست | توکن با `write`/`restart` بگیرید |
 | `400 unsafe path` | تلاش path traversal | فقط مسیرهای مجاز |
+| `404 Not Found` روی `/debug/*` | پروکسی معکوس مسیر `/debug/` را به وب‌سرور ربات نمی‌فرستد | در nginx یک `location /debug/` به `http://127.0.0.1:8080` اضافه کنید |
+| `403 error code: 1010` | Cloudflare جلوی `User-Agent` پیش‌فرض پایتون را گرفته | از UA نوع `curl` یا مرورگر استفاده کنید |
 
 ---
 

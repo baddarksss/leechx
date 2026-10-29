@@ -7,6 +7,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.1.3] - 2026-10-29 · "Clean Deck"
+
+### Fixed
+- **`POST /debug/pytest` actually works**: the production image now ships
+  `pytest` + `pytest-asyncio`, so the diagnostics API can run the test suite
+  requested by an AI (before it failed with `No module named pytest`).
+- **Docs**: troubleshooting rows for `404` on `/debug/*` (reverse proxy does not
+  route `/debug/` to the bot) and for Cloudflare blocking default Python
+  `User-Agent` (use `curl`/browser UA).
+
 ## [5.1.2] - 2026-10-29 · "Clean Deck"
 
 ### Fixed
