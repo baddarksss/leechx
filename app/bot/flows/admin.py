@@ -7,7 +7,7 @@ import platform
 import shutil
 import time
 
-from telegram import MessageOriginChannel, MessageOriginChat, MessageOriginUser, Update
+from telegram import MessageOriginChannel, MessageOriginChat, MessageOriginUser, ReplyKeyboardRemove, Update
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
@@ -71,29 +71,93 @@ def _ytdlp(svc) -> str:
 
 
 # ── ورود به پنل ────────────────────────────────────────────
+def _panel_body(lang: str) -> str:
+    return text.t(lang, "admin_panel") + f"\n\n🤖 <b>LeechX v{__version__}</b> · {CODENAME}"
+
+
+def _admin_kb(lang: str, update: Update):
+    """کیبورد ثابت فقط در چت خصوصی معنی دارد؛ در گروه پیام بدون کیبورد می‌ماند."""
+    if update.effective_chat is not None and update.effective_chat.type == "private":
+        return kb.admin_persistent_menu(lang)
+    return None
+
+
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await require_admin(update, context):
         return
     lang = lang_of(context)
-    svc = services(context)
-    await reply(
-        update,
-        text.t(lang, "admin_panel") + f"\n\n🤖 <b>LeechX v{__version__}</b> · {CODENAME}",
-        reply_markup=kb.admin_menu(lang),
-    )
-    if update.effective_chat.type == "private" and not in_preview(context):
-        await reply(update, text.t(lang, "btn_admin"), reply_markup=kb.admin_persistent_menu(lang))
-    _ = svc
+    await reply(update, _panel_body(lang), reply_markup=_admin_kb(lang, update))
 
 
 async def show_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang = lang_of(context)
     query = update.callback_query
-    body = text.t(lang, "admin_panel") + f"\n\n🤖 <b>LeechX v{__version__}</b> · {CODENAME}"
+    body = _panel_body(lang)
     if query is not None:
-        await edit(query.message, body, reply_markup=kb.admin_menu(lang))
+        await edit(query.message, body, reply_markup=_admin_kb(lang, update))
     else:
-        await reply(update, body, reply_markup=kb.admin_menu(lang))
+        await reply(update, body, reply_markup=_admin_kb(lang, update))
+
+
+async def _drop_previous_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """پیام بخش قبلی را پاک می‌کند تا چت با منوهای تکراری شلوغ نشود."""
+    old_id = context.user_data.pop("admin_panel_msg", None)
+    chat = update.effective_chat
+    if not old_id or chat is None:
+        return
+    try:
+        await context.bot.delete_message(chat.id, old_id)
+    except TelegramError:
+        pass
+
+
+async def show_section(update: Update, context: ContextTypes.DEFAULT_TYPE, section: str) -> None:
+    """بخش‌ها همان‌جای کیبورد ثابت باز می‌شوند؛ محتوای هر بخش یک‌جا و بدون منوی تکراری است."""
+    lang = lang_of(context)
+    svc = services(context)
+    query = update.callback_query
+    msg = query.message if query is not None else None
+    clear_state(context)
+    if query is None:
+        await _drop_previous_panel(update, context)
+
+    if section == kb.SEC_STATS:
+        body = await _render_stats(context)
+        markup = kb.admin_section_menu(lang, kb.SEC_STATS)
+    elif section == kb.SEC_USERS:
+        body = text.t(lang, "admin_cat_users")
+        markup = kb.admin_section_menu(lang, kb.SEC_USERS)
+    elif section == kb.SEC_SETTINGS:
+        body = _render_settings(context)
+        markup = kb.settings_menu(lang, svc.settings.snapshot())
+    elif section == kb.SEC_GROUPS:
+        body = text.t(lang, "admin_cat_groups")
+        markup = kb.admin_section_menu(lang, kb.SEC_GROUPS)
+    elif section == kb.SEC_DEPLOY:
+        await _render_deploy(update, context)
+        return
+    elif section == kb.SEC_DEBUG:
+        await _render_debug(update, context)
+        return
+    elif section == kb.SEC_COOKIES:
+        await _render_cookies(update, context)
+        return
+    elif section == kb.SEC_CANCEL:
+        from app.bot.flows import start as start_flow
+
+        await start_flow.cmd_cancel(update, context)
+        return
+    else:
+        await show_panel(update, context)
+        return
+
+    if msg is not None:
+        await edit(msg, body, reply_markup=markup)
+        context.user_data["admin_panel_msg"] = msg.message_id
+    else:
+        sent = await reply(update, body, reply_markup=markup)
+        if sent is not None:
+            context.user_data["admin_panel_msg"] = sent.message_id
 
 
 # ── هندلر callbackها ───────────────────────────────────────
@@ -112,24 +176,21 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         return
 
     if action == "cat":
+        # سازگاری با پیام‌های قدیمی: دسته → همان بخش.
         category = args[0] if args else ""
         await safe_answer(query)
-        await edit(
-            msg,
-            text.t(lang, f"admin_cat_{category}") if category in kb.CATEGORIES else text.t(lang, "admin_panel"),
-            reply_markup=kb.admin_cat_menu(lang, category),
-        )
+        await show_section(update, context, category)
         return
 
     # ── آمار ──
     if action == "stats":
         await safe_answer(query)
-        await edit(msg, await _render_stats(context), reply_markup=kb.admin_cat_menu(lang, kb.CAT_STATS))
+        await edit(msg, await _render_stats(context), reply_markup=kb.admin_section_menu(lang, kb.SEC_STATS))
         return
 
     if action == "jobs":
         await safe_answer(query)
-        await edit(msg, await _render_jobs(lang), reply_markup=kb.admin_cat_menu(lang, kb.CAT_STATS))
+        await edit(msg, await _render_jobs(lang), reply_markup=kb.admin_section_menu(lang, kb.SEC_STATS))
         return
 
     if action == "clean":
@@ -138,7 +199,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await edit(
             msg,
             text.t(lang, "admin_cleanup_done", files=removed, size=human.human_bytes(freed)),
-            reply_markup=kb.admin_cat_menu(lang, kb.CAT_STATS),
+            reply_markup=kb.admin_section_menu(lang, kb.SEC_STATS),
         )
         return
 
@@ -188,7 +249,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await edit(
             msg,
             text.t(lang, "admin_ban_prompt") + "\n\n" + text.t(lang, "admin_forward_hint"),
-            reply_markup=kb.back_home(lang),
+            reply_markup=kb.admin_section_menu(lang, kb.SEC_USERS),
         )
         return
 
@@ -288,7 +349,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await edit(
             msg,
             text.t(lang, "admin_runtime_prompt", label=svc.settings.label(key, lang)),
-            reply_markup=kb.back_home(lang),
+            reply_markup=kb.admin_section_menu(lang, kb.SEC_SETTINGS),
         )
         return
 
@@ -304,7 +365,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await edit(
             msg,
             text.t(lang, "admin_group_prompt") + "\n\n" + text.t(lang, "admin_group_hint_setup"),
-            reply_markup=kb.back_home(lang),
+            reply_markup=kb.admin_section_menu(lang, kb.SEC_GROUPS),
         )
         return
 
@@ -348,7 +409,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await edit(
             msg,
             text.t(lang, "admin_join_prompt") + "\n\n" + text.t(lang, "admin_join_hint"),
-            reply_markup=kb.back_home(lang),
+            reply_markup=kb.admin_section_menu(lang, kb.SEC_GROUPS),
         )
         return
 
@@ -431,7 +492,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await edit(
             msg,
             text.t(lang, "deploy_upload_prompt") + "\n\n" + text.t(lang, "deploy_update_note"),
-            reply_markup=kb.back_home(lang),
+            reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY),
         )
         return
 
@@ -493,14 +554,14 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
             )
         else:
             body = text.t(lang, "deploy_ytdlp_fail", reason=human.esc(str(result.get("error") or "unknown")))
-        await edit(msg, body, reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEPLOY))
+        await edit(msg, body, reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY))
         await svc.admin_group.audit("system", "ytdlp_update", update.effective_user.id,
                                     f"ok={result.get('ok')}")
         return
 
     if action == "dpver":
         await safe_answer(query)
-        await edit(msg, _version_text(svc, lang), reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEPLOY))
+        await edit(msg, _version_text(svc, lang), reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY))
         return
 
     # ── عیب‌یابی ──
@@ -539,24 +600,15 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await _render_health(update, context)
         return
 
-    if action == "preview":
-        await safe_answer(query)
-        await edit(
-            msg,
-            text.t(lang, "admin_preview_panel"),
-            reply_markup=kb.preview_menu(lang, in_preview(context)),
-        )
-        return
-
-    if action == "previewon":
+    if action in ("preview", "previewon"):
         await safe_answer(query)
         context.user_data["preview"] = True
         context.user_data["is_admin"] = False
-        await edit(
-            msg,
-            text.t(lang, "preview_banner"),
-            reply_markup=kb.main_menu(lang, False, preview=True),
-        )
+        from app.bot.flows import start as start_flow
+
+        # کیبورد ثابت ادمین برداشته می‌شود تا دقیقاً تجربهٔ یک ممبر عادی بماند.
+        await edit(msg, text.t(lang, "preview_banner"), reply_markup=ReplyKeyboardRemove())
+        await start_flow.cmd_start(update, context)
         return
 
     await safe_answer(query)
@@ -892,7 +944,7 @@ async def _render_staged(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await edit(
             update.callback_query.message if update.callback_query else update.effective_message,
             text.t(lang, "deploy_zip_bad", reason=human.esc(preview.reason)),
-            reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEPLOY),
+            reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY),
         )
         return
     notes = "\n".join(f"• {human.esc(note)}" for note in preview.notes)
@@ -978,7 +1030,7 @@ async def _apply_staged(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await edit(
             update.callback_query.message if update.callback_query else update.effective_message,
             text.t(lang, "deploy_failed", reason=human.esc(result.reason)),
-            reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEPLOY),
+            reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY),
         )
         return
     await svc.admin_group.audit("system", "source_deployed", update.effective_user.id,
@@ -1061,7 +1113,7 @@ async def _create_debug_token(
     body += "\n\n" + text.t(lang, "debug_handoff", base=human.esc(base))
     await svc.admin_group.audit("security", "debug_token_created", update.effective_user.id,
                                 f"scope={row.scopes}, id={row.id}, hours={hours}")
-    await reply(update, body, reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEBUG))
+    await reply(update, body, reply_markup=kb.admin_section_menu(lang, kb.SEC_DEBUG))
 
 
 async def _render_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1089,9 +1141,9 @@ async def _render_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
     query = update.callback_query
     if query is not None:
-        await edit(query.message, body, reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEBUG))
+        await edit(query.message, body, reply_markup=kb.admin_section_menu(lang, kb.SEC_DEBUG))
     else:
-        await reply(update, body, reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEBUG))
+        await reply(update, body, reply_markup=kb.admin_section_menu(lang, kb.SEC_DEBUG))
 
 
 async def _show_user(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
@@ -1118,7 +1170,10 @@ async def _show_user(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: in
     )
     action = "unban" if user.is_banned else "ban"
     label = text.t(lang, "btn_unban" if user.is_banned else "btn_ban")
-    markup = kb.back_home(lang, [[kb.Btn(label, callback_data=f"a|{action}|{uid}")]])
+    markup = kb.Kb([
+        [kb.Btn(label, callback_data=f"a|{action}|{uid}")],
+        *(kb.admin_section_menu(lang, kb.SEC_USERS).inline_keyboard),
+    ])
     if update.callback_query is not None:
         await edit(msg, body, reply_markup=markup)
     else:

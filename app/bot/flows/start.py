@@ -17,6 +17,14 @@ from app.version import __version__, version_badge
 log = logging.getLogger("leechx.start")
 
 
+def _menu_markup(update: Update, lang: str, admin: bool, preview: bool):
+    """ادمین (بدون پیش‌نمایش، در چت خصوصی) فقط کیبورد ثابت می‌بیند؛ بقیه منوی شیشه‌ای."""
+    chat = update.effective_chat
+    if admin and not preview and chat is not None and chat.type == "private":
+        return kb.admin_persistent_menu(lang)
+    return kb.main_menu(lang, admin and not preview, preview=preview)
+
+
 # ── دستورها ────────────────────────────────────────────────
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
@@ -36,13 +44,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             log.exception("owner claim failed")
 
     admin = await is_admin(svc.cfg, user.id)
-    staff = admin
     preview = in_preview(context)
     body = text.t(lang, "start", ttl=_fmt_hours(svc.settings.ttl_hours))
     body += "\n\n" + version_badge()
-    await reply(update, body, reply_markup=kb.main_menu(lang, admin and not preview, preview=preview))
-    if staff and not preview and update.effective_chat.type == "private":
-        await reply(update, text.t(lang, "btn_admin"), reply_markup=kb.admin_persistent_menu(lang))
+    # یک پیام: متن + کیبورد درست (برای ادمین فقط کیبورد ثابت، بدون منوی شیشه‌ای تکراری)
+    await reply(update, body, reply_markup=_menu_markup(update, lang, admin, preview))
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -55,7 +61,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ttl=_fmt_hours(svc.settings.ttl_hours),
         max_mb=svc.settings.max_upload_bytes // (1024 * 1024),
     )
-    await reply(update, body, reply_markup=kb.main_menu(lang, admin, preview=in_preview(context)))
+    await reply(update, body, reply_markup=_menu_markup(update, lang, admin, in_preview(context)))
 
 
 async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -73,7 +79,7 @@ async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         admin=text.t(lang, "yes" if admin else "no"),
         version=__version__,
     )
-    await reply(update, body, reply_markup=kb.main_menu(lang, admin, preview=in_preview(context)))
+    await reply(update, body, reply_markup=_menu_markup(update, lang, admin, in_preview(context)))
 
 
 async def cmd_sites(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -104,7 +110,7 @@ async def cmd_sites(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             list="\n".join(lines) or text.t(lang, "sites_none"),
         )
     admin = await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context)
-    await reply(update, body, reply_markup=kb.main_menu(lang, admin, preview=in_preview(context)))
+    await reply(update, body, reply_markup=_menu_markup(update, lang, admin, in_preview(context)))
 
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -130,7 +136,13 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
     lang = lang_of(context)
+    if await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context):
+        from app.bot.flows import admin as admin_flow
+
+        await admin_flow.show_section(update, context, kb.SEC_SETTINGS)
+        return
     body = text.t(lang, "settings_panel", lang=text.LANGS[lang], version=__version__)
     await reply(update, body, reply_markup=kb.user_settings_menu(lang))
 
@@ -199,7 +211,7 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
         await edit(
             query.message,
             text.t(lang, "start", ttl=_fmt_hours(svc.settings.ttl_hours)) + "\n\n" + version_badge(),
-            reply_markup=kb.main_menu(lang, admin, preview=preview),
+            reply_markup=_menu_markup(update, lang, admin, preview),
         )
         return
 
@@ -212,7 +224,7 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
                 ttl=_fmt_hours(svc.settings.ttl_hours),
                 max_mb=svc.settings.max_upload_bytes // (1024 * 1024),
             ),
-            reply_markup=kb.main_menu(lang, admin, preview=preview),
+            reply_markup=_menu_markup(update, lang, admin, preview),
         )
         return
 
@@ -230,7 +242,7 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
                 admin=text.t(lang, "yes" if admin else "no"),
                 version=__version__,
             ),
-            reply_markup=kb.main_menu(lang, admin, preview=preview),
+            reply_markup=_menu_markup(update, lang, admin, preview),
         )
         return
 
@@ -249,6 +261,11 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
         return
 
     if action == "settings":
+        if admin:
+            from app.bot.flows import admin as admin_flow
+
+            await admin_flow.show_section(update, context, kb.SEC_SETTINGS)
+            return
         await edit(
             query.message,
             text.t(lang, "settings_panel", lang=text.LANGS[lang], version=__version__),
@@ -293,9 +310,11 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
             return
         context.user_data["preview"] = True
         context.user_data["is_admin"] = False
-        await edit(
-            query.message,
-            text.t(lang, "preview_banner"),
+        # اول کیبورد ثابت برداشته می‌شود، بعد دقیقاً منوی یک کاربر عادی می‌آید.
+        await edit(query.message, text.t(lang, "preview_banner"), reply_markup=ReplyKeyboardRemove())
+        await reply(
+            update,
+            text.t(lang, "start", ttl=_fmt_hours(svc.settings.ttl_hours)) + "\n\n" + version_badge(),
             reply_markup=kb.main_menu(lang, False, preview=True),
         )
         return
@@ -306,10 +325,10 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
             return
         context.user_data["preview"] = False
         context.user_data["is_admin"] = True
-        await edit(
-            query.message,
+        await reply(
+            update,
             text.t(lang, "preview_exit_done") + "\n\n" + version_badge(),
-            reply_markup=kb.main_menu(lang, True),
+            reply_markup=kb.admin_persistent_menu(lang),
         )
         return
 

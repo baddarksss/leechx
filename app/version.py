@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.0.0"
-CODENAME = "Control Deck"
+__version__ = "5.1.0"
+CODENAME = "Clean Deck"
 RELEASE_DATE = "2026-10-29"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.

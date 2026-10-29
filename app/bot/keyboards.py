@@ -41,14 +41,25 @@ A_LOGS = "a|logs"
 A_RUNTIME = "a|runtime"
 A_BACK = "a|back"
 
-# دسته‌بندی پنل ادمین
-CAT_STATS = "stats"
-CAT_USERS = "users"
-CAT_SETTINGS = "settings"
-CAT_GROUPS = "groups"
-CAT_DEPLOY = "deploy"
-CAT_DEBUG = "debug"
-CATEGORIES = (CAT_STATS, CAT_USERS, CAT_SETTINGS, CAT_GROUPS, CAT_DEPLOY, CAT_DEBUG)
+# بخش‌های پنل ادمین — هر بخش فقط یک‌جا (کیبورد ثابت) باز می‌شود.
+SEC_STATS = "stats"
+SEC_USERS = "users"
+SEC_SETTINGS = "settings"
+SEC_GROUPS = "groups"
+SEC_DEPLOY = "deploy"
+SEC_DEBUG = "debug"
+SEC_COOKIES = "cookies"
+SEC_CANCEL = "cancel"
+SECTIONS = (
+    SEC_STATS,
+    SEC_USERS,
+    SEC_SETTINGS,
+    SEC_GROUPS,
+    SEC_DEPLOY,
+    SEC_DEBUG,
+    SEC_COOKIES,
+    SEC_CANCEL,
+)
 
 LANG_PREFIX = "l|"
 
@@ -127,29 +138,30 @@ def quality_menu(lang: str, draft: Draft) -> Kb:
 
 
 def persistent_admin_labels(lang: str) -> dict[str, str]:
-    """برچسب‌های کیبورد ثابت؛ کلیدها در ``text_router`` استفاده می‌شوند."""
+    """برچسب‌های کیبورد ثابت ادمین — فقط بخش‌های مدیریتی، بدون دکمهٔ کاربر عادی."""
     return {
-        "panel": text.t(lang, "btn_admin"),
-        "stats": text.t(lang, "btn_admin_stats"),
-        "jobs": text.t(lang, "btn_admin_jobs"),
-        "deploy": text.t(lang, "btn_admin_deploy"),
-        "settings": text.t(lang, "btn_admin_settings"),
-        "reports": text.t(lang, "btn_reports_persistent"),
-        "links": text.t(lang, "my_links_btn"),
-        "cancel": text.t(lang, "btn_cancel_tasks"),
-        "home": text.t(lang, "btn_home_persistent"),
+        "stats": text.t(lang, "sec_stats"),
+        "users": text.t(lang, "sec_users"),
+        "settings": text.t(lang, "sec_settings"),
+        "groups": text.t(lang, "sec_groups"),
+        "deploy": text.t(lang, "sec_deploy"),
+        "debug": text.t(lang, "sec_debug"),
+        "cookies": text.t(lang, "sec_cookies"),
+        "cancel": text.t(lang, "sec_cancel"),
     }
 
 
 def admin_persistent_menu(lang: str) -> ReplyKeyboardMarkup:
+    """کیبورد ثابت ادمین: سه ستون، فقط بخش‌ها (همیشه در دسترس)."""
     labels = persistent_admin_labels(lang)
     return ReplyKeyboardMarkup(
-        [[labels["panel"], labels["stats"]],
-         [labels["jobs"], labels["reports"]],
-         [labels["deploy"], labels["settings"]],
-         [labels["links"], labels["home"]],
-         [labels["cancel"]]],
-        resize_keyboard=True, is_persistent=True,
+        [
+            [labels["stats"], labels["users"], labels["settings"]],
+            [labels["groups"], labels["deploy"], labels["debug"]],
+            [labels["cookies"], labels["cancel"]],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
     )
 
 
@@ -178,10 +190,6 @@ def cookies_menu(lang: str, names: list[str]) -> Kb:
     ]]
     for name in names[:20]:
         rows.append([Btn(f"🗑 {name}", callback_data=f"a|ckdel|{name}")])
-    rows.append([
-        _btn(lang, "btn_back", A_BACK),
-        _btn(lang, "btn_close", M_CLOSE),
-    ])
     return Kb(rows)
 
 
@@ -191,64 +199,40 @@ def link_actions(lang: str, url: str) -> Kb:
 
 
 # ── پنل ادمین ──────────────────────────────────────────────
-def admin_menu(lang: str) -> Kb:
-    cat_btn = {
-        CAT_STATS: "btn_cat_stats",
-        CAT_USERS: "btn_cat_users",
-        CAT_SETTINGS: "btn_cat_settings",
-        CAT_GROUPS: "btn_cat_groups",
-        CAT_DEPLOY: "btn_cat_deploy",
-        CAT_DEBUG: "btn_cat_debug",
-    }
-    rows = [
-        [_btn(lang, cat_btn[CAT_STATS], f"a|cat|{CAT_STATS}"),
-         _btn(lang, cat_btn[CAT_USERS], f"a|cat|{CAT_USERS}")],
-        [_btn(lang, cat_btn[CAT_SETTINGS], f"a|cat|{CAT_SETTINGS}"),
-         _btn(lang, cat_btn[CAT_GROUPS], f"a|cat|{CAT_GROUPS}")],
-        [_btn(lang, cat_btn[CAT_DEPLOY], f"a|cat|{CAT_DEPLOY}"),
-         _btn(lang, cat_btn[CAT_DEBUG], f"a|cat|{CAT_DEBUG}")],
-        [_btn(lang, "btn_home_persistent", M_HOME), _btn(lang, "btn_close", M_CLOSE)],
-    ]
-    return Kb(rows)
-
-
-def admin_cat_menu(lang: str, category: str) -> Kb:
-    """زیرمنوی هر دسته — عمداً کوتاه و قابل‌فهم."""
-    if category == CAT_STATS:
+def admin_section_menu(lang: str, section: str) -> Kb:
+    """اکشن‌های یک بخش؛ ناوبری فقط با کیبورد ثابت انجام می‌شود (بدون دکمهٔ بازگشت)."""
+    if section == SEC_STATS:
         rows = [
             [_btn(lang, "btn_admin_stats", A_STATS), _btn(lang, "btn_admin_jobs", A_JOBS)],
             [_btn(lang, "btn_admin_reports", A_REPORTS), _btn(lang, "btn_admin_logs", A_LOGS)],
             [_btn(lang, "btn_admin_cleanup", A_CLEAN)],
         ]
-    elif category == CAT_USERS:
+    elif section == SEC_USERS:
         rows = [
             [_btn(lang, "btn_admin_users", A_USER), _btn(lang, "btn_admin_ban", A_BAN)],
             [_btn(lang, "btn_admin_admins", A_ADMINS), _btn(lang, "btn_admin_broadcast", A_BC)],
         ]
-    elif category == CAT_SETTINGS:
+    elif section == SEC_SETTINGS:
         rows = [
             [_btn(lang, "btn_admin_settings", A_SET), _btn(lang, "btn_admin_runtime", A_RUNTIME)],
-            [_btn(lang, "btn_admin_cookies", A_COOKIES)],
         ]
-    elif category == CAT_GROUPS:
+    elif section == SEC_GROUPS:
         rows = [
             [_btn(lang, "btn_admin_group", A_GROUP), _btn(lang, "btn_admin_join", "a|join")],
         ]
-    elif category == CAT_DEPLOY:
-        rows = [
-            [_btn(lang, "btn_admin_deploy", "a|deploy")],
-        ]
-    elif category == CAT_DEBUG:
+    elif section == SEC_DEPLOY:
+        return deploy_menu(lang)
+    elif section == SEC_DEBUG:
         rows = [
             [_btn(lang, "btn_admin_debug", "a|debug"), _btn(lang, "btn_admin_preview", "a|preview")],
         ]
+    elif section == SEC_COOKIES:
+        rows = [
+            [Btn(text.t(lang, "btn_cookie_add"), callback_data="a|ckadd"),
+             Btn(text.t(lang, "btn_cookie_test"), callback_data="a|cktest")],
+        ]
     else:
         rows = []
-
-    rows.append([
-        _btn(lang, "btn_back_cats", A_BACK),
-        _btn(lang, "btn_close", M_CLOSE),
-    ])
     return Kb(rows)
 
 
@@ -259,10 +243,6 @@ def group_menu(lang: str, configured: bool) -> Kb:
     ]
     if configured:
         rows.append([Btn(text.t(lang, "btn_admin_group_off"), callback_data="a|groupoff")])
-    rows.append([
-        _btn(lang, "btn_back", A_BACK),
-        _btn(lang, "btn_close", M_CLOSE),
-    ])
     return Kb(rows)
 
 
@@ -272,17 +252,12 @@ def reports_menu(lang: str, report_ids: list[int]) -> Kb:
     ]
     for rid in report_ids[:12]:
         rows.append([Btn(text.t(lang, "btn_report_close", id=rid), callback_data=f"a|rpclose|{rid}")])
-    rows.append([
-        _btn(lang, "btn_back", A_BACK),
-        _btn(lang, "btn_close", M_CLOSE),
-    ])
     return Kb(rows)
 
 
 def logs_menu(lang: str) -> Kb:
     return Kb([
         [Btn(text.t(lang, "btn_logs_clear"), callback_data="a|logclear")],
-        [_btn(lang, "btn_back", A_BACK), _btn(lang, "btn_close", M_CLOSE)],
     ])
 
 
@@ -291,10 +266,6 @@ def runtime_menu(lang: str, items: list[tuple[str, str, str]]) -> Kb:
     for key, label, value in items:
         shown = value if len(value) <= 24 else f"{value[:21]}…"
         rows.append([Btn(f"{label}: {shown}", callback_data=f"a|redit|{key}")])
-    rows.append([
-        _btn(lang, "btn_back", A_BACK),
-        _btn(lang, "btn_close", M_CLOSE),
-    ])
     return Kb(rows)
 
 
@@ -302,10 +273,6 @@ def admins_menu(lang: str, admins: list[int]) -> Kb:
     rows = [[Btn(text.t(lang, "btn_admin_add"), callback_data="a|admadd")]]
     for uid in admins[:20]:
         rows.append([Btn(f"🗑 {uid}", callback_data=f"a|admrm|{uid}")])
-    rows.append([
-        _btn(lang, "btn_back", A_BACK),
-        _btn(lang, "btn_close", M_CLOSE),
-    ])
     return Kb(rows)
 
 
@@ -321,7 +288,7 @@ def settings_menu(lang: str, snap: dict) -> Kb:
          Btn(text.t(lang, "set_quota", v=snap["daily_quota"]), callback_data="a|edit|daily_quota")],
         [Btn(text.t(lang, "set_maintenance", flag=flag(snap["maintenance"])), callback_data="a|toggle|maintenance"),
          Btn(text.t(lang, "set_nsfw", flag=flag(snap["nsfw_enabled"])), callback_data="a|toggle|nsfw_enabled")],
-        [_btn(lang, "btn_back", A_BACK), _btn(lang, "btn_close", M_CLOSE)],
+        [_btn(lang, "btn_admin_runtime", A_RUNTIME)],
     ])
 
 
@@ -342,10 +309,6 @@ def deploy_menu(lang: str, staged: bool = False, has_backup: bool = False) -> Kb
     if has_backup:
         rows.append([_btn(lang, "btn_deploy_backup", "a|dpbackup")])
     rows.append([_btn(lang, "btn_deploy_restart", "a|dprestart")])
-    rows.append([
-        _btn(lang, "btn_back", A_BACK),
-        _btn(lang, "btn_close", M_CLOSE),
-    ])
     return Kb(rows)
 
 
@@ -367,10 +330,6 @@ def force_join_menu(lang: str, targets: list, enabled: bool) -> Kb:
         title = getattr(target, "title", str(target))[:28]
         rows.append([Btn(f"🗑 {title}", callback_data=f"a|joinrm|{target.chat_id}")])
     rows.append([Btn(text.t(lang, "btn_admin_join_check"), callback_data="a|joincheck")])
-    rows.append([
-        _btn(lang, "btn_back", A_BACK),
-        _btn(lang, "btn_close", M_CLOSE),
-    ])
     return Kb(rows)
 
 
@@ -404,10 +363,6 @@ def debug_menu(lang: str, tokens: list, enabled: bool, max_hours: int) -> Kb:
             )])
         if tokens:
             rows.append([_btn(lang, "btn_debug_revoke_all", "a|dbrevokeall")])
-    rows.append([
-        _btn(lang, "btn_back", A_BACK),
-        _btn(lang, "btn_close", M_CLOSE),
-    ])
     return Kb(rows)
 
 
@@ -416,5 +371,4 @@ def preview_menu(lang: str, active: bool) -> Kb:
         return Kb([[_btn(lang, "btn_preview_exit", M_EXIT_PREVIEW)]])
     return Kb([
         [_btn(lang, "btn_preview", "a|previewon")],
-        [_btn(lang, "btn_back", A_BACK), _btn(lang, "btn_close", M_CLOSE)],
     ])

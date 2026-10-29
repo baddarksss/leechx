@@ -59,13 +59,41 @@ def update(user_id=42, query=None):
 
 
 def test_admin_reply_keyboard_persistent():
+    """کیبورد ثابت ادمین: ۳ ستون، فقط بخش‌های مدیریتی، بدون دکمهٔ کاربر عادی/شروع."""
     menu = kb.admin_persistent_menu("fa")
+    rows = [[button.text for button in row] for row in menu.keyboard]
     labels = {button.text for row in menu.keyboard for button in row}
     assert menu.is_persistent and menu.resize_keyboard
-    assert "👑 پنل ادمین" in labels
-    assert "📨 گزارش‌ها" in labels
-    assert "🔗 لینک‌های من" in labels
-    assert "✖️ لغو عملیات" in labels
+    assert max(len(row) for row in rows) == 3
+    assert "📊 آمار" in labels
+    assert "👥 کاربران" in labels
+    assert "🚀 دیپلوی" in labels
+    for user_only in ("🔗 لینک‌های من", "🏠 منوی اصلی", "👑 پنل ادمین"):
+        assert user_only not in labels
+    # هر بخش دقیقاً یک‌بار روی کیبورد می‌آید
+    assert len(labels) == len([b for row in rows for b in row])
+
+
+def test_admin_sections_have_no_navigation_rows():
+    """ناوبری فقط با کیبورد ثابت است؛ داخل بخش‌ها دکمهٔ بازگشت/بستن/خانه نمی‌آید."""
+    for section in (kb.SEC_STATS, kb.SEC_USERS, kb.SEC_SETTINGS, kb.SEC_GROUPS,
+                    kb.SEC_DEPLOY, kb.SEC_DEBUG, kb.SEC_COOKIES):
+        menu = kb.admin_section_menu("fa", section)
+        texts = [button.text for row in menu.inline_keyboard for button in row]
+        assert texts, f"{section} must expose its own actions"
+        for forbidden in ("بازگشت", "بستن", "خانه"):
+            assert not any(forbidden in label for label in texts), (section, forbidden)
+
+
+def test_admin_menu_markup_prefers_reply_keyboard():
+    """ادمین در چت خصوصی فقط کیبورد ثابت می‌گیرد؛ پیش‌نمایش منوی کاربر را می‌گیرد."""
+    from telegram import InlineKeyboardMarkup, ReplyKeyboardMarkup
+
+    from app.bot.flows import start as start_flow
+
+    up = SimpleNamespace(effective_chat=SimpleNamespace(type="private"))
+    assert isinstance(start_flow._menu_markup(up, "fa", True, False), ReplyKeyboardMarkup)
+    assert isinstance(start_flow._menu_markup(up, "fa", True, True), InlineKeyboardMarkup)
 
 
 @pytest.mark.asyncio
@@ -203,19 +231,20 @@ async def test_upload_cancel_aborts_task_and_keeps_cancel_button(db):
 
 @pytest.mark.asyncio
 async def test_admin_shortcut_works_from_persistent_keyboard(monkeypatch):
+    from app.bot import keyboards as kb
     from app.bot.flows import admin as admin_flow
     from app.bot.flows import text_router
     from app.bot.states import ST_BAN, set_state
     up = update()
-    up.effective_message.text = "👑 پنل ادمین"
+    up.effective_message.text = kb.persistent_admin_labels("fa")["stats"]
     context = SimpleNamespace(user_data={"lang": "fa", "is_admin": True})
     set_state(context, ST_BAN)
     calls = []
-    async def show_panel(update, context):
-        calls.append("admin")
-    monkeypatch.setattr(admin_flow, "show_panel", show_panel)
+    async def show_section(update, context, section):
+        calls.append(section)
+    monkeypatch.setattr(admin_flow, "show_section", show_section)
     await text_router.on_text(up, context)
-    assert calls == ["admin"]
+    assert calls == [kb.SEC_STATS]
     assert context.user_data.get("state") is None
 
 

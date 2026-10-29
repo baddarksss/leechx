@@ -7,7 +7,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
-## [5.0.0] — 2026-10-29 · “Control Deck”
+## [5.1.0] - 2026-10-29 · "Clean Deck"
+
+### Changed
+- **Admin navigation is now the fixed reply keyboard only**: opening `/start` or
+  `/admin` as an admin no longer posts a second inline menu into the chat, so the
+  same buttons no longer appear twice.
+- **Admin keyboard redesigned**: 3 columns, grouped by section (stats, users,
+  settings, groups, deploy, diagnostics, cookies, cancel) and admin-only —
+  member buttons ("my links") and the old "start/home/panel" button are gone.
+- **One place per section**: pressing a section shows only that section's actions
+  (no back/close/home rows, no category menu), and the previous section message is
+  removed so the chat stays clean.
+- `/settings` and the settings section now open the admin settings for admins and
+  the user settings for everyone else; preview mode removes the reply keyboard and
+  restores it on exit.
+- Text router dispatches fixed-keyboard sections through `show_section`.
+
+## [5.0.0] - 2026-10-29 · "Control Deck"
 
 ### Added
 - **3-language UI**: Persian 🇮🇷, English 🇬🇧 and Russian 🇷🇺 with a one-tap
