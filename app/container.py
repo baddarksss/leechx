@@ -14,6 +14,7 @@ from pathlib import Path
 from app.config import Config
 from app.db import repo
 from app.services.admin_group import AdminGroup
+from app.services.cache import CacheHub
 from app.services.cookies import CookieStore
 from app.services.downloader import Downloader
 from app.services.drafts import DraftStore
@@ -24,6 +25,7 @@ from app.services.ratelimit import RateLimiter
 from app.services.runtime_settings import RuntimeSettings
 from app.services.sites import sites
 from app.services.uploader import Uploader
+from app.services.telegram_transfers import FileLinkTransfers
 
 log = logging.getLogger("leechx.container")
 
@@ -41,6 +43,8 @@ class Services:
     cookies: CookieStore
     admin_group: AdminGroup
     drafts: DraftStore = field(default_factory=DraftStore)
+    file_transfers: FileLinkTransfers | None = None
+    cache: CacheHub | None = None
     sites: object = sites
     started_at: float = field(default_factory=time.time)
     _cleanup: asyncio.Task | None = None
@@ -57,8 +61,8 @@ class Services:
         jobs = JobManager(
             cfg, settings, store, downloader, uploader, limiter, hub=admin_group
         )
-        server = LinkServer(cfg, settings, store)
-        return cls(
+        server = LinkServer(cfg, settings, store, hub=admin_group)
+        instance = cls(
             cfg=cfg,
             settings=settings,
             store=store,
@@ -70,6 +74,10 @@ class Services:
             cookies=cookies,
             admin_group=admin_group,
         )
+        instance.file_transfers = FileLinkTransfers(instance)
+        instance.cache = CacheHub(admin_group)
+        instance.jobs.cache = instance.cache
+        return instance
 
     @property
     def uptime(self) -> int:
@@ -93,6 +101,7 @@ class Services:
                 await self._cleanup
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+        await self.file_transfers.stop()
         await self.jobs.stop()
         await self.server.stop()
         log.info("services stopped")
@@ -130,5 +139,12 @@ class Services:
         freed += extra_bytes
 
         self.drafts.prune()
+        if removed and self.admin_group is not None:
+            await self.admin_group.audit("system", "cleanup", details=f"removed={removed}, bytes={freed}")
+        if self.cache is not None:
+            try:
+                removed += await self.cache.clear_expired(self.jobs.bot)
+            except Exception:
+                log.exception("cache cleanup failed")
         log.debug("cleanup: %d files, %d bytes", removed, freed)
         return removed, freed
