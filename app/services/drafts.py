@@ -33,6 +33,7 @@ class Draft:
     lang: str = "fa"
     option: FormatOption | None = None
     custom_name: str = ""
+    auto_quality: bool = False  # Instagram/TikTok skip manual quality selection
     created_at: float = field(default_factory=time.time)
 
 
@@ -79,3 +80,11 @@ class DraftStore:
 
     def __len__(self) -> int:
         return len(self._items)
+
+    def clear_user(self, user_id: int, chat_id: int | None = None) -> int:
+        """Invalidate all pending choices owned by a user (or one chat)."""
+        keys = [key for key, draft in self._items.items()
+                if draft.user_id == user_id and (chat_id is None or draft.chat_id == chat_id)]
+        for key in keys:
+            self._items.pop(key, None)
+        return len(keys)

@@ -17,6 +17,7 @@ from telegram.error import TelegramError
 
 from app.config import Config
 from app.core import human
+from app.services.cache import safe_source
 from app.db import repo
 from app.services.runtime_settings import RuntimeSettings
 
@@ -27,6 +28,9 @@ TOPICS: dict[str, str] = {
     "uploads": "📤 آپلودها",
     "reports": "🚨 گزارش‌ها",
     "logs": "🐞 لاگ‌ها",
+    "cache": "📦 کش رسانه‌ها",
+    "audit": "🧾 ممیزی و وضعیت عملیات",
+    "security": "🔐 امنیت و تنظیمات",
 }
 
 
@@ -74,21 +78,26 @@ class AdminGroup:
     # ── تنظیم گروه ─────────────────────────────────────────
     async def configure(self, chat_id: int, title: str = "") -> dict[str, int | None]:
         """شناسهٔ گروه را ذخیره و تاپیک‌ها را می‌سازد (اگر ممکن باشد)."""
-        await self.settings.set("admin_group_id", str(chat_id))
-        await self.settings.set("admin_group_title", (title or "")[:128])
+        # /setup is idempotent: do not duplicate existing topics on each call.
+        same_group = self.chat_id == chat_id
         created: dict[str, int | None] = {}
         for key, name in TOPICS.items():
-            thread: int | None = None
-            if self.bot is not None:
+            thread: int | None = self.topic_id(key) if same_group else None
+            if thread is None and self.bot is not None:
                 try:
                     topic = await self.bot.create_forum_topic(chat_id=chat_id, name=name)
                     thread = int(getattr(topic, "message_thread_id", 0) or 0) or None
                 except TelegramError as exc:
                     log.warning("could not create topic %s: %s", name, exc)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     log.exception("unexpected error creating topic %s", name)
-            await self.settings.set(f"topic_{key}", str(thread or ""))
+            # Existing topics survive partially failed reconfiguration.
             created[key] = thread
+        # Only persist new group settings after topic provisioning is attempted.
+        await self.settings.set("admin_group_id", str(chat_id))
+        await self.settings.set("admin_group_title", (title or "")[:128])
+        for key, thread in created.items():
+            await self.settings.set(f"topic_{key}", str(thread or ""))
         return created
 
     async def disable(self) -> None:
@@ -103,6 +112,9 @@ class AdminGroup:
         if self.bot is None or chat_id is None:
             return False
         thread = self.topic_id(topic)
+        if not thread:
+            log.warning("cannot send %s without a configured topic", topic)
+            return False
         kwargs: dict[str, Any] = {
             "parse_mode": ParseMode.HTML,
             "disable_web_page_preview": True,
@@ -113,17 +125,57 @@ class AdminGroup:
             await self.bot.send_message(chat_id, body, reply_markup=reply_markup, **kwargs)
             return True
         except TelegramError as exc:
-            log.warning("admin group send failed (%s): %s", topic, exc)
-            if not thread:
-                return False
-        # تاپیک پاک شده یا شناسه عوض شده: به چت اصلی گروه برمی‌گردیم.
-        kwargs.pop("message_thread_id", None)
-        try:
-            await self.bot.send_message(chat_id, body, reply_markup=reply_markup, **kwargs)
-            return True
-        except TelegramError as exc:
-            log.warning("admin group fallback failed: %s", exc)
+            log.warning("admin group topic send failed (%s): %s", topic, exc)
             return False
+
+    async def cache_event(self, component: str, action: str, summary: str) -> bool:
+        """Diagnostics without sending user URLs, secrets or file bodies."""
+        if not self.topic_id("cache"):
+            return False
+        body = (
+            f"📦 <b>{human.esc(component)}</b> | <b>{human.esc(action)}</b>\n"
+            f"<code>{human.esc(human.truncate(summary, 140))}</code>"
+        )
+        try:
+            return await self.send("cache", body)
+        except Exception:
+            log.debug("cache event logging failed", exc_info=True)
+            return False
+
+    async def audit(self, category: str, action: str, user_id: int | None = None,
+                    details: str = "", severity: str = "INFO") -> None:
+        """Store events in SQLite and route to audit or security topic."""
+        message = f"{action}" + (f" • {details[:350]}" if details else "")
+        topic = "security" if category == "security" else "audit"
+        try:
+            row = await repo.add_log(severity, category[:64], message[:1300], user_id)
+            label = "🔐" if category == "security" else "🧾"
+            body = (
+                f"{label} <b>{human.esc(action)}</b>\n"
+                f"بخش: <code>{human.esc(category)}</code>\n"
+                f"جزئیات: {human.esc(human.truncate(details or '—', 350))}\n"
+                f"کاربر: <code>{user_id if user_id is not None else '—'}</code>\n"
+                f"لاگ: <code>#{row.id}</code>"
+            )
+            await self.send(topic, body)
+        except Exception:
+            log.warning("audit event could not be saved", exc_info=True)
+
+    async def notify_job_result(self, task, status: str, size: int = 0,
+                                reason: str = "") -> None:
+        """Lifecycle status for every URL download, upload, link or cancel."""
+        mode = getattr(task, "mode", "video")
+        topic = "downloads" if mode == "link" else "uploads"
+        message = (
+            f"🧾 <b>پایان عملیات {human.esc(status)}</b>\n"
+            f"کار: <code>{human.esc(task.id)}</code>\n"
+            f"کاربر: <code>{task.user_id}</code>\n"
+            f"روش تحویل: {human.esc(mode)}\n"
+            f"حجم: {human.human_bytes(size)}\n"
+            f"خطا: {human.esc(human.truncate(reason or '—', 200))}"
+        )
+        await self.send(topic, message)
+        await self.audit("job", status, task.user_id, f"{task.id}, {mode}, {size}B")
 
     # ── اعلان‌های کار ───────────────────────────────────────
     async def notify_job(self, kind: str, task, result=None) -> None:
@@ -155,7 +207,7 @@ class AdminGroup:
                 f"📦 حجم: {human.human_bytes(size)}\n"
                 f"📤 تحویل: {mode}\n"
                 f"🆔 کار: <code>{task.id}</code>\n"
-                f"🌐 {human.esc(human.truncate(task.url, 300))}"
+                f"🌐 {human.esc(human.truncate(safe_source(task.url), 200))}"
             )
             await self.send(topic, body)
         except Exception:  # noqa: BLE001

@@ -81,6 +81,8 @@ class JobTask:
     last_text: str = ""
     last_edit: float = 0.0
     canceled_by_user: bool = False
+    upload_task: asyncio.Task | None = None
+    upload_started: float = 0.0
 
 
 class JobManager:
@@ -101,6 +103,7 @@ class JobManager:
         self.uploader = uploader
         self.limiter = limiter
         self.hub = hub
+        self.cache = None
 
         self.bot = None
         self._queue: deque[JobTask] = deque()
@@ -147,9 +150,6 @@ class JobManager:
     # ── API ─────────────────────────────────────────────────
     async def submit(self, task: JobTask) -> int:
         """کار را در صف می‌گذارد و موقعیت آن را برمی‌گرداند."""
-        self._tasks[task.id] = task
-        self._queue.append(task)
-        position = len(self._queue)
         await repo.create_job(
             job_id=task.id,
             user_id=task.user_id,
@@ -160,6 +160,9 @@ class JobManager:
             quality=task.option.label,
             title=task.title,
         )
+        self._tasks[task.id] = task
+        self._queue.append(task)
+        position = len(self._queue)
         self._wake.set()
         return position
 
@@ -172,6 +175,8 @@ class JobManager:
             return False
         task.canceled_by_user = True
         task.cancel.set()
+        if task.upload_task is not None and not task.upload_task.done():
+            task.upload_task.cancel()
         if task in self._queue:
             try:
                 self._queue.remove(task)
@@ -260,6 +265,32 @@ class JobManager:
             if self.hub is not None:
                 await self.hub.notify_job("download", task)
 
+            if task.mode != "link" and self.cache is not None:
+                try:
+                    cached = await self.cache.cached_delivery(self.bot, task)
+                except Exception:
+                    cached = False
+                    log.warning("media cache read failed; proceeding normally", exc_info=True)
+                if cached:
+                    await repo.update_job(
+                        task.id, status="done", size=int(cached),
+                        finished_at=int(time.time()),
+                    )
+                    await repo.bump_downloads(task.user_id)
+                    await repo.log_event(task.user_id, "download_done")
+                    await repo.log_event(task.user_id, "bytes", float(cached))
+                    await self._edit_final(
+                        task, text.t(task.lang, "done") +
+                        ("\n♻️ دریافت سریع از کش" if task.lang == "fa" else
+                         "\n♻️ Delivered from cache")
+                    )
+                    if self.hub is not None:
+                        await self.hub.notify_job_result(task, "cache_hit")
+                    return
+
+            if task.cancel.is_set():
+                raise errors.JobCancelled()
+
             result = await self.downloader.download(
                 task.url,
                 task.option,
@@ -276,6 +307,8 @@ class JobManager:
                 result = apply_custom_name(result, task.custom_name)
 
             if task.mode == "link":
+                if task.cancel.is_set():
+                    raise errors.JobCancelled()
                 await self._deliver_link(task, result)
             else:
                 if result.thumbnail is None:
@@ -287,19 +320,45 @@ class JobManager:
 
                 task.progress.stage = "uploading"
                 task.progress.pct = 0.0
+                task.upload_started = time.monotonic()
                 await self._edit_progress(task, force=True)
                 if self.hub is not None:
                     await self.hub.notify_job("upload", task, result)
 
-                await self.uploader.send(
-                    self.bot,
-                    task.chat_id,
-                    result,
-                    task.progress,
-                    task.url,
-                    as_document=task.mode == "document",
-                    filename=result.path.name,
+                if task.cancel.is_set():
+                    raise errors.JobCancelled()
+                task.upload_task = asyncio.create_task(
+                    self.uploader.send(
+                        self.bot,
+                        task.chat_id,
+                        result,
+                        task.progress,
+                        task.url,
+                        as_document=task.mode == "document",
+                        filename=result.path.name,
+                        cancel=task.cancel,
+                    )
                 )
+                try:
+                    uploaded_message = await task.upload_task
+                except asyncio.CancelledError:
+                    if task.cancel.is_set():
+                        raise errors.JobCancelled() from None
+                    raise
+                finally:
+                    task.upload_task = None
+                if task.cancel.is_set():
+                    # If the upload finished concurrently with cancellation,
+                    # remove the message instead of claiming a successful cancel.
+                    try:
+                        await self.bot.delete_message(
+                            chat_id=task.chat_id, message_id=uploaded_message.message_id
+                        )
+                    except TelegramError:
+                        pass
+                    raise errors.JobCancelled()
+                if self.cache is not None:
+                    await self.cache.record_delivery(self.bot, task, result, uploaded_message)
 
             await repo.update_job(
                 task.id,
@@ -316,9 +375,18 @@ class JobManager:
                     task,
                     text.t(task.lang, "done") + f"\n<b>{human.esc(result.title)}</b>",
                 )
+            if self.hub is not None:
+                await self.hub.notify_job_result(task, "done", result.size)
 
         except errors.JobCancelled:
             await self._finish_canceled(task)
+            if self.hub is not None:
+                await self.hub.notify_job_result(task, "canceled")
+        except asyncio.CancelledError:
+            if task.cancel.is_set():
+                await self._finish_canceled(task)
+            else:
+                raise
         except errors.LeechError as exc:
             log.info("job %s failed: %s (%s)", task.id, exc.key, exc.reason)
             await repo.update_job(
@@ -330,9 +398,11 @@ class JobManager:
             await repo.log_event(task.user_id, "download_failed")
             body = self._error_text(task.lang, exc)
             if exc.key in ("unsupported", "live_unsupported"):
-                body += "\n\n" + text.t(task.lang, "issue_reported")
-                await self._report_error(task, f"{exc.key}: {exc.reason}")
+                if await self._report_error(task, f"{exc.key}: {exc.reason}"):
+                    body += "\n\n" + text.t(task.lang, "issue_reported")
             await self._edit_final(task, body)
+            if self.hub is not None:
+                await self.hub.notify_job_result(task, "failed", reason=f"{exc.key}: {exc.reason}")
         except Exception as exc:  # noqa: BLE001
             log.exception("job %s crashed", task.id)
             await repo.update_job(
@@ -347,19 +417,21 @@ class JobManager:
                 text.t(task.lang, "failed", reason=human.esc(str(exc)[:150])),
             )
             await self._report_error(task, f"crash: {exc}")
+            if self.hub is not None:
+                await self.hub.notify_job_result(task, "crashed", reason=type(exc).__name__)
         finally:
             self.store.drop_job_dir(task.id)
             self.limiter.release_slot(task.user_id)
             self._tasks.pop(task.id, None)
             self._wake.set()
 
-    async def _report_error(self, task: JobTask, reason: str) -> None:
+    async def _report_error(self, task: JobTask, reason: str) -> bool:
         """خطای کار را در لاگ‌ها و تاپیک گزارش‌های گروه ادمین ثبت می‌کند."""
         if self.hub is None:
-            return
+            return False
         try:
             user = await repo.get_user(task.user_id)
-            await self.hub.report_issue(
+            report = await self.hub.report_issue(
                 task.user_id,
                 user.username if user else None,
                 user.first_name if user else None,
@@ -372,8 +444,10 @@ class JobManager:
                 f"کار {task.id} شکست خورد: {reason}",
                 task.user_id,
             )
+            return report is not None
         except Exception:  # noqa: BLE001
             log.exception("could not report job error")
+            return False
 
     async def _finish_canceled(self, task: JobTask) -> None:
         await repo.update_job(task.id, status="canceled", finished_at=int(time.time()))
@@ -386,6 +460,11 @@ class JobManager:
 
     async def _deliver_link(self, task: JobTask, result) -> None:
         """فایل دانلودشده را به پوشهٔ لینک مستقیم منتقل و لینک امضاشده می‌سازد."""
+        if result.size > self.settings.max_link_bytes:
+            raise errors.FileTooLargeForLink(
+                size=human.human_bytes(result.size),
+                max=human.human_bytes(self.settings.max_link_bytes),
+            )
         dest = self.store.link_path(task.id, result.path.name)
         try:
             shutil.move(str(result.path), str(dest))
@@ -435,7 +514,10 @@ class JobManager:
             return text.t(lang, "queued", pos=pos)
         if prog.stage == "downloading":
             total = human.human_bytes(prog.total) if prog.total else "?"
-            return text.t(
+            step = ("۱/۱" if task.mode == "link" else "۱/۲") if lang == "fa" else (
+                "1/1" if task.mode == "link" else "1/2"
+            )
+            return f"📍 {step}\n" + text.t(
                 lang,
                 "downloading",
                 pct=int(prog.pct),
@@ -445,13 +527,18 @@ class JobManager:
                 eta=human.human_eta(prog.eta),
             )
         if prog.stage == "uploading":
-            return text.t(
+            elapsed = max(.001, time.monotonic() - task.upload_started)
+            speed = prog.uploaded / elapsed
+            eta = int(max(0, prog.total - prog.uploaded) / speed) if speed else None
+            waiting = prog.total and prog.uploaded >= prog.total
+            return ("📍 مرحله ۲/۲\n" if lang == "fa" else "📍 Stage 2/2\n") + text.t(
                 lang,
                 "uploading",
-                pct=int(prog.pct),
+                pct=min(99, int(prog.pct)),
                 bar=human.progress_bar(prog.pct),
                 size=f"{human.human_bytes(prog.uploaded)} / {human.human_bytes(prog.total)}",
-            )
+            ) + ("\n" + text.t(lang, "upload_wait") if waiting
+                  else f"\n{human.human_speed(speed)} · {human.human_eta(eta)}")
         return text.t(lang, "processing")
 
     async def _edit_progress(self, task: JobTask, force: bool = False) -> None:
@@ -471,6 +558,8 @@ class JobManager:
                 message_id=task.status_message_id,
                 text=body,
                 parse_mode=ParseMode.HTML,
+                reply_markup=Kb([[Btn(text.t(task.lang, "cancel_btn"),
+                                      callback_data=f"x|{task.id}")]]),
             )
         except TelegramError:
             pass

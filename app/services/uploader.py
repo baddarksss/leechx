@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+import asyncio
 from pathlib import Path
 from typing import BinaryIO
 
@@ -37,11 +38,15 @@ PLAYABLE_VIDEO_EXT = {".mp4", ".m4v", ".mov"}
 class ProgressReader:
     """فایل را می‌خواند و تعداد بایت‌های خوانده‌شده را گزارش می‌کند."""
 
-    def __init__(self, fh: BinaryIO, on_read: Callable[[int], None]) -> None:
+    def __init__(self, fh: BinaryIO, on_read: Callable[[int], None],
+                 cancel: asyncio.Event | None = None) -> None:
         self._fh = fh
         self._on_read = on_read
+        self._cancel = cancel
 
     def read(self, size: int = -1) -> bytes:
+        if self._cancel is not None and self._cancel.is_set():
+            raise errors.JobCancelled()
         data = self._fh.read(size)
         if data:
             self._on_read(len(data))
@@ -108,6 +113,7 @@ class Uploader:
         as_document: bool = False,
         filename: str | None = None,
         caption_title: str | None = None,
+        cancel: asyncio.Event | None = None,
     ) -> Message:
         self._check_size(result.size)
         progress.stage = "uploading"
@@ -137,7 +143,7 @@ class Uploader:
                 if progress.total:
                     progress.pct = min(99.9, progress.uploaded * 100.0 / progress.total)
 
-            return InputFile(ProgressReader(fh, on_read), filename=display_name)
+            return InputFile(ProgressReader(fh, on_read, cancel), filename=display_name, read_file_handle=False)
 
         def reset() -> None:
             progress.pct = 0.0
@@ -146,7 +152,7 @@ class Uploader:
         try:
             if result.thumbnail and result.thumbnail.exists():
                 thumb_handle = result.thumbnail.open("rb")
-                thumb_file = InputFile(thumb_handle, filename="thumb.jpg")
+                thumb_file = InputFile(thumb_handle, filename="thumb.jpg", read_file_handle=False)
 
             if not as_document and kind == "audio":
                 return await bot.send_audio(
@@ -189,6 +195,8 @@ class Uploader:
                         raise
                     log.info("video upload rejected (%s); retrying as document", exc)
                     reset()
+                    if thumb_handle is not None and not thumb_handle.closed:
+                        thumb_handle.seek(0)
 
             return await bot.send_document(
                 chat_id=chat_id,

@@ -35,6 +35,9 @@ SCHEMA: dict[str, tuple[str, str]] = {
     "topic_uploads": ("text", "تاپیک آپلود"),
     "topic_reports": ("text", "تاپیک گزارش‌ها"),
     "topic_logs": ("text", "تاپیک لاگ‌ها"),
+    "topic_cache": ("text", "تاپیک کش رسانه‌ها"),
+    "topic_audit": ("text", "تاپیک ممیزی عملیات"),
+    "topic_security": ("text", "تاپیک امنیت"),
 }
 
 # کلیدهایی که در پنل «متغیرهای اجرا» نمایش داده می‌شوند.
@@ -85,6 +88,9 @@ class RuntimeSettings:
             "topic_uploads": "",
             "topic_reports": "",
             "topic_logs": "",
+    "topic_cache": "",
+    "topic_audit": "",
+    "topic_security": "",
         }.get(key)
 
     def get_float(self, key: str) -> float:

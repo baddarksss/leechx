@@ -58,10 +58,12 @@ def _parse_range(header: str | None, size: int) -> tuple[int, int] | None:
 
 
 class LinkServer:
-    def __init__(self, cfg: Config, settings: RuntimeSettings, store: FileStore) -> None:
+    def __init__(self, cfg: Config, settings: RuntimeSettings, store: FileStore, hub=None) -> None:
         self.cfg = cfg
         self.settings = settings
         self.store = store
+        self.hub = hub
+        self._access_logged: dict[str, float] = {}
         self._runner: web.AppRunner | None = None
 
     # ── ساخت اپلیکیشن ──────────────────────────────────────
@@ -122,7 +124,7 @@ class LinkServer:
         path = Path(row.path)
         try:
             resolved = path.resolve()
-            if not str(resolved).startswith(str(self.store.links.resolve())):
+            if not resolved.is_relative_to(self.store.links.resolve()):
                 log.warning("path traversal attempt: %s", row.path)
                 return web.Response(status=403, text="Forbidden.\n")
         except OSError:
@@ -133,6 +135,9 @@ class LinkServer:
             return web.Response(status=404, text="File not found.\n")
 
         size = resolved.stat().st_size
+        if size <= 0 or size != row.size:
+            log.warning("link file size mismatch %s: expected %s, got %s", row.id, row.size, size)
+            return web.Response(status=503, text="File unavailable or incomplete.\n")
         ctype = row.mime or mimetypes.guess_type(row.name)[0] or "application/octet-stream"
         inline = ctype.startswith(("video/", "audio/", "image/"))
         rng = _parse_range(request.headers.get("Range"), size)
@@ -141,10 +146,16 @@ class LinkServer:
             "Content-Type": ctype,
             "Content-Disposition": _content_disposition(row.name, inline),
             "Accept-Ranges": "bytes",
-            "Cache-Control": "private, max-age=3600",
+            "Cache-Control": "private, no-store",
             "X-Expires-At": str(row.expires_at),
         }
 
+        if request.headers.get("Range") and rng is None:
+            return web.Response(status=416, headers={
+                "Content-Range": f"bytes */{size}",
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "private, no-store",
+            })
         if rng is None:
             start, end = 0, size - 1
             status = 200
@@ -184,6 +195,20 @@ class LinkServer:
             await repo.touch_shared(row.id)
         except Exception:  # noqa: BLE001 — آمار نباید دانلود را خراب کند
             log.debug("touch_shared failed", exc_info=True)
+        if self.hub is not None:
+            now = time.monotonic()
+            if now - self._access_logged.get(row.id, 0) >= 300:
+                self._access_logged[row.id] = now
+                try:
+                    await self.hub.audit(
+                        "link_http", "direct_link_access", row.user_id,
+                        f"file={row.id}, HTTP {status}, bytes={length}",
+                    )
+                except Exception:
+                    log.debug("HTTP access audit failed", exc_info=True)
+            if len(self._access_logged) > 20000:
+                cutoff = now - 600
+                self._access_logged = {k: v for k, v in self._access_logged.items() if v > cutoff}
         return response
 
     async def _drop(self, file_id: str, path: str) -> None:

@@ -13,9 +13,10 @@ import logging
 import mimetypes
 import os
 from dataclasses import dataclass, field
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urljoin
 
 import aiohttp
 import yt_dlp
@@ -44,6 +45,32 @@ DIRECT_MIME_TYPES = {
     "application/vnd.rar",
     "application/vnd.android.package-archive",
 }
+
+
+@asynccontextmanager
+async def safe_http_request(session, method: str, url: str, **kwargs):
+    """Validate every redirect hop before making the next direct HTTP request.
+
+    This is defense in depth in addition to firewall/network egress restrictions.
+    """
+    for _ in range(7):
+        if not await urlcheck.is_safe_public_url(url):
+            raise errors.UnsupportedUrl("Non-public or unsafe download URL")
+        response = await session.request(method, url, allow_redirects=False, **kwargs)
+        if response.status in (301, 302, 303, 307, 308):
+            location = response.headers.get("Location")
+            response.release()
+            if not location:
+                raise errors.UnsupportedUrl("Redirect without Location")
+            url = urljoin(url, location)
+            method = "GET" if response.status == 303 else method
+            continue
+        try:
+            yield response
+        finally:
+            response.release()
+        return
+    raise errors.UnsupportedUrl("Too many redirects")
 
 
 def is_direct_mime(ctype: str) -> bool:
@@ -179,6 +206,12 @@ def _mime_for(path: Path) -> str:
 
 def map_error(exc: BaseException) -> errors.LeechError:
     """تبدیل خطاهای yt-dlp/aiohttp به خطای قابل‌نمایش."""
+    if isinstance(exc, aiohttp.ClientPayloadError):
+        return errors.IncompleteDownload(str(exc)[:150])
+    if isinstance(exc, TimeoutError):
+        return errors.DownloadTimeout("Timeout")
+    if isinstance(exc, errors.LeechError):
+        return exc
     text = str(exc)
     low = text.lower()
     if "unsupported url" in low or "no suitable extractor" in low:
@@ -193,14 +226,12 @@ def map_error(exc: BaseException) -> errors.LeechError:
         return errors.UnsupportedUrl("Geo restricted")
     if "live event" in low or "is live" in low or "live stream" in low:
         return errors.LiveUnsupported()
-    if "http error 404" in low or "not found" in low:
-        return errors.UnsupportedUrl("Not found")
-    if "http error 403" in low:
-        return errors.UnsupportedUrl("Forbidden (403)")
+    if "http error 404" in low or "404: not found" in low or "not found" in low:
+        return errors.ResourceNotFound("404")
+    if "http error 403" in low or "403: forbidden" in low:
+        return errors.AccessDenied("403")
     if "timed out" in low or "timeout" in low:
-        return errors.UnsupportedUrl("Timeout")
-    if isinstance(exc, errors.LeechError):
-        return exc
+        return errors.DownloadTimeout("Timeout")
     return errors.UnsupportedUrl(text[:180] or exc.__class__.__name__)
 
 
@@ -244,8 +275,8 @@ class Downloader:
 
     # ── بررسی لینک ──────────────────────────────────────────
     async def probe(self, url: str, depth: int = 0) -> MediaInfo:
-        if not urlcheck.is_valid_url(url):
-            raise errors.UnsupportedUrl("Invalid URL")
+        if not await urlcheck.is_safe_public_url(url):
+            raise errors.UnsupportedUrl("Invalid or non-public URL")
 
         if urlcheck.looks_direct(url):
             direct = await self._probe_direct(url)
@@ -301,12 +332,12 @@ class Downloader:
     async def _probe_direct(self, url: str) -> MediaInfo | None:
         """آیا این URL یک فایل قابل دانلود مستقیم است؟ (بدون استخراج yt-dlp)"""
         timeout = aiohttp.ClientTimeout(total=20)
-        headers = {"User-Agent": USER_AGENT, "Accept": "*/*"}
+        headers = {"User-Agent": USER_AGENT, "Accept": "*/*", "Accept-Encoding": "identity"}
         retry_statuses = (403, 405, 501)  # بعضی CDNها HEAD را دوست ندارند
         try:
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
                 try:
-                    async with sess.head(url, allow_redirects=True) as resp:
+                    async with safe_http_request(sess, "HEAD", url) as resp:
                         status = resp.status
                         ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
                         length = resp.headers.get("Content-Length")
@@ -319,7 +350,7 @@ class Downloader:
                 if status < 400 and ctype and not is_direct_mime(ctype):
                     return None
                 if not ctype or status == 0 or status >= 400:
-                    async with sess.get(url, allow_redirects=True, headers={"Range": "bytes=0-0"}) as resp:
+                    async with safe_http_request(sess, "GET", url, headers={"Range": "bytes=0-0"}) as resp:
                         if resp.status >= 400:
                             return None
                         ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
@@ -330,6 +361,8 @@ class Downloader:
 
         if not is_direct_mime(ctype):
             return None
+        if not await urlcheck.is_safe_public_url(final):
+            raise errors.UnsupportedUrl("Unsafe redirect destination")
 
         name = urlcheck.filename_from_url(final, "download")
         return MediaInfo(
@@ -471,6 +504,8 @@ class Downloader:
         cancel: asyncio.Event,
         info: MediaInfo,
     ) -> DownloadResult:
+        if not await urlcheck.is_safe_public_url(url):
+            raise errors.UnsupportedUrl("Invalid or non-public download URL")
         progress.reset_download()
         name = human.safe_filename(urlcheck.filename_from_url(url, "download"), 120)
         if info.ext and not name.lower().endswith("." + info.ext.lower()):
@@ -478,10 +513,16 @@ class Downloader:
         dest = workdir / name
 
         timeout = aiohttp.ClientTimeout(total=None, sock_read=120, connect=30)
-        headers = {"User-Agent": USER_AGENT, "Accept": "*/*"}
+        headers = {"User-Agent": USER_AGENT, "Accept": "*/*", "Accept-Encoding": "identity"}
         try:
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
-                async with sess.get(url, allow_redirects=True) as resp:
+                async with safe_http_request(sess, "GET", url) as resp:
+                    if not await urlcheck.is_safe_public_url(str(resp.url)):
+                        raise errors.UnsupportedUrl("Unsafe redirect destination")
+                    if resp.status == 404:
+                        raise errors.ResourceNotFound("404")
+                    if resp.status in (401, 403):
+                        raise errors.AccessDenied(str(resp.status))
                     if resp.status >= 400:
                         raise errors.UnsupportedUrl(f"HTTP {resp.status}")
                     total = int(resp.headers.get("Content-Length") or 0)
@@ -494,10 +535,14 @@ class Downloader:
                             progress.downloaded += len(chunk)
                             if total:
                                 progress.pct = min(99.9, progress.downloaded * 100.0 / total)
+                    if not progress.downloaded or (total and progress.downloaded != total):
+                        raise errors.IncompleteDownload(
+                            f"expected {total} bytes, received {progress.downloaded}"
+                        )
         except errors.LeechError:
             raise
         except (TimeoutError, aiohttp.ClientError, OSError) as exc:
-            raise errors.UnsupportedUrl(str(exc)[:150]) from exc
+            raise map_error(exc) from exc
 
         if cancel.is_set():
             raise errors.JobCancelled()
