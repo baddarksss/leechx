@@ -431,6 +431,7 @@ FA: dict[str, str] = {
     ),
     "lang_saved": "✅ زبان به <b>{language}</b> تغییر کرد.",
     "menu_updated": "✅ منو به‌روزرسانی شد.",
+    "admin_lang_fixed": "🔒 حالت ادمین همیشه فارسی است؛ تغییر زبان فقط برای کاربران عادی فعال است.",
     "version_info": (
         "<b>🤖 LeechX v{version}</b> · {codename}\n"
         "📅 انتشار: {date}\n"
@@ -1050,6 +1051,7 @@ EN: dict[str, str] = {
     ),
     "lang_saved": "✅ Language changed to <b>{language}</b>.",
     "menu_updated": "✅ Menu updated.",
+    "admin_lang_fixed": "🔒 Admin mode is always Persian; language switching is for regular users only.",
     "version_info": (
         "<b>🤖 LeechX v{version}</b> · {codename}\n"
         "📅 Released: {date}\n"
@@ -1622,6 +1624,7 @@ RU: dict[str, str] = {
     "lang_title": "<b>🌍 Выбор языка</b>\n\nТекущий: <b>{current}</b>",
     "lang_saved": "✅ Язык изменён на <b>{language}</b>.",
     "menu_updated": "✅ Меню обновлено.",
+    "admin_lang_fixed": "🔒 Режим администратора всегда на персидском; смена языка доступна только обычным пользователям.",
     "version_info": (
         "<b>🤖 LeechX v{version}</b> · {codename}\n"
         "📅 Выпуск: {date}\n🐍 Python: {python}\n🎬 yt-dlp: {ytdlp}\n"

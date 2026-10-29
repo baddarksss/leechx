@@ -47,6 +47,7 @@ def _inline_menu(update: Update, lang: str, admin: bool, preview: bool):
 def _reply_menu_markup(update: Update, lang: str, admin: bool, preview: bool):
     """Persistent reply keyboard for private chats; inline menus remain in groups."""
     if admin and not preview:
+        lang = text.DEFAULT_LANG
         if _is_private(update):
             return kb.admin_persistent_menu(lang)
         return kb.main_menu(lang, True)
@@ -65,8 +66,9 @@ def _stale_keyboard_tap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
         return False
     lang = lang_of(context)
     if context.user_data.get("is_admin") and not in_preview(context):
+        lang = text.DEFAULT_LANG
+        context.user_data["lang"] = lang
         current = set(kb.persistent_admin_labels(lang).values())
-        current.add(text.t(lang, "btn_lang"))
     else:
         current = set(
             kb.user_persistent_labels(lang, preview=in_preview(context)).values()
@@ -184,14 +186,19 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if claimed:
                 await svc.settings.set("owner_id", str(owner_id))
                 svc.settings.apply_to_config()
+                lang = text.DEFAULT_LANG
+                context.user_data["lang"] = lang
                 await reply(update, text.t(lang, "owner_claimed"))
         except Exception:  # noqa: BLE001 — دیتابیس نباید /start را بشکند
             log.exception("owner claim failed")
 
     admin = await is_admin(svc.cfg, user.id)
     preview = in_preview(context)
+    if admin and not preview:
+        lang = text.DEFAULT_LANG
+        context.user_data["lang"] = lang
     row = await repo.get_user(user.id)
-    if row is None or not row.language_selected:
+    if not (admin and not preview) and (row is None or not row.language_selected):
         await panel(
             update,
             context,
@@ -275,8 +282,13 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
-    lang = lang_of(context)
     admin = await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context)
+    if admin:
+        lang = text.DEFAULT_LANG
+        context.user_data["lang"] = lang
+        await _show(update, context, text.t(lang, "admin_lang_fixed"), admin=True)
+        return
+    lang = lang_of(context)
     await _show(
         update,
         context,
@@ -341,7 +353,7 @@ async def handle_preview_exit_text(update: Update, context: ContextTypes.DEFAULT
 def _leave_preview(context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data["preview"] = False
     context.user_data["is_admin"] = True
-    # Language is a persisted user choice and must survive exiting preview.
+    context.user_data["lang"] = text.DEFAULT_LANG
 
 
 def _enter_preview(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -406,6 +418,9 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
     lang = lang_of(context)
     preview = in_preview(context)
     admin = await is_admin(svc.cfg, update.effective_user.id) and not preview
+    if admin:
+        lang = text.DEFAULT_LANG
+        context.user_data["lang"] = lang
     clear_state(context)
     # ویرایش پیام فقط کیبورد شیشه‌ای می‌پذیرد؛ کیبورد ثابت ادمین اینجا کاربرد ندارد.
     inline_menu = kb.main_menu(lang, admin, preview=preview)
@@ -476,6 +491,10 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
         return
 
     if action == "lang":
+        if admin:
+            await safe_answer(query, text.t(lang, "admin_lang_fixed"), alert=True)
+            await panel(update, context, text.t(lang, "admin_lang_fixed"), inline_menu)
+            return
         await safe_answer(query)
         await panel(
             update,
@@ -584,6 +603,17 @@ async def on_lang(update: Update, context: ContextTypes.DEFAULT_TYPE, code: str)
     query = update.callback_query
     preview = in_preview(context)
     admin = await is_admin(svc.cfg, user.id)
+    if admin and not preview:
+        lang = text.DEFAULT_LANG
+        context.user_data["lang"] = lang
+        await safe_answer(query, text.t(lang, "admin_lang_fixed"), alert=True)
+        await send_home(
+            update,
+            context,
+            text.t(lang, "admin_lang_fixed"),
+            _reply_menu_markup(update, lang, admin=True, preview=False),
+        )
+        return
     if code not in text.LANGS:
         await safe_answer(query)
         return
@@ -618,20 +648,6 @@ async def on_lang(update: Update, context: ContextTypes.DEFAULT_TYPE, code: str)
             update,
             context,
             _welcome(code, svc.settings.ttl_hours),
-            _reply_menu_markup(update, code, admin, preview),
-        )
-        return
-
-    if admin and not preview:
-        await edit(
-            query.message,
-            text.t(code, "lang_saved", language=text.LANGS[code]),
-            reply_markup=InlineKeyboardMarkup([]),
-        )
-        await send_home(
-            update,
-            context,
-            text.t(code, "admin_panel"),
             _reply_menu_markup(update, code, admin, preview),
         )
         return

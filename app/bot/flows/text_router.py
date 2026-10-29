@@ -52,11 +52,22 @@ _LEGACY_USER_KEYBOARD_ACTIONS = {
 }
 
 
+_ADMIN_SECTION_LANG_KEYS = {
+    "stats": "sec_stats",
+    "users": "sec_users",
+    "settings": "sec_settings",
+    "groups": "sec_groups",
+    "deploy": "sec_deploy",
+    "debug": "sec_debug",
+    "cookies": "sec_cookies",
+}
+
+
 def _admin_section_for_label(label: str) -> str | None:
-    """Resolve current admin buttons and the removed cancel shortcut in old keyboards."""
+    """Resolve current Persian controls and stale localized controls after updates."""
     for language in text.LANG_ORDER:
-        for section, translated in kb.persistent_admin_labels(language).items():
-            if label == translated:
+        for section, key in _ADMIN_SECTION_LANG_KEYS.items():
+            if label == text.t(language, key):
                 return section
         if label == text.t(language, "sec_cancel"):
             # Legacy keyboards kept after an update remain harmless: this only cancels

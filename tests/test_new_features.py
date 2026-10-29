@@ -59,9 +59,9 @@ def update(user_id=42, query=None):
     )
 
 
-def test_admin_reply_keyboard_persistent():
-    """کیبورد ادمین بخش‌ها و تغییر زبان را با برچسب محلی نشان می‌دهد."""
-    menu = kb.admin_persistent_menu("fa")
+def test_admin_reply_keyboard_persistent_and_always_persian():
+    """حتی با locale ذخیره‌شدهٔ غیرفارسی، منوی ادمین فارسی و بدون تغییر زبان است."""
+    menu = kb.admin_persistent_menu("en")
     rows = [[button.text for button in row] for row in menu.keyboard]
     labels = {button.text for row in menu.keyboard for button in row}
     assert menu.is_persistent and menu.resize_keyboard
@@ -69,7 +69,9 @@ def test_admin_reply_keyboard_persistent():
     assert "📊 آمار" in labels
     assert "👥 کاربران" in labels
     assert "🚀 دیپلوی" in labels
-    assert text.t("fa", "btn_lang") in labels
+    assert text.t("fa", "btn_lang") not in labels
+    assert text.t("en", "btn_lang") not in labels
+    assert text.t("ru", "btn_lang") not in labels
     assert text.t("fa", "sec_cancel") not in labels
     for user_only in ("🔗 لینک‌های من", "🏠 منوی اصلی", "👑 پنل ادمین"):
         assert user_only not in labels

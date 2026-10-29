@@ -49,6 +49,17 @@ def _is_start_command(update: Update) -> bool:
     return raw[0].split("@", 1)[0].lower() == "/start"
 
 
+def _is_preview_exit(update: Update) -> bool:
+    query = update.callback_query
+    if query is not None and query.data == kb.M_EXIT_PREVIEW:
+        return True
+    message = update.effective_message
+    label = getattr(message, "text", None)
+    return bool(label) and any(
+        label == text.t(language, "btn_preview_exit") for language in text.LANG_ORDER
+    )
+
+
 # ── چرخهٔ عمر ───────────────────────────────────────────────
 async def _notify_startup_owners(bot, owner_ids: list[int]) -> None:
     """Tell configured/dynamic owners that the bot is ready after startup or restart."""
@@ -57,14 +68,8 @@ async def _notify_startup_owners(bot, owner_ids: list[int]) -> None:
         log.info("startup notification skipped: no owner chat is configured")
         return
     sent = 0
+    body = text.t(text.DEFAULT_LANG, "startup_ready", version=__version__)
     for owner_id in recipients:
-        try:
-            owner = await repo.get_user(owner_id)
-            lang = text.normalize_lang(owner.lang if owner is not None else None)
-        except Exception:  # noqa: BLE001 — startup notice must not depend on user lookup
-            lang = text.DEFAULT_LANG
-            log.debug("could not load startup notification language for owner_id=%s", owner_id, exc_info=True)
-        body = text.t(lang, "startup_ready", version=__version__)
         try:
             await bot.send_message(chat_id=owner_id, text=body)
             sent += 1
@@ -125,18 +130,29 @@ async def gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     preview = in_preview(context)
     staff = await is_staff(cfg, user.id)
     context.user_data["is_admin"] = staff and not preview
+    if staff and not preview:
+        context.user_data["lang"] = text.DEFAULT_LANG
 
     if row.is_banned:
         await _block(update, text.t(lang_of(context), "banned"))
         raise ApplicationHandlerStop
 
-    if services.settings.maintenance and not (staff and not preview):
+    preview_exit = staff and preview and _is_preview_exit(update)
+    if services.settings.maintenance and not (staff and not preview) and not preview_exit:
         await _block(update, text.t(lang_of(context), "maintenance"))
         raise ApplicationHandlerStop
 
+    # Admin mode is deliberately Persian; language selection belongs to users.
+    if staff and not preview:
+        return
+    # Exiting preview must remain possible even when a first-time admin has never
+    # completed user onboarding or would otherwise be held by force-join.
+    if preview_exit:
+        return
+
     # ── زبان اولیه پیش از قفل عضویت ───────────────────────
-    # هر کاربر، از جمله ادمین، زبان را یک‌بار انتخاب می‌کند؛ /start باید به هندلر
-    # برسد تا منطق مالک اولیه حفظ شود، و callback انتخاب زبان نیز از گیت بگذرد.
+    # کاربران عادی و ادمین در پیش‌نمایش، زبان را پیش از گیت عضویت انتخاب می‌کنند.
+    # /start و callback انتخاب زبان باید به هندلر برسند.
     language_callback = update.callback_query
     choosing_initial_language = bool(
         language_callback is not None
@@ -154,11 +170,6 @@ async def gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reply_markup=kb.language_menu(lang, onboarding=True),
         )
         raise ApplicationHandlerStop
-
-    # پس از انتخاب زبان، ادمین‌ها از عضویت اجباری معاف‌اند؛ در حالت پیش‌نمایش
-    # همچنان دقیقاً مانند کاربر عادی بررسی می‌شوند.
-    if staff and not preview:
-        return
 
     # ── عضویت اجباری ──────────────────────────────────────
     if not services.force_join.enabled:

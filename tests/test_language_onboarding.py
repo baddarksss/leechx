@@ -141,32 +141,62 @@ async def test_start_prompts_language_before_forced_join_and_persists_choice(db)
 
 
 @pytest.mark.asyncio
-async def test_admin_also_gets_captionless_three_button_picker(db):
+async def test_first_time_admin_skips_language_picker_and_gets_persian_menu(db):
     services = _services()
     context = _context(services)
     message = FakeMessage("/start")
     update = _update(message, user_id=999)
 
     await bot_app.gate(update, context)
+    assert context.user_data["lang"] == "fa"
     await start_flow.cmd_start(update, context)
 
-    prompt, kwargs = message.replies[-1]
-    assert prompt == start_flow.LANGUAGE_PICKER_TEXT
+    body, kwargs = message.replies[-1]
+    assert body != start_flow.LANGUAGE_PICKER_TEXT
+    assert "Welcome to LeechX" not in body
+    assert context.user_data["lang"] == "fa"
     markup = kwargs["reply_markup"]
-    assert _callback_data(markup) == {"l|fa", "l|en", "l|ru"}
-    assert len(markup.inline_keyboard) == 3
+    assert isinstance(markup, ReplyKeyboardMarkup)
+    labels = {button.text for row in markup.keyboard for button in row}
+    assert "📊 آمار" in labels
+    assert all(text.t(code, "btn_lang") not in labels for code in text.LANG_ORDER)
+    row = await repo.get_user(999)
+    assert row is not None and row.language_selected is False
+
+
+@pytest.mark.asyncio
+async def test_admin_overrides_legacy_locale_and_blocks_stale_language_callback(db):
+    services = _services()
+    await repo.upsert_user(999, "admin999", "Admin", lang="ru")
+    await repo.set_lang(999, "ru", selected=True)
+    context = _context(services, lang="ru")
+    message = FakeMessage("/start")
+    update = _update(message, user_id=999)
+
+    await bot_app.gate(update, context)
+    assert context.user_data["lang"] == "fa"
+    await start_flow.cmd_start(update, context)
+    body, kwargs = message.replies[-1]
+    assert "Welcome to LeechX" not in body
+    assert isinstance(kwargs["reply_markup"], ReplyKeyboardMarkup)
+    assert text.t("ru", "btn_lang") not in {
+        button.text for row in kwargs["reply_markup"].keyboard for button in row
+    }
 
     query = FakeQuery(message, "l|en")
     callback_update = _update(message, user_id=999, query=query)
     await bot_app.gate(callback_update, context)
     await start_flow.on_lang(callback_update, context, "en")
-    assert context.user_data["lang"] == "en"
-    assert services.force_join.calls == 0  # admins remain exempt from forced join
+    assert context.user_data["lang"] == "fa"
+    assert query.answers[-1][1] is True
+    assert text.t("fa", "admin_lang_fixed") in query.answers[-1][0]
     row = await repo.get_user(999)
-    assert row is not None and row.lang == "en" and row.language_selected is True
-    keyboard = message.replies[-1][1]["reply_markup"]
-    labels = {button.text for row in keyboard.keyboard for button in row}
-    assert text.t("en", "btn_lang") in labels
+    assert row is not None and row.lang == "ru" and row.language_selected is True
+    latest_body, latest_kwargs = message.replies[-1]
+    assert text.t("fa", "admin_lang_fixed") in latest_body
+    labels = {button.text for row in latest_kwargs["reply_markup"].keyboard for button in row}
+    assert "📊 آمار" in labels
+    assert all(text.t(code, "btn_lang") not in labels for code in text.LANG_ORDER)
 
 
 @pytest.mark.asyncio
@@ -276,7 +306,7 @@ async def test_change_language_callback_renders_settings_without_keyword_collisi
 
 
 @pytest.mark.asyncio
-async def test_preview_exit_uses_saved_language_and_stale_buttons_do_not_prompt(db):
+async def test_preview_exit_restores_persian_admin_mode_and_stale_buttons_do_not_prompt(db):
     services = _services()
     await repo.upsert_user(999, "admin999", "Admin", lang="ru")
     await repo.set_lang(999, "ru", selected=True)
@@ -289,21 +319,44 @@ async def test_preview_exit_uses_saved_language_and_stale_buttons_do_not_prompt(
 
     assert context.user_data["preview"] is False
     assert context.user_data["is_admin"] is True
-    assert context.user_data["lang"] == "ru"
+    assert context.user_data["lang"] == "fa"
     body, kwargs = message.replies[-1]
-    assert text.t("ru", "preview_exit_done") in body
-    assert text.t("ru", "send_link_or_file") not in body
+    assert text.t("fa", "preview_exit_done") in body
+    assert text.t("fa", "send_link_or_file") not in body
     labels = {
         button.text
         for row in kwargs["reply_markup"].keyboard
         for button in row
     }
-    assert text.t("ru", "btn_lang") in labels
-    assert text.t("fa", "btn_lang") not in labels
+    assert "📊 آمار" in labels
+    assert all(text.t(code, "btn_lang") not in labels for code in text.LANG_ORDER)
 
 
 @pytest.mark.asyncio
-async def test_admin_language_button_is_routed_instead_of_becoming_link_prompt(db):
+async def test_unselected_admin_can_exit_preview_through_callback_in_persian(db):
+    services = _services(FakeForceJoin([JoinTarget(123, "Required", username="required")]))
+    await repo.upsert_user(999, "admin999", "Admin", lang="ru")
+    context = _context(services, lang="ru")
+    context.user_data.update(preview=True, is_admin=False)
+    message = FakeMessage("Preview")
+    query = FakeQuery(message, "m|exitpreview")
+    update = _update(message, user_id=999, query=query)
+
+    await bot_app.gate(update, context)
+    await start_flow.on_menu(update, context, "exitpreview")
+
+    assert context.user_data["preview"] is False
+    assert context.user_data["lang"] == "fa"
+    assert services.force_join.calls == 0
+    body, kwargs = message.replies[-1]
+    assert text.t("fa", "preview_exit_done") in body
+    labels = {button.text for row in kwargs["reply_markup"].keyboard for button in row}
+    assert "📊 آمار" in labels
+    assert all(text.t(code, "btn_lang") not in labels for code in text.LANG_ORDER)
+
+
+@pytest.mark.asyncio
+async def test_admin_language_button_is_rejected_in_persian_without_link_prompt(db):
     services = _services()
     context = _context(services, lang="en")
     context.user_data["is_admin"] = True
@@ -312,9 +365,17 @@ async def test_admin_language_button_is_routed_instead_of_becoming_link_prompt(d
     await text_router.on_text(_update(message, user_id=999), context)
 
     body, kwargs = message.replies[-1]
-    assert "Choose your language" in body
-    assert {"l|fa", "l|en", "l|ru"} <= _callback_data(kwargs["reply_markup"])
+    assert text.t("fa", "admin_lang_fixed") in body
+    assert context.user_data["lang"] == "fa"
     assert text.t("en", "send_link_or_file") not in body
+    labels = {button.text for row in kwargs["reply_markup"].keyboard for button in row}
+    assert "📊 آمار" in labels
+    assert all(text.t(code, "btn_lang") not in labels for code in text.LANG_ORDER)
+
+
+@pytest.mark.parametrize("language", ("en", "ru"))
+def test_legacy_localized_admin_section_buttons_still_route(language):
+    assert text_router._admin_section_for_label(text.t(language, "sec_stats")) == kb.SEC_STATS
 
 
 def test_existing_sqlite_users_receive_migration_default_false():

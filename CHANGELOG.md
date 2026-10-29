@@ -7,6 +7,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.4.4] - 2026-10-29 · "Persian Admin"
+
+### Changed
+- Admin mode is Persian-only: admins skip language onboarding, admin menus and
+  notices ignore older saved locales, and language changes remain available to
+  regular users. Leaving user preview restores the Persian admin menu.
+- Stale admin language buttons are safely rejected instead of opening the picker
+  or falling through to link/file input.
+
 ## [5.4.3] - 2026-10-29 · "Localized Flow"
 
 ### Fixed

@@ -84,11 +84,15 @@ def _delivery_btn(label: str, data: str, *, style: str | None = None) -> Btn:
 
 def main_menu(lang: str, admin: bool, preview: bool = False) -> Kb:
     """Inline equivalent of the concise persistent user menu."""
+    admin_mode = admin and not preview
+    if admin_mode:
+        lang = text.DEFAULT_LANG
     rows = [
         [_btn(lang, "btn_sites", M_SITES), _btn(lang, "my_links_btn", "u|ls|0")],
         [_btn(lang, "btn_status", M_STATUS), _btn(lang, "btn_settings", M_SETTINGS)],
-        [_btn(lang, "btn_lang", M_LANG)],
     ]
+    if not admin_mode:
+        rows.append([_btn(lang, "btn_lang", M_LANG)])
     if preview:
         rows.append([_btn(lang, "btn_preview_exit", M_EXIT_PREVIEW)])
     elif admin:
@@ -199,8 +203,9 @@ def quality_menu(lang: str, draft: Draft) -> Kb:
     return Kb(rows)
 
 
-def persistent_admin_labels(lang: str) -> dict[str, str]:
-    """برچسب‌های کیبورد ثابت ادمین — فقط بخش‌های مدیریتی، بدون دکمهٔ کاربر عادی."""
+def persistent_admin_labels(lang: str | None = None) -> dict[str, str]:
+    """Persian labels for admin sections; admin language is intentionally fixed."""
+    lang = text.DEFAULT_LANG
     return {
         "stats": text.t(lang, "sec_stats"),
         "users": text.t(lang, "sec_users"),
@@ -212,15 +217,15 @@ def persistent_admin_labels(lang: str) -> dict[str, str]:
     }
 
 
-def admin_persistent_menu(lang: str) -> ReplyKeyboardMarkup:
-    """Persistent admin sections plus a localized language switch."""
+def admin_persistent_menu(lang: str = text.DEFAULT_LANG) -> ReplyKeyboardMarkup:
+    """Persistent admin sections in Persian, with no language-switch action."""
+    lang = text.DEFAULT_LANG
     labels = persistent_admin_labels(lang)
     return ReplyKeyboardMarkup(
         [
             [labels["stats"], labels["users"], labels["settings"]],
             [labels["groups"], labels["deploy"], labels["debug"]],
             [labels["cookies"]],
-            [text.t(lang, "btn_lang")],
         ],
         resize_keyboard=True,
         is_persistent=True,

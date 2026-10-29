@@ -65,11 +65,10 @@ def test_user_keyboard_is_persistent_and_grouped(code):
 
 
 @pytest.mark.parametrize("code", ("en", "ru"))
-def test_persistent_and_inline_submenus_follow_selected_language(code):
+def test_regular_user_persistent_and_inline_submenus_follow_selected_language(code):
     markups = [
         kb.user_persistent_menu(code),
-        kb.admin_persistent_menu(code),
-        kb.main_menu(code, admin=True),
+        kb.main_menu(code, admin=False),
         kb.user_settings_menu(code),
     ]
     labels = []
@@ -77,6 +76,24 @@ def test_persistent_and_inline_submenus_follow_selected_language(code):
         rows = markup.keyboard if isinstance(markup, ReplyKeyboardMarkup) else markup.inline_keyboard
         labels.extend(button.text for row in rows for button in row)
     assert all(re.search(r"[\u0600-\u06ff]", label) is None for label in labels)
+
+
+def test_admin_menus_are_persian_and_have_no_language_switch():
+    admin_menu = kb.admin_persistent_menu("ru")
+    inline_menu = kb.main_menu("en", admin=True)
+    for markup in (admin_menu, inline_menu):
+        rows = markup.keyboard if isinstance(markup, ReplyKeyboardMarkup) else markup.inline_keyboard
+        buttons = [button for row in rows for button in row]
+        assert any(re.search(r"[\u0600-\u06ff]", button.text) for button in buttons)
+        assert all(getattr(button, "callback_data", None) != kb.M_LANG for button in buttons)
+        labels = {button.text for button in buttons}
+        assert all(text.t(code, "btn_lang") not in labels for code in text.LANG_ORDER)
+
+    # Preview behaves as the user's selected locale, including the language control.
+    preview_menu = kb.main_menu("en", admin=True, preview=True)
+    preview_buttons = [button for row in preview_menu.inline_keyboard for button in row]
+    assert any(button.callback_data == kb.M_LANG for button in preview_buttons)
+    assert any(button.text == text.t("en", "btn_lang") for button in preview_buttons)
 
 
 def test_preview_keyboard_includes_exit_button():

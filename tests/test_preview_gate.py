@@ -177,6 +177,21 @@ async def test_gate_exempts_staff_but_not_staff_in_preview(db):
 
 
 @pytest.mark.asyncio
+async def test_admin_can_exit_preview_before_user_onboarding_or_force_join(db):
+    services, bot = await make_gate(db, enabled=True, status="left")
+    await repo.upsert_user(1, "owner", "Owner", lang="en")
+    query = SimpleNamespace(data="m|exitpreview")
+    update = make_update(1, query=query)
+    context = make_context(services, bot, lang="en", preview=True)
+
+    await app_module.gate(update, context)
+
+    assert update.effective_message.texts == []
+    assert bot.calls == 0
+    assert context.user_data["lang"] == "en"
+
+
+@pytest.mark.asyncio
 async def test_gate_lets_join_check_callback_through(db):
     services, bot = await make_gate(db)
     await repo.upsert_user(42, "u", "U", lang="en")
@@ -233,6 +248,22 @@ async def test_banned_user_is_stopped(db):
 
 
 @pytest.mark.asyncio
+async def test_banned_admin_notice_is_still_persian(db):
+    services, bot = await make_gate(db, enabled=False)
+    await repo.upsert_user(1, "owner", "Owner", lang="en")
+    await repo.set_lang(1, "en", selected=True)
+    await repo.set_banned(1, True)
+    update = make_update(1, language_code="en")
+    context = make_context(services, bot, lang="en")
+
+    with pytest.raises(ApplicationHandlerStop):
+        await app_module.gate(update, context)
+
+    assert context.user_data["lang"] == "fa"
+    assert update.effective_message.texts[-1] == text.t("fa", "banned")
+
+
+@pytest.mark.asyncio
 async def test_maintenance_blocks_users_but_not_staff(db):
     settings = RuntimeSettings(db)
     await settings.load()
@@ -253,7 +284,7 @@ async def test_maintenance_blocks_users_but_not_staff(db):
 
 # ── زبان ادمین ──────────────────────────────────────────────
 @pytest.mark.asyncio
-async def test_admin_ui_uses_saved_language_and_preview_keeps_it(db):
+async def test_admin_mode_uses_persian_while_preview_uses_saved_user_language(db):
     services, bot = await make_gate(db, enabled=False)
     await repo.upsert_user(1, "owner", "O")
     await repo.set_lang(1, "en", selected=True)
@@ -261,45 +292,48 @@ async def test_admin_ui_uses_saved_language_and_preview_keeps_it(db):
     update = make_update(1, language_code="en")
     context = make_context(services, bot, lang="fa")
     await app_module.gate(update, context)
-    assert context.user_data["lang"] == "en"
+    assert context.user_data["lang"] == "fa"
+    assert context.user_data["is_admin"] is True
 
     preview_update = make_update(1, language_code="en")
     preview_context = make_context(services, bot, lang="fa", preview=True)
     await app_module.gate(preview_update, preview_context)
     assert preview_context.user_data["lang"] == "en"
+    assert preview_context.user_data["is_admin"] is False
 
 
 @pytest.mark.asyncio
-async def test_admin_can_change_language(db):
+async def test_admin_language_callback_is_blocked_and_does_not_change_saved_locale(db):
     from app.bot.flows import start as start_flow
 
     services = SimpleNamespace(cfg=db)
     await repo.upsert_user(1, "owner", "O")
-    await repo.set_lang(1, "fa", selected=True)
+    await repo.set_lang(1, "en", selected=True)
 
-    answered: list[str] = []
+    answered: list[tuple[str, bool]] = []
 
     async def answer(body=None, **kwargs):
-        answered.append(body or "")
+        answered.append((body or "", kwargs.get("show_alert", False)))
 
-    query = SimpleNamespace(data="l|en", answer=answer, message=Message())
+    query = SimpleNamespace(data="l|ru", answer=answer, message=Message())
     update = make_update(1, query=query)
-    context = make_context(services, bot=None, lang="fa")
-    await start_flow.on_lang(update, context, "en")
+    context = make_context(services, bot=None, lang="en")
+    await start_flow.on_lang(update, context, "ru")
 
-    assert context.user_data["lang"] == "en"
+    assert context.user_data["lang"] == "fa"
     assert (await repo.get_user(1)).lang == "en"
     assert len(answered) == 1
-    assert text.LANGS["en"] in answered[0]
-    assert "Language changed" in answered[0]
-    admin_markup = update.effective_message.markups[-1]
-    labels = {button.text for row in admin_markup.keyboard for button in row}
-    assert text.t("en", "btn_lang") in labels
-    assert text.t("fa", "btn_lang") not in labels
+    assert answered[0][1] is True
+    assert text.t("fa", "admin_lang_fixed") in answered[0][0]
+    assert update.effective_message.texts[-1] == text.t("fa", "admin_lang_fixed")
+    markup = update.effective_message.markups[-1]
+    labels = {button.text for row in markup.keyboard for button in row}
+    assert "📊 آمار" in labels
+    assert all(text.t(code, "btn_lang") not in labels for code in text.LANG_ORDER)
 
 
 @pytest.mark.asyncio
-async def test_admin_lang_command_offers_translated_picker(db):
+async def test_admin_lang_command_does_not_offer_picker(db):
     from app.bot.flows import start as start_flow
 
     services = SimpleNamespace(cfg=db)
@@ -309,8 +343,7 @@ async def test_admin_lang_command_offers_translated_picker(db):
     context = make_context(services, bot=None, lang="en")
     await start_flow.cmd_lang(update, context)
 
-    assert "Current: <b>" in update.effective_message.texts[-1]
-    markup = update.effective_message.markups[-1]
-    assert hasattr(markup, "inline_keyboard")
-    callbacks = {button.callback_data for row in markup.inline_keyboard for button in row}
-    assert {"l|fa", "l|en", "l|ru"} <= callbacks
+    assert context.user_data["lang"] == "fa"
+    assert update.effective_message.texts[-1] == text.t("fa", "admin_lang_fixed")
+    # Private admin chats retain the persistent keyboard; the notice itself has no picker.
+    assert update.effective_message.markups[-1] is None
