@@ -80,7 +80,7 @@ FA: dict[str, str] = {
     "quality_title": "<b>{title}</b>",
     "cancel_btn": "✖️ لغو",
     "my_links_btn": "🔗 لینک‌های من",
-    "file_link_progress": "📥 دریافت فایل از تلگرام {pct}%\n{bar}\n{size}",
+    "file_link_progress": "📥 دریافت فایل از تلگرام\n{bar}\n{size}",
     "file_link_wait": "📥 دریافت فایل از تلگرام… حجم دریافت‌شده: {size}",
     "upload_wait": "⏳ منتظر تأیید نهایی تلگرام…",
     "canceled": "✖️ لغو شد.",
@@ -91,10 +91,13 @@ FA: dict[str, str] = {
     "incomplete_download": "⚠️ دانلود ناقص بود؛ فایل ناقص تحویل داده نشد. {reason}",
     "canceled_btn": "لغو شد",
     "queued": "🕒 در صف… (نفر {pos})",
-    "downloading": "⬇️ دانلود {pct}%\n{bar}\n{size} • {speed} • {eta}",
-    "uploading": "⬆️ آپلود {pct}%\n{bar}\n{size}",
+    "downloading": "⬇️ دانلود\n{bar}\n{size} • {speed} • {eta}",
+    "uploading": "⬆️ آپلود\n{bar}\n{size}",
+    "progress_stage_download": "📍 مرحلهٔ دریافت {step}",
+    "progress_stage_upload": "📍 مرحلهٔ ارسال {step}",
     "processing": "⚙️ در حال پردازش…",
     "done": "✅ آماده شد",
+    "cache_fast_delivery": "♻️ دریافت سریع از کش",
     "failed": "❌ خطا: {reason}",
     "expired_draft": "⌛ این انتخاب منقضی شده. لینک را دوباره بفرست.",
     "too_many_active": "⏳ یک کار دیگرت هنوز تمام نشده. کمی صبر کن.",
@@ -424,14 +427,10 @@ FA: dict[str, str] = {
     ),
     "lang_title": (
         "<b>🌍 انتخاب زبان</b>\n\n"
-        "زبان فعلی: <b>{current}</b>\n\n"
-        "Language · Язык · زبان"
+        "زبان فعلی: <b>{current}</b>"
     ),
     "lang_saved": "✅ زبان به <b>{language}</b> تغییر کرد.",
     "menu_updated": "✅ منو به‌روزرسانی شد.",
-    "admin_lang_fixed": (
-        "🔒 پنل مدیریت همیشه فارسی است؛ تغییر زبان فقط برای کاربران عادی است."
-    ),
     "version_info": (
         "<b>🤖 LeechX v{version}</b> · {codename}\n"
         "📅 انتشار: {date}\n"
@@ -723,7 +722,7 @@ EN: dict[str, str] = {
     "quality_title": "<b>{title}</b>",
     "cancel_btn": "✖️ Cancel",
     "my_links_btn": "🔗 My links",
-    "file_link_progress": "📥 Receiving Telegram file {pct}%\n{bar}\n{size}",
+    "file_link_progress": "📥 Receiving Telegram file\n{bar}\n{size}",
     "file_link_wait": "📥 Receiving file from Telegram… received: {size}",
     "upload_wait": "⏳ Waiting for Telegram confirmation…",
     "canceled": "✖️ Canceled.",
@@ -734,10 +733,13 @@ EN: dict[str, str] = {
     "incomplete_download": "⚠️ Download incomplete. No partial file was delivered: {reason}",
     "canceled_btn": "Canceled",
     "queued": "🕒 Queued… (position {pos})",
-    "downloading": "⬇️ Downloading {pct}%\n{bar}\n{size} • {speed} • {eta}",
-    "uploading": "⬆️ Uploading {pct}%\n{bar}\n{size}",
+    "downloading": "⬇️ Downloading\n{bar}\n{size} • {speed} • {eta}",
+    "uploading": "⬆️ Uploading\n{bar}\n{size}",
+    "progress_stage_download": "📍 Download stage {step}",
+    "progress_stage_upload": "📍 Upload stage {step}",
     "processing": "⚙️ Processing…",
     "done": "✅ Done",
+    "cache_fast_delivery": "♻️ Delivered quickly from cache",
     "failed": "❌ Error: {reason}",
     "expired_draft": "⌛ This selection expired. Send the link again.",
     "too_many_active": "⏳ Your other job is still running. Please wait.",
@@ -1044,14 +1046,10 @@ EN: dict[str, str] = {
     ),
     "lang_title": (
         "<b>🌍 Choose your language</b>\n\n"
-        "Current: <b>{current}</b>\n\n"
-        "Language · Язык · زبان"
+        "Current: <b>{current}</b>"
     ),
     "lang_saved": "✅ Language changed to <b>{language}</b>.",
     "menu_updated": "✅ Menu updated.",
-    "admin_lang_fixed": (
-        "🔒 The admin panel is always in Persian; language switching is for regular users only."
-    ),
     "version_info": (
         "<b>🤖 LeechX v{version}</b> · {codename}\n"
         "📅 Released: {date}\n"
@@ -1344,7 +1342,7 @@ RU: dict[str, str] = {
     "quality_title": "<b>{title}</b>",
     "cancel_btn": "✖️ Отмена",
     "my_links_btn": "🔗 Мои ссылки",
-    "file_link_progress": "📥 Получение файла из Telegram {pct}%\n{bar}\n{size}",
+    "file_link_progress": "📥 Получение файла из Telegram\n{bar}\n{size}",
     "file_link_wait": "📥 Получение файла из Telegram… получено: {size}",
     "upload_wait": "⏳ Жду подтверждения Telegram…",
     "canceled": "✖️ Отменено.",
@@ -1355,10 +1353,13 @@ RU: dict[str, str] = {
     "incomplete_download": "⚠️ Загрузка неполная; частичный файл не отправлен: {reason}",
     "canceled_btn": "Отменено",
     "queued": "🕒 В очереди… (позиция {pos})",
-    "downloading": "⬇️ Скачивание {pct}%\n{bar}\n{size} • {speed} • {eta}",
-    "uploading": "⬆️ Загрузка {pct}%\n{bar}\n{size}",
+    "downloading": "⬇️ Скачивание\n{bar}\n{size} • {speed} • {eta}",
+    "uploading": "⬆️ Загрузка\n{bar}\n{size}",
+    "progress_stage_download": "📍 Этап скачивания {step}",
+    "progress_stage_upload": "📍 Этап загрузки {step}",
     "processing": "⚙️ Обработка…",
     "done": "✅ Готово",
+    "cache_fast_delivery": "♻️ Быстрая отправка из кэша",
     "failed": "❌ Ошибка: {reason}",
     "expired_draft": "⌛ Выбор устарел. Отправь ссылку снова.",
     "too_many_active": "⏳ Другая задача ещё выполняется. Подожди.",
@@ -1618,12 +1619,9 @@ RU: dict[str, str] = {
     "settings_default_mode_btn": "📦 Формат по умолчанию: {value}",
     "settings_default_destination_btn": "📍 Получение по умолчанию: {value}",
     "lang_start_prompt": "<b>🌍 Выбери язык</b>\n\nПосле выбора будет проверено, нужно ли подписаться на каналы.",
-    "lang_title": "<b>🌍 Выбор языка</b>\n\nТекущий: <b>{current}</b>\n\nLanguage · Язык · زبان",
+    "lang_title": "<b>🌍 Выбор языка</b>\n\nТекущий: <b>{current}</b>",
     "lang_saved": "✅ Язык изменён на <b>{language}</b>.",
     "menu_updated": "✅ Меню обновлено.",
-    "admin_lang_fixed": (
-        "🔒 Панель администратора всегда на персидском; смена языка доступна только обычным пользователям."
-    ),
     "version_info": (
         "<b>🤖 LeechX v{version}</b> · {codename}\n"
         "📅 Выпуск: {date}\n🐍 Python: {python}\n🎬 yt-dlp: {ytdlp}\n"

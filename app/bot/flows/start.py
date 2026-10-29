@@ -20,6 +20,10 @@ from app.version import __version__, version_badge
 
 log = logging.getLogger("leechx.start")
 
+# Telegram requires message text with an inline keyboard; this invisible separator
+# keeps first-run language choice visually caption-free.
+LANGUAGE_PICKER_TEXT = "\u2063"
+
 
 def _is_private(update: Update) -> bool:
     chat = update.effective_chat
@@ -59,8 +63,15 @@ def _stale_keyboard_tap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
     label = getattr(message, "text", None) or ""
     if not label or label.startswith("/"):
         return False
-    current = kb.user_persistent_labels(lang_of(context), preview=in_preview(context))
-    return label not in current.values()
+    lang = lang_of(context)
+    if context.user_data.get("is_admin") and not in_preview(context):
+        current = set(kb.persistent_admin_labels(lang).values())
+        current.add(text.t(lang, "btn_lang"))
+    else:
+        current = set(
+            kb.user_persistent_labels(lang, preview=in_preview(context)).values()
+        )
+    return label not in current
 
 
 async def _show(
@@ -179,16 +190,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     admin = await is_admin(svc.cfg, user.id)
     preview = in_preview(context)
-    if admin and not preview:
-        # پنل مدیریت همیشه فارسی است؛ شامل مالکی که همین /start مالک شده است.
-        lang = text.DEFAULT_LANG
-        context.user_data["lang"] = lang
     row = await repo.get_user(user.id)
-    if not (admin and not preview) and (row is None or not row.language_selected):
+    if row is None or not row.language_selected:
         await panel(
             update,
             context,
-            text.t(lang, "lang_start_prompt"),
+            LANGUAGE_PICKER_TEXT,
             reply_markup=kb.language_menu(lang, onboarding=True),
         )
         return
@@ -269,20 +276,12 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
     lang = lang_of(context)
-    # زبان پنل مدیریت ثابت فارسی است؛ بخش تغییر زبان فقط برای کاربران عادی است.
-    if await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context):
-        await send_home(
-            update,
-            context,
-            text.t(text.DEFAULT_LANG, "admin_lang_fixed"),
-            kb.admin_persistent_menu(text.DEFAULT_LANG),
-        )
-        return
+    admin = await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context)
     await _show(
         update,
         context,
         text.t(lang, "lang_title", current=text.LANGS[lang]),
-        admin=False,
+        admin=admin,
         markup=kb.language_menu(lang),
     )
 
@@ -330,7 +329,7 @@ async def handle_preview_exit_text(update: Update, context: ContextTypes.DEFAULT
         await panel(update, context, text.t(lang_of(context), "admin_only"))
         return
     _leave_preview(context)
-    lang = text.DEFAULT_LANG
+    lang = lang_of(context)
     await send_home(
         update,
         context,
@@ -342,8 +341,7 @@ async def handle_preview_exit_text(update: Update, context: ContextTypes.DEFAULT
 def _leave_preview(context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data["preview"] = False
     context.user_data["is_admin"] = True
-    # بعد از خروج از پیش‌نمایش، پنل ادمین فوراً فارسی می‌شود.
-    context.user_data["lang"] = text.DEFAULT_LANG
+    # Language is a persisted user choice and must survive exiting preview.
 
 
 def _enter_preview(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -478,9 +476,6 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
         return
 
     if action == "lang":
-        if admin:
-            await safe_answer(query, text.t(text.DEFAULT_LANG, "admin_lang_fixed"), alert=True)
-            return
         await safe_answer(query)
         await panel(
             update,
@@ -527,7 +522,7 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
             return
         await safe_answer(query)
         _leave_preview(context)
-        lang = text.DEFAULT_LANG
+        lang = lang_of(context)
         await edit(query.message, text.t(lang, "preview_exit_done"), reply_markup=InlineKeyboardMarkup([]))
         await send_home(
             update,
@@ -589,14 +584,6 @@ async def on_lang(update: Update, context: ContextTypes.DEFAULT_TYPE, code: str)
     query = update.callback_query
     preview = in_preview(context)
     admin = await is_admin(svc.cfg, user.id)
-    # ادمین در حالت کاری همیشه فارسی می‌ماند؛ تغییر زبان فقط برای کاربر عادی است.
-    if admin and not preview:
-        await safe_answer(
-            query,
-            text.t(text.DEFAULT_LANG, "admin_lang_fixed"),
-            alert=True,
-        )
-        return
     if code not in text.LANGS:
         await safe_answer(query)
         return
@@ -609,11 +596,15 @@ async def on_lang(update: Update, context: ContextTypes.DEFAULT_TYPE, code: str)
     await safe_answer(query, text.t(code, "lang_saved", language=text.LANGS[code]))
 
     if onboarding:
-        # انتخاب زبان کامل شد؛ حالا قفل عضویت اجرا می‌شود و در صورت عضویت منوی شروع می‌آید.
-        svc.force_join.clear_cache(user.id)
-        missing, _complete = await svc.force_join.missing(
-            context.bot, user.id, use_cache=False
-        )
+        # انتخاب زبان کامل شد؛ کاربران عادی وارد قفل عضویت می‌شوند، اما ادمین
+        # مانند قبل از عضویت اجباری معاف است (مگر اینکه در پیش‌نمایش باشد).
+        if admin and not preview:
+            missing = []
+        else:
+            svc.force_join.clear_cache(user.id)
+            missing, _complete = await svc.force_join.missing(
+                context.bot, user.id, use_cache=False
+            )
         if missing:
             body = text.t(code, "join_gate_title", list=_join_list(missing))
             await edit(query.message, body, reply_markup=kb.join_gate(code, missing))
@@ -627,6 +618,20 @@ async def on_lang(update: Update, context: ContextTypes.DEFAULT_TYPE, code: str)
             update,
             context,
             _welcome(code, svc.settings.ttl_hours),
+            _reply_menu_markup(update, code, admin, preview),
+        )
+        return
+
+    if admin and not preview:
+        await edit(
+            query.message,
+            text.t(code, "lang_saved", language=text.LANGS[code]),
+            reply_markup=InlineKeyboardMarkup([]),
+        )
+        await send_home(
+            update,
+            context,
+            text.t(code, "admin_panel"),
             _reply_menu_markup(update, code, admin, preview),
         )
         return

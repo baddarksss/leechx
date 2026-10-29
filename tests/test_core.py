@@ -56,8 +56,9 @@ def test_human_helpers():
     assert human_duration(0) == "—"
     assert human_duration(65) == "1:05"
     assert human_duration(3661) == "1:01:01"
-    assert progress_bar(0).strip("░") == ""
-    assert progress_bar(100) == "█" * 12
+    assert progress_bar(0).split() == ["⬜"] * 10
+    assert progress_bar(50).split() == ["🟩"] * 5 + ["⬜"] * 5
+    assert progress_bar(100).split() == ["🟩"] * 10
 
 
 def test_safe_filename():

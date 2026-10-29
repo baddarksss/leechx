@@ -42,10 +42,12 @@ def human_eta(seconds: float | int | None) -> str:
     return human_duration(seconds)
 
 
-def progress_bar(pct: float, width: int = 12) -> str:
+def progress_bar(pct: float, width: int = 10) -> str:
+    """Green squares for completed steps and neutral squares for the remainder."""
     pct = max(0.0, min(100.0, float(pct or 0)))
-    filled = int(round(width * pct / 100))
-    return "█" * filled + "░" * (width - filled)
+    filled = int(width * pct / 100 + 0.5)
+    cells = ["🟩"] * filled + ["⬜"] * (width - filled)
+    return " ".join(cells)
 
 
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')

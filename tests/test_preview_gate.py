@@ -10,6 +10,7 @@ from telegram.ext import ApplicationHandlerStop
 
 from app.bot import app as app_module
 from app.bot import guards
+from app.bot.flows import start as start_flow
 from app.core import text
 from app.db import repo
 from app.services.force_join import ForceJoin, JoinTarget
@@ -20,11 +21,17 @@ class Message:
     def __init__(self):
         self.texts: list[str] = []
         self.markups: list = []
+        self.chat_id = 1
+        self.message_id = 1
 
     async def reply_text(self, text, **kwargs):
         self.texts.append(text)
         self.markups.append(kwargs.get("reply_markup"))
         return self
+
+    async def edit_text(self, text, **kwargs):
+        self.texts.append(text)
+        self.markups.append(kwargs.get("reply_markup"))
 
 
 class GateBot:
@@ -154,14 +161,14 @@ async def test_gate_fails_open_when_telegram_errors(db):
 @pytest.mark.asyncio
 async def test_gate_exempts_staff_but_not_staff_in_preview(db):
     services, bot = await make_gate(db)
+    await repo.upsert_user(1, "owner", "Owner", lang="en")
+    await repo.set_lang(1, "en", selected=True)
 
     staff_update = make_update(1)
     staff_context = make_context(services, bot)
     await app_module.gate(staff_update, staff_context)
     assert staff_update.effective_message.texts == []
     assert bot.calls == 0
-    await repo.set_lang(1, "en", selected=True)
-
     preview_update = make_update(1)
     preview_context = make_context(services, bot, preview=True)
     with pytest.raises(ApplicationHandlerStop):
@@ -205,8 +212,8 @@ async def test_gate_detects_language_on_first_message(db):
     assert user.lang == "ru"
     assert user.language_selected is False
     assert context.user_data["lang"] == "ru"
-    assert update.effective_message.texts
-    assert "Выбери язык" in update.effective_message.texts[-1]
+    assert update.effective_message.texts[-1] == start_flow.LANGUAGE_PICKER_TEXT
+    assert len(update.effective_message.markups[-1].inline_keyboard) == 3
 
 
 @pytest.mark.asyncio
@@ -237,6 +244,8 @@ async def test_maintenance_blocks_users_but_not_staff(db):
     with pytest.raises(ApplicationHandlerStop):
         await app_module.gate(user_update, make_context(services, GateBot()))
 
+    await repo.upsert_user(1, "owner", "Owner", lang="en")
+    await repo.set_lang(1, "en", selected=True)
     staff_update = make_update(1)
     await app_module.gate(staff_update, make_context(services, GateBot()))
     assert staff_update.effective_message.texts == []
@@ -244,61 +253,64 @@ async def test_maintenance_blocks_users_but_not_staff(db):
 
 # ── زبان ادمین ──────────────────────────────────────────────
 @pytest.mark.asyncio
-async def test_admin_ui_is_always_persian(db):
-    """ادمین همیشه فارسی می‌بیند، حتی اگر زبان دیگری ذخیره شده باشد."""
+async def test_admin_ui_uses_saved_language_and_preview_keeps_it(db):
     services, bot = await make_gate(db, enabled=False)
     await repo.upsert_user(1, "owner", "O")
-    await repo.set_lang(1, "en")
+    await repo.set_lang(1, "en", selected=True)
 
     update = make_update(1, language_code="en")
-    context = make_context(services, bot, lang="en")
+    context = make_context(services, bot, lang="fa")
     await app_module.gate(update, context)
-    assert context.user_data["lang"] == "fa"
+    assert context.user_data["lang"] == "en"
 
-    # در پیش‌نمایش کاربر، ادمین مثل یک کاربر عادی است و زبانش عوض نمی‌شود.
     preview_update = make_update(1, language_code="en")
-    preview_context = make_context(services, bot, lang="en", preview=True)
+    preview_context = make_context(services, bot, lang="fa", preview=True)
     await app_module.gate(preview_update, preview_context)
     assert preview_context.user_data["lang"] == "en"
 
 
 @pytest.mark.asyncio
-async def test_admin_cannot_change_language(db):
+async def test_admin_can_change_language(db):
     from app.bot.flows import start as start_flow
 
     services = SimpleNamespace(cfg=db)
     await repo.upsert_user(1, "owner", "O")
-    await repo.set_lang(1, "fa")
+    await repo.set_lang(1, "fa", selected=True)
 
     answered: list[str] = []
 
     async def answer(body=None, **kwargs):
         answered.append(body or "")
 
-    query = SimpleNamespace(data="l|en", answer=answer)
+    query = SimpleNamespace(data="l|en", answer=answer, message=Message())
     update = make_update(1, query=query)
     context = make_context(services, bot=None, lang="fa")
     await start_flow.on_lang(update, context, "en")
 
-    assert context.user_data["lang"] == "fa"
-    assert (await repo.get_user(1)).lang == "fa"
-    assert answered == [text.t("fa", "admin_lang_fixed")]
+    assert context.user_data["lang"] == "en"
+    assert (await repo.get_user(1)).lang == "en"
+    assert len(answered) == 1
+    assert text.LANGS["en"] in answered[0]
+    assert "Language changed" in answered[0]
+    admin_markup = update.effective_message.markups[-1]
+    labels = {button.text for row in admin_markup.keyboard for button in row}
+    assert text.t("en", "btn_lang") in labels
+    assert text.t("fa", "btn_lang") not in labels
 
 
 @pytest.mark.asyncio
-async def test_admin_lang_command_points_to_user_only(db):
+async def test_admin_lang_command_offers_translated_picker(db):
     from app.bot.flows import start as start_flow
 
     services = SimpleNamespace(cfg=db)
+    await repo.upsert_user(1, "owner", "O")
+    await repo.set_lang(1, "en", selected=True)
     update = make_update(1)
-    context = make_context(services, bot=None)
+    context = make_context(services, bot=None, lang="en")
     await start_flow.cmd_lang(update, context)
 
-    assert update.effective_message.texts == [text.t("fa", "admin_lang_fixed")]
+    assert "Current: <b>" in update.effective_message.texts[-1]
     markup = update.effective_message.markups[-1]
-    assert hasattr(markup, "keyboard")  # کیبورد ثابت ادمین
-
-    # کاربر عادی همچنان منوی انتخاب زبان را می‌گیرد.
-    user_update = make_update(42)
-    await start_flow.cmd_lang(user_update, make_context(services, bot=None))
-    assert hasattr(user_update.effective_message.markups[-1], "inline_keyboard")
+    assert hasattr(markup, "inline_keyboard")
+    callbacks = {button.callback_data for row in markup.inline_keyboard for button in row}
+    assert {"l|fa", "l|en", "l|ru"} <= callbacks

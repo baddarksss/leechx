@@ -292,9 +292,10 @@ class JobManager:
                     await repo.log_event(task.user_id, "upload_done")
                     await repo.log_event(task.user_id, "bytes", float(cached))
                     await self._edit_final(
-                        task, text.t(task.lang, "done") +
-                        ("\n♻️ دریافت سریع از کش" if task.lang == "fa" else
-                         "\n♻️ Delivered from cache")
+                        task,
+                        text.t(task.lang, "done")
+                        + "\n"
+                        + text.t(task.lang, "cache_fast_delivery"),
                     )
                     if self.hub is not None:
                         await self.hub.notify_job_result(task, "cache_hit")
@@ -586,10 +587,9 @@ class JobManager:
             step = ("۱/۱" if task.mode == "link" else "۱/۲") if lang == "fa" else (
                 "1/1" if task.mode == "link" else "1/2"
             )
-            return f"📍 {step}\n" + text.t(
+            return text.t(lang, "progress_stage_download", step=step) + "\n" + text.t(
                 lang,
                 "downloading",
-                pct=int(prog.pct),
                 bar=human.progress_bar(prog.pct),
                 size=f"{human.human_bytes(prog.downloaded)} / {total}",
                 speed=human.human_speed(prog.speed),
@@ -600,10 +600,11 @@ class JobManager:
             speed = prog.uploaded / elapsed
             eta = int(max(0, prog.total - prog.uploaded) / speed) if speed else None
             waiting = prog.total and prog.uploaded >= prog.total
-            return ("📍 مرحله ۲/۲\n" if lang == "fa" else "📍 Stage 2/2\n") + text.t(
+            step = "۲/۲" if lang == "fa" else "2/2"
+            stage = text.t(lang, "progress_stage_upload", step=step)
+            return stage + "\n" + text.t(
                 lang,
                 "uploading",
-                pct=min(99, int(prog.pct)),
                 bar=human.progress_bar(prog.pct),
                 size=f"{human.human_bytes(prog.uploaded)} / {human.human_bytes(prog.total)}",
             ) + ("\n" + text.t(lang, "upload_wait") if waiting

@@ -74,6 +74,10 @@ def _user_action_for_label(label: str, *, preview: bool) -> str | None:
     for legacy in _LEGACY_USER_KEYBOARD_ACTIONS.values():
         if label in legacy:
             return legacy[label]
+    # Old preview keyboards can remain visible in Telegram after the admin has
+    # already exited; recognize that button too, so it never falls through as text.
+    if any(label == text.t(language, "btn_preview_exit") for language in text.LANG_ORDER):
+        return "exitpreview"
     return None
 
 
@@ -92,18 +96,20 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 await drop_user_input(update)
             return
 
-    if not context.user_data.get("is_admin"):
-        action = _user_action_for_label(
-            message.text,
-            preview=bool(context.user_data.get("preview")),
-        )
-        if action is not None:
-            clear_state(context)
-            try:
-                await start_flow.on_user_menu(update, context, action)
-            finally:
-                await drop_user_input(update)
-            return
+    # A persistent user keyboard may still be visible on a client after role or
+    # language changes (notably when leaving preview). Resolve its labels for staff
+    # as well, so stale buttons never fall through to the generic link prompt.
+    action = _user_action_for_label(
+        message.text,
+        preview=bool(context.user_data.get("preview")),
+    )
+    if action is not None:
+        clear_state(context)
+        try:
+            await start_flow.on_user_menu(update, context, action)
+        finally:
+            await drop_user_input(update)
+        return
 
     state = get_state(context)
     if state == ST_RENAME:

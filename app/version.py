@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.4.2"
-CODENAME = "Focused Colors"
+__version__ = "5.4.3"
+CODENAME = "Localized Flow"
 RELEASE_DATE = "2026-10-29"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.

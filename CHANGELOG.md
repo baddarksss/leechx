@@ -7,6 +7,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.4.3] - 2026-10-29 · "Localized Flow"
+
+### Fixed
+- First-run onboarding now shows only the three language buttons without a caption.
+- Persisted language selection is authoritative across user/admin menus; admin language
+  switching is available, stale keyboard taps are routed safely, and preview exit keeps
+  the selected language instead of falling through to the link prompt.
+- Download/upload status replaces numeric percentages with neutral squares that fill
+  green, with localized stage labels.
+
 ## [5.4.2] - 2026-10-29 · "Focused Colors"
 
 ### Fixed

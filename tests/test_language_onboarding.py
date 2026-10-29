@@ -12,6 +12,7 @@ from telegram.ext import ApplicationHandlerStop
 from app.bot import app as bot_app
 from app.bot import keyboards as kb
 from app.bot.flows import start as start_flow
+from app.bot.flows import text_router
 from app.core import text
 from app.db import repo
 from app.db.base import _migrate_user_language_selected
@@ -114,8 +115,11 @@ async def test_start_prompts_language_before_forced_join_and_persists_choice(db)
     assert force_join.calls == 0
     await start_flow.cmd_start(update, context)
     prompt, kwargs = message.replies[-1]
-    assert "Choose your language" in prompt
-    assert _callback_data(kwargs["reply_markup"]) == {"l|fa", "l|en", "l|ru"}
+    assert prompt == start_flow.LANGUAGE_PICKER_TEXT
+    markup = kwargs["reply_markup"]
+    assert _callback_data(markup) == {"l|fa", "l|en", "l|ru"}
+    assert len(markup.inline_keyboard) == 3
+    assert all(len(row) == 1 for row in markup.inline_keyboard)
     row = await repo.get_user(10)
     assert row is not None and row.language_selected is False
 
@@ -134,6 +138,35 @@ async def test_start_prompts_language_before_forced_join_and_persists_choice(db)
     gate_text, gate_kwargs = message.edits[-1]
     assert gate_text
     assert "m|joincheck" in _callback_data(gate_kwargs["reply_markup"])
+
+
+@pytest.mark.asyncio
+async def test_admin_also_gets_captionless_three_button_picker(db):
+    services = _services()
+    context = _context(services)
+    message = FakeMessage("/start")
+    update = _update(message, user_id=999)
+
+    await bot_app.gate(update, context)
+    await start_flow.cmd_start(update, context)
+
+    prompt, kwargs = message.replies[-1]
+    assert prompt == start_flow.LANGUAGE_PICKER_TEXT
+    markup = kwargs["reply_markup"]
+    assert _callback_data(markup) == {"l|fa", "l|en", "l|ru"}
+    assert len(markup.inline_keyboard) == 3
+
+    query = FakeQuery(message, "l|en")
+    callback_update = _update(message, user_id=999, query=query)
+    await bot_app.gate(callback_update, context)
+    await start_flow.on_lang(callback_update, context, "en")
+    assert context.user_data["lang"] == "en"
+    assert services.force_join.calls == 0  # admins remain exempt from forced join
+    row = await repo.get_user(999)
+    assert row is not None and row.lang == "en" and row.language_selected is True
+    keyboard = message.replies[-1][1]["reply_markup"]
+    labels = {button.text for row in keyboard.keyboard for button in row}
+    assert text.t("en", "btn_lang") in labels
 
 
 @pytest.mark.asyncio
@@ -172,8 +205,9 @@ async def test_unselected_user_message_gets_picker_not_channel_gate(db):
     with pytest.raises(ApplicationHandlerStop):
         await bot_app.gate(update, context)
     assert force_join.calls == 0
-    assert "Choose your language" in message.replies[-1][0]
-    assert _callback_data(message.replies[-1][1]["reply_markup"]) == {"l|fa", "l|en", "l|ru"}
+    prompt, kwargs = message.replies[-1]
+    assert prompt == start_flow.LANGUAGE_PICKER_TEXT
+    assert _callback_data(kwargs["reply_markup"]) == {"l|fa", "l|en", "l|ru"}
 
 
 @pytest.mark.asyncio
@@ -239,6 +273,48 @@ async def test_change_language_callback_renders_settings_without_keyword_collisi
     assert text.t("fa", "btn_status") not in labels
     row = await repo.get_user(50)
     assert row is not None and row.lang == "ru" and row.language_selected is True
+
+
+@pytest.mark.asyncio
+async def test_preview_exit_uses_saved_language_and_stale_buttons_do_not_prompt(db):
+    services = _services()
+    await repo.upsert_user(999, "admin999", "Admin", lang="ru")
+    await repo.set_lang(999, "ru", selected=True)
+    context = _context(services, lang="ru")
+    context.user_data["preview"] = True
+    context.user_data["is_admin"] = False
+    message = FakeMessage(text.t("ru", "btn_preview_exit"))
+
+    await text_router.on_text(_update(message, user_id=999), context)
+
+    assert context.user_data["preview"] is False
+    assert context.user_data["is_admin"] is True
+    assert context.user_data["lang"] == "ru"
+    body, kwargs = message.replies[-1]
+    assert text.t("ru", "preview_exit_done") in body
+    assert text.t("ru", "send_link_or_file") not in body
+    labels = {
+        button.text
+        for row in kwargs["reply_markup"].keyboard
+        for button in row
+    }
+    assert text.t("ru", "btn_lang") in labels
+    assert text.t("fa", "btn_lang") not in labels
+
+
+@pytest.mark.asyncio
+async def test_admin_language_button_is_routed_instead_of_becoming_link_prompt(db):
+    services = _services()
+    context = _context(services, lang="en")
+    context.user_data["is_admin"] = True
+    message = FakeMessage(text.t("en", "btn_lang"))
+
+    await text_router.on_text(_update(message, user_id=999), context)
+
+    body, kwargs = message.replies[-1]
+    assert "Choose your language" in body
+    assert {"l|fa", "l|en", "l|ru"} <= _callback_data(kwargs["reply_markup"])
+    assert text.t("en", "send_link_or_file") not in body
 
 
 def test_existing_sqlite_users_receive_migration_default_false():

@@ -1,6 +1,7 @@
 """کیبورد ثابت کاربر: چیدمان، تنظیمات پیش‌فرض و مسیر دکمه‌ها."""
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -61,6 +62,21 @@ def test_user_keyboard_is_persistent_and_grouped(code):
     assert text.t(code, "btn_sites") not in labels
     assert text.t(code, "btn_kb_close") not in labels
     assert rows[-1] == [text.t(code, "btn_contact")]
+
+
+@pytest.mark.parametrize("code", ("en", "ru"))
+def test_persistent_and_inline_submenus_follow_selected_language(code):
+    markups = [
+        kb.user_persistent_menu(code),
+        kb.admin_persistent_menu(code),
+        kb.main_menu(code, admin=True),
+        kb.user_settings_menu(code),
+    ]
+    labels = []
+    for markup in markups:
+        rows = markup.keyboard if isinstance(markup, ReplyKeyboardMarkup) else markup.inline_keyboard
+        labels.extend(button.text for row in rows for button in row)
+    assert all(re.search(r"[\u0600-\u06ff]", label) is None for label in labels)
 
 
 def test_preview_keyboard_includes_exit_button():

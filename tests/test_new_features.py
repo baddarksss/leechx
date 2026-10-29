@@ -60,7 +60,7 @@ def update(user_id=42, query=None):
 
 
 def test_admin_reply_keyboard_persistent():
-    """کیبورد ثابت ادمین: ۳ ستون، فقط بخش‌های مدیریتی، بدون دکمهٔ کاربر عادی/شروع."""
+    """کیبورد ادمین بخش‌ها و تغییر زبان را با برچسب محلی نشان می‌دهد."""
     menu = kb.admin_persistent_menu("fa")
     rows = [[button.text for button in row] for row in menu.keyboard]
     labels = {button.text for row in menu.keyboard for button in row}
@@ -69,6 +69,7 @@ def test_admin_reply_keyboard_persistent():
     assert "📊 آمار" in labels
     assert "👥 کاربران" in labels
     assert "🚀 دیپلوی" in labels
+    assert text.t("fa", "btn_lang") in labels
     assert text.t("fa", "sec_cancel") not in labels
     for user_only in ("🔗 لینک‌های من", "🏠 منوی اصلی", "👑 پنل ادمین"):
         assert user_only not in labels
@@ -397,7 +398,10 @@ async def test_remote_telegram_attachment_stream_progress(db):
         row = await repo.get_shared(item.id)
         assert row is not None
         assert Path(row.path).read_bytes() == payload
-        assert any("%" in t for t in up.effective_message.texts)
+        progress_messages = [t for t in up.effective_message.texts if "⬜" in t or "🟩" in t]
+        assert progress_messages
+        assert all("%" not in t for t in progress_messages)
+        assert "🟩" in progress_messages[-1]
         assert "لینک مستقیم آماده" in up.effective_message.texts[-1]
 
 

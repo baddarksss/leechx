@@ -56,9 +56,15 @@ async def _notify_startup_owners(bot, owner_ids: list[int]) -> None:
     if not recipients:
         log.info("startup notification skipped: no owner chat is configured")
         return
-    body = text.t(text.DEFAULT_LANG, "startup_ready", version=__version__)
     sent = 0
     for owner_id in recipients:
+        try:
+            owner = await repo.get_user(owner_id)
+            lang = text.normalize_lang(owner.lang if owner is not None else None)
+        except Exception:  # noqa: BLE001 — startup notice must not depend on user lookup
+            lang = text.DEFAULT_LANG
+            log.debug("could not load startup notification language for owner_id=%s", owner_id, exc_info=True)
+        body = text.t(lang, "startup_ready", version=__version__)
         try:
             await bot.send_message(chat_id=owner_id, text=body)
             sent += 1
@@ -113,14 +119,12 @@ async def gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             except Exception:  # noqa: BLE001
                 log.debug("could not store detected language", exc_info=True)
 
-    context.user_data.setdefault("lang", row.lang or cfg.default_lang)
+    # The persisted choice is authoritative on every update, avoiding stale
+    # per-process language state after a switch or restart.
+    context.user_data["lang"] = text.normalize_lang(row.lang or cfg.default_lang)
     preview = in_preview(context)
     staff = await is_staff(cfg, user.id)
     context.user_data["is_admin"] = staff and not preview
-
-    # پنل مدیریت همیشه فارسی است؛ تغییر زبان مخصوص کاربران عادی (و حالت پیش‌نمایش) است.
-    if staff and not preview:
-        context.user_data["lang"] = text.DEFAULT_LANG
 
     if row.is_banned:
         await _block(update, text.t(lang_of(context), "banned"))
@@ -131,10 +135,8 @@ async def gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         raise ApplicationHandlerStop
 
     # ── زبان اولیه پیش از قفل عضویت ───────────────────────
-    # کاربر عادی ابتدا زبانش را یک‌بار انتخاب می‌کند؛ /start باید به هندلر برسد
-    # تا منطق مالک اولیه حفظ شود، و callback انتخاب زبان نیز باید از قفل بگذرد.
-    if staff and not preview:
-        return
+    # هر کاربر، از جمله ادمین، زبان را یک‌بار انتخاب می‌کند؛ /start باید به هندلر
+    # برسد تا منطق مالک اولیه حفظ شود، و callback انتخاب زبان نیز از گیت بگذرد.
     language_callback = update.callback_query
     choosing_initial_language = bool(
         language_callback is not None
@@ -148,13 +150,17 @@ async def gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await panel(
             update,
             context,
-            text.t(lang, "lang_start_prompt"),
+            start_flow.LANGUAGE_PICKER_TEXT,
             reply_markup=kb.language_menu(lang, onboarding=True),
         )
         raise ApplicationHandlerStop
 
+    # پس از انتخاب زبان، ادمین‌ها از عضویت اجباری معاف‌اند؛ در حالت پیش‌نمایش
+    # همچنان دقیقاً مانند کاربر عادی بررسی می‌شوند.
+    if staff and not preview:
+        return
+
     # ── عضویت اجباری ──────────────────────────────────────
-    # ادمین‌ها معاف‌اند، اما در «حالت پیش‌نمایش کاربر» دقیقاً مثل کاربر عادی.
     if not services.force_join.enabled:
         return
 

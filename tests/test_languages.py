@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import re
+import time
 
 import pytest
 
 from app.core import text
+from app.core.human import progress_bar
+from app.services.downloader import Progress
+from app.services.formats import FormatOption
+from app.services.jobs import JobManager, JobTask
 from app.version import __version__
 
 PLACEHOLDER = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
@@ -99,6 +104,62 @@ def test_settings_panel_and_language_confirmation_format(code):
     assert text.t(code, "delivery_destination_telegram") in panel
     assert text.LANGS[code] in saved
     assert text.t(code, "lang_start_prompt")
+
+
+@pytest.mark.parametrize("code", ("en", "ru"))
+def test_language_picker_screen_does_not_leave_persian_in_translated_view(code):
+    body = text.t(code, "lang_title", current=text.LANGS[code])
+    assert re.search(r"[\u0600-\u06ff]", body) is None
+
+
+@pytest.mark.parametrize("code", text.LANG_ORDER)
+def test_transfer_progress_is_localized_square_bar_without_percentage(code):
+    bar = progress_bar(40)
+    templates = {
+        "file_link_progress": {"bar": bar, "size": "4 MB / 10 MB"},
+        "downloading": {"bar": bar, "size": "4 MB / 10 MB", "speed": "1 MB/s", "eta": "6:00"},
+        "uploading": {"bar": bar, "size": "4 MB / 10 MB"},
+        "progress_stage_download": {"step": "1/2"},
+        "progress_stage_upload": {"step": "2/2"},
+    }
+    for key, values in templates.items():
+        rendered = text.t(code, key, **values)
+        assert "%" not in rendered, f"percentage should be removed from {code}.{key}"
+        if "bar" in values:
+            assert bar in rendered
+    assert "🟩" in bar and "⬜" in bar
+
+
+@pytest.mark.parametrize("code", text.LANG_ORDER)
+def test_job_progress_uses_localized_square_stages_without_percent(code):
+    manager = JobManager(None, None, None, None, None, None)
+    task = JobTask(
+        id="progress",
+        user_id=1,
+        chat_id=1,
+        url="https://example.com/video",
+        option=FormatOption("video", "720", "720p", "720", ext="mp4"),
+        title="Video",
+        lang=code,
+        mode="video",
+    )
+    task.progress = Progress(
+        stage="downloading", pct=50, downloaded=50, total=100, speed=10, eta=5
+    )
+    download_step = "۱/۲" if code == "fa" else "1/2"
+    body = manager._progress_text(task)
+    assert text.t(code, "progress_stage_download", step=download_step) in body
+    assert "🟩" in body and "⬜" in body
+    assert "%" not in body
+
+    task.progress.stage = "uploading"
+    task.progress.uploaded = 50
+    task.upload_started = time.monotonic() - 2
+    upload_step = "۲/۲" if code == "fa" else "2/2"
+    body = manager._progress_text(task)
+    assert text.t(code, "progress_stage_upload", step=upload_step) in body
+    assert "🟩" in body and "⬜" in body
+    assert "%" not in body
 
 
 @pytest.mark.parametrize("code", text.LANG_ORDER)

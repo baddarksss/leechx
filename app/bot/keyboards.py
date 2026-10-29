@@ -213,13 +213,14 @@ def persistent_admin_labels(lang: str) -> dict[str, str]:
 
 
 def admin_persistent_menu(lang: str) -> ReplyKeyboardMarkup:
-    """کیبورد ثابت ادمین: سه ستون، فقط بخش‌ها (همیشه در دسترس)."""
+    """Persistent admin sections plus a localized language switch."""
     labels = persistent_admin_labels(lang)
     return ReplyKeyboardMarkup(
         [
             [labels["stats"], labels["users"], labels["settings"]],
             [labels["groups"], labels["deploy"], labels["debug"]],
             [labels["cookies"]],
+            [text.t(lang, "btn_lang")],
         ],
         resize_keyboard=True,
         is_persistent=True,
