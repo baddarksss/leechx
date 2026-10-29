@@ -29,7 +29,7 @@ FA: dict[str, str] = {
         "• فایل‌های ساخته‌شده بعد از انقضا خودکار پاک می‌شوند.\n\n"
         "<b>دستورها</b>\n"
         "/start شروع • /help راهنما • /sites لیست سایت‌ها • "
-        "/me وضعیت من • /cancel لغو"
+        "/me وضعیت من • /links لینک‌های من • /cancel لغو"
     ),
     "send_link_or_file": "🔗 یک لینک یا فایل بفرست.",
     "probing": "🔍 در حال بررسی لینک…",
@@ -38,7 +38,16 @@ FA: dict[str, str] = {
     "audio_btn": "🎵 {label}",
     "quality_title": "<b>{title}</b>",
     "cancel_btn": "✖️ لغو",
+    "my_links_btn": "🔗 لینک‌های من",
+    "file_link_progress": "📥 دریافت فایل از تلگرام {pct}%\n{bar}\n{size}",
+    "file_link_wait": "📥 دریافت فایل از تلگرام… حجم دریافت‌شده: {size}",
+    "upload_wait": "⏳ منتظر تأیید نهایی تلگرام…",
     "canceled": "✖️ لغو شد.",
+    "cancel_nothing": "ℹ️ هیچ عملیات یا فرم فعالی برای لغو وجود ندارد.",
+    "not_found": "🔎 فایل یا صفحه پیدا نشد (۴۰۴). لینک را بررسی کن.",
+    "access_denied": "🔒 دسترسی به این منبع مجاز نیست ({reason}).",
+    "download_timeout": "⏱ ارتباط با منبع به پایان مهلت رسید. دوباره تلاش کن.",
+    "incomplete_download": "⚠️ دانلود ناقص بود؛ فایل ناقص تحویل داده نشد. {reason}",
     "canceled_btn": "لغو شد",
     "queued": "🕒 در صف… (نفر {pos})",
     "downloading": "⬇️ دانلود {pct}%\n{bar}\n{size} • {speed} • {eta}",
@@ -86,17 +95,32 @@ FA: dict[str, str] = {
 
     # ── انتخاب نحوهٔ تحویل ──
     "delivery_panel": (
+        "<b>📥 فایل پیدا شد</b>\n"
         "<b>{title}</b>\n\n"
-        "🎚 کیفیت: <b>{quality}</b>\n"
-        "📦 حجم تقریبی: <b>{size}</b>\n"
-        "🏷 نام فایل: <b>{name}</b>\n\n"
-        "📤 قبل از شروع، نحوهٔ تحویل را انتخاب کن:"
+        "🎞 کیفیت: <b>{quality}</b>\n"
+        "📦 حجم: {size}\n"
+        "🏷 نام فایل: <code>{name}</code>\n\n"
+        "<b>چطور می‌خواهی فایل را دریافت کنی؟</b>\n\n"
+        "🎬 <b>ارسال به‌صورت ویدیو</b>\n"
+        "ویدیو همین‌جا در تلگرام ارسال می‌شود و می‌توانی پخشش کنی. "
+        "اگر فرمت قابل‌پخش نباشد، به‌صورت فایل فرستاده می‌شود.\n\n"
+        "📁 <b>ارسال به‌صورت فایل</b>\n"
+        "فایل در همین چت به شکل سند (Document) ارسال می‌شود؛ "
+        "بدون فشرده‌سازی دوباره توسط تلگرام.\n\n"
+        "🔗 <b>ساخت لینک دانلود</b>\n"
+        "فایل روی سرور ذخیره می‌شود و یک لینک قابل کپی و اشتراک‌گذاری "
+        "با اعتبار <b>{ttl} ساعت</b> می‌گیری.\n\n"
+        "✏️ برای عوض‌کردن نام فایل، «تغییر نام» را بزن.\n"
+        "👇 با لمس هر یک از سه گزینهٔ اول، عملیات شروع می‌شود."
     ),
-    "deliver_video_btn": "🎬 ویدیو / رسانه",
-    "deliver_doc_btn": "📄 فایل (Document)",
-    "deliver_link_btn": "🔗 لینک مستقیم",
-    "deliver_rename_btn": "✏️ تغییر نام",
-    "deliver_back_btn": "↩️ انتخاب کیفیت",
+    "quality_auto": "بهترین کیفیت موجود (خودکار)",
+    "quality_original": "همان کیفیت فایل اصلی",
+    "size_unknown": "فعلاً نامشخص؛ بعد از دانلود معلوم می‌شود",
+    "deliver_video_btn": "🎬 ارسال ویدیو در تلگرام",
+    "deliver_doc_btn": "📁 ارسال فایل در تلگرام",
+    "deliver_link_btn": "🔗 ساخت لینک دانلود مستقیم",
+    "deliver_rename_btn": "✏️ تغییر نام فایل",
+    "deliver_back_btn": "↩️ تغییر کیفیت",
     "rename_prompt": "✏️ نام جدید فایل را بفرست (پسوند لازم نیست):\nنام فعلی: <code>{name}</code>",
     "rename_done": "✅ نام ذخیره شد: <b>{name}</b>",
     "rename_bad": "❌ نام معتبر نیست؛ یک نام کوتاه بفرست.",
@@ -279,7 +303,7 @@ FA: dict[str, str] = {
         "این دستور باید <b>داخل گروه</b> فرستاده شود.\n"
         "ربات را به گروه دارای Topics اضافه کن و آنجا <code>/setup</code> بزن."
     ),
-    "setup_need_admin": "⛔️ فقط ادمین‌های ربات یا ادمین‌های گروه می‌توانند گروه را تنظیم کنند.",
+    "setup_need_admin": "⛔️ فقط ادمین‌های خود ربات اجازهٔ اتصال گروه گزارش‌ها را دارند.",
     "setup_not_group": "این چت گروه نیست.",
     "setup_done": (
         "✅ گروه ادمین تنظیم شد.\n\n"
@@ -336,7 +360,7 @@ EN: dict[str, str] = {
         "• Max size: {max_mb} MB.\n"
         "• Shared files are removed automatically after expiry.\n\n"
         "<b>Commands</b>\n"
-        "/start /help /sites /me /cancel"
+        "/start /help /sites /me /links /cancel"
     ),
     "send_link_or_file": "🔗 Send a link or a file.",
     "probing": "🔍 Inspecting link…",
@@ -345,7 +369,16 @@ EN: dict[str, str] = {
     "audio_btn": "🎵 {label}",
     "quality_title": "<b>{title}</b>",
     "cancel_btn": "✖️ Cancel",
+    "my_links_btn": "🔗 My links",
+    "file_link_progress": "📥 Receiving Telegram file {pct}%\n{bar}\n{size}",
+    "file_link_wait": "📥 Receiving file from Telegram… received: {size}",
+    "upload_wait": "⏳ Waiting for Telegram confirmation…",
     "canceled": "✖️ Canceled.",
+    "cancel_nothing": "ℹ️ No active operation or form to cancel.",
+    "not_found": "🔎 File or page not found (404). Check the URL.",
+    "access_denied": "🔒 Access denied ({reason}).",
+    "download_timeout": "⏱ Download timed out. Please try again.",
+    "incomplete_download": "⚠️ Download incomplete. No partial file was delivered: {reason}",
     "canceled_btn": "Canceled",
     "queued": "🕒 Queued… (position {pos})",
     "downloading": "⬇️ Downloading {pct}%\n{bar}\n{size} • {speed} • {eta}",
@@ -389,17 +422,31 @@ EN: dict[str, str] = {
     "copy_hint": "⬆️ Tap the link above to copy.",
     "file_too_big_link": "📦 File is larger than the direct-link limit ({size} > {max}).",
     "delivery_panel": (
+        "<b>📥 Media found</b>\n"
         "<b>{title}</b>\n\n"
-        "🎚 Quality: <b>{quality}</b>\n"
-        "📦 Estimated size: <b>{size}</b>\n"
-        "🏷 File name: <b>{name}</b>\n\n"
-        "📤 Before we start, choose how to deliver it:"
+        "🎞 Quality: <b>{quality}</b>\n"
+        "📦 Size: {size}\n"
+        "🏷 Filename: <code>{name}</code>\n\n"
+        "<b>How would you like to receive this file?</b>\n\n"
+        "🎬 <b>Send as playable media</b>\n"
+        "Send it to this Telegram chat for playback. If Telegram cannot "
+        "play its format, it will arrive as a document instead.\n\n"
+        "📁 <b>Send as a file</b>\n"
+        "Send it as a Telegram document without extra Telegram compression.\n\n"
+        "🔗 <b>Create a download link</b>\n"
+        "Store the file on the server and receive a shareable link valid for "
+        "<b>{ttl} hours</b>.\n\n"
+        "✏️ Use Rename to change the output filename.\n"
+        "👇 Tapping one of the three delivery buttons starts the transfer."
     ),
-    "deliver_video_btn": "🎬 Video / media",
-    "deliver_doc_btn": "📄 File (document)",
-    "deliver_link_btn": "🔗 Direct link",
-    "deliver_rename_btn": "✏️ Rename",
-    "deliver_back_btn": "↩️ Choose quality",
+    "quality_auto": "Best available (automatic)",
+    "quality_original": "As provided by the source",
+    "size_unknown": "Unknown until the download finishes",
+    "deliver_video_btn": "🎬 Send media in Telegram",
+    "deliver_doc_btn": "📁 Send file in Telegram",
+    "deliver_link_btn": "🔗 Create direct download link",
+    "deliver_rename_btn": "✏️ Rename file",
+    "deliver_back_btn": "↩️ Change quality",
     "rename_prompt": "✏️ Send the new file name (extension not required):\nCurrent name: <code>{name}</code>",
     "rename_done": "✅ Name saved: <b>{name}</b>",
     "rename_bad": "❌ Invalid name; send a short name.",
@@ -561,7 +608,7 @@ EN: dict[str, str] = {
         "This command must be sent <b>inside a group</b>.\n"
         "Add the bot to a group with Topics enabled and send <code>/setup</code> there."
     ),
-    "setup_need_admin": "⛔️ Only bot admins or group admins can configure the group.",
+    "setup_need_admin": "⛔️ Only authorized bot admins can configure the log group.",
     "setup_not_group": "This chat is not a group.",
     "setup_done": (
         "✅ Admin group configured.\n\n"

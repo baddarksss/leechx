@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+import asyncio
+import ipaddress
+import socket
 from urllib.parse import unquote, urlparse
 
 URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
@@ -87,3 +90,40 @@ def filename_from_url(url: str, fallback: str = "download") -> str:
     except ValueError:
         name = ""
     return name or fallback
+
+
+def _is_unsafe_host(host: str) -> bool:
+    host = host.strip().strip(".").lower()
+    if not host or host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return not address.is_global
+
+
+async def is_safe_public_url(url: str) -> bool:
+    """Reject hostnames that resolve to non-global IP addresses.
+
+    Re-check before direct connections; DNS rebinding during redirects still
+    requires protection at the container/firewall layer.
+    """
+    if not is_valid_url(url):
+        return False
+    try:
+        parsed = urlparse(url)
+        if parsed.username is not None or parsed.password is not None:
+            return False
+        hostname = parsed.hostname or ""
+        if _is_unsafe_host(hostname):
+            return False
+        addresses = await asyncio.wait_for(
+            asyncio.get_running_loop().getaddrinfo(hostname, None, type=socket.SOCK_STREAM),
+            timeout=5.0,
+        )
+        if not addresses:
+            return False
+        return all(ipaddress.ip_address(item[4][0]).is_global for item in addresses)
+    except (ValueError, OSError, UnicodeError):
+        return False

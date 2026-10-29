@@ -20,6 +20,22 @@ class UnsupportedUrl(LeechError):
     key = "unsupported"
 
 
+class ResourceNotFound(LeechError):
+    key = "not_found"
+
+
+class AccessDenied(LeechError):
+    key = "access_denied"
+
+
+class DownloadTimeout(LeechError):
+    key = "download_timeout"
+
+
+class IncompleteDownload(LeechError):
+    key = "incomplete_download"
+
+
 class NothingDownloadable(LeechError):
     key = "unsupported"
 
