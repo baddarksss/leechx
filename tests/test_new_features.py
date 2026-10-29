@@ -97,6 +97,38 @@ def test_admin_menu_markup_prefers_reply_keyboard():
 
 
 @pytest.mark.asyncio
+async def test_debug_access_is_on_by_default_and_toggleable(db):
+    """عیب‌یابی در سورس پیش‌فرض روشن است و با یک دکمه خاموش/روشن می‌شود."""
+    from app.services.runtime_settings import RuntimeSettings
+
+    settings = RuntimeSettings(db)
+    await settings.load()
+    assert settings.debug_enabled is True
+
+    assert await settings.toggle("debug_enabled") is False
+    assert settings.debug_enabled is False
+    assert await settings.toggle("debug_enabled") is True
+    assert settings.debug_enabled is True
+
+
+def test_debug_keyboards_expose_the_toggle():
+    section = kb.admin_section_menu("fa", kb.SEC_DEBUG, debug_enabled=True)
+    callbacks = [button.callback_data for row in section.inline_keyboard for button in row]
+    assert "a|dbtoggle" in callbacks
+
+    menu = kb.debug_menu("fa", [], True, 6)
+    callbacks = [button.callback_data for row in menu.inline_keyboard for button in row]
+    assert callbacks[0] == "a|dbtoggle"
+
+
+def test_runtime_bool_key_is_a_toggle_button():
+    menu = kb.runtime_menu("fa", [("debug_enabled", "debug", "0")])
+    button = menu.inline_keyboard[0][0]
+    assert button.callback_data == "a|rtoggle|debug_enabled"
+    assert "🔴" in button.text
+
+
+@pytest.mark.asyncio
 async def test_link_list_view_and_delete_owned_file(db):
     store = FileStore(db.files_dir, db.tmp_dir)
     settings = RuntimeSettings(db)

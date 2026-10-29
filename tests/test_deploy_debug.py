@@ -179,8 +179,8 @@ async def make_debug(cfg, tmp_path, *, enabled: bool = True):
     root = make_source(tmp_path / "source")
     settings = RuntimeSettings(cfg)
     await settings.load()
-    if enabled:
-        await settings.set("debug_enabled", True)
+    # پیش‌فرض سورس روشن است؛ برای تستِ حالت خاموش باید صریحاً خاموش شود.
+    await settings.set("debug_enabled", enabled)
     updater = SourceUpdater(cfg, root=root)
     debug = DebugAccess(cfg, settings, updater)
     application = web.Application()

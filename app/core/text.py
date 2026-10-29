@@ -570,9 +570,12 @@ FA: dict[str, str] = {
         "🔒 توکن کامل فقط یک‌بار نمایش داده می‌شود؛ در دیتابیس هش ذخیره می‌شود."
     ),
     "debug_disabled": (
-        "⚠️ دسترسی عیب‌یابی خاموش است. برای ساختن توکن، اول از "
-        "«متغیرهای اجرا» گزینهٔ <code>debug_enabled</code> را روشن کن."
+        "⚠️ دسترسی عیب‌یابی خاموش است. با دکمهٔ «🔴 دسترسی عیب‌یابی» در همین "
+        "بخش روشنش کن؛ نیازی به «متغیرهای اجرا» نیست."
     ),
+    "btn_debug_toggle": "دسترسی عیب‌یابی {flag}",
+    "debug_toggle_on": "🟢 دسترسی عیب‌یابی روشن شد.",
+    "debug_toggle_off": "🔴 دسترسی عیب‌یابی خاموش شد.",
     "btn_debug_make_read": "🔎 توکن فقط‌خواندنی",
     "btn_debug_make_write": "🛠 توکن خواندن + اصلاح کد",
     "btn_debug_make_restart": "♻️ توکن کامل (شامل ری‌استارت)",
@@ -1170,9 +1173,12 @@ EN: dict[str, str] = {
         "🔒 The full token is shown once; only its hash is stored."
     ),
     "debug_disabled": (
-        "⚠️ Debug access is off. Enable <code>debug_enabled</code> under "
-        "«Runtime variables» before creating a token."
+        "⚠️ Debug access is off. Turn it on with the «🔴 Debug access» button in "
+        "this section — no need for «Runtime variables»."
     ),
+    "btn_debug_toggle": "Debug access {flag}",
+    "debug_toggle_on": "🟢 Debug access is on.",
+    "debug_toggle_off": "🔴 Debug access is off.",
     "btn_debug_make_read": "🔎 Read-only token",
     "btn_debug_make_write": "🛠 Read + fix code",
     "btn_debug_make_restart": "♻️ Full token (with restart)",
@@ -1692,7 +1698,13 @@ RU: dict[str, str] = {
         "задеплоил. Токен умирает по истечении срока и отзывается в любой момент.\n\n"
         "🔒 Полный токен показывается один раз; в базе хранится только хэш."
     ),
-    "debug_disabled": "⚠️ Доступ для отладки выключен. Включи <code>debug_enabled</code> в «Переменных», чтобы создать токен.",
+    "debug_disabled": (
+        "⚠️ Доступ для отладки выключен. Включи его кнопкой «🔴 Доступ для "
+        "отладки» в этом разделе — «Переменные» не нужны."
+    ),
+    "btn_debug_toggle": "Доступ для отладки {flag}",
+    "debug_toggle_on": "🟢 Доступ для отладки включён.",
+    "debug_toggle_off": "🔴 Доступ для отладки выключен.",
     "btn_debug_make_read": "🔎 Только чтение",
     "btn_debug_make_write": "🛠 Чтение + правка кода",
     "btn_debug_make_restart": "♻️ Полный (с перезапуском)",

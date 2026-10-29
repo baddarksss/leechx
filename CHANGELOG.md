@@ -7,6 +7,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.1.1] - 2026-10-29 · "Clean Deck"
+
+### Fixed
+- **Diagnostics is on by default**: `debug_enabled` now defaults to `True` in
+  `runtime_settings`, so the diagnostics section and the token API work on any
+  fresh server without touching runtime variables.
+- **Runtime toggle for diagnostics**: the 🩺 diagnostics section has a direct
+  on/off button (`a|dbtoggle`); boolean runtime keys (including
+  `debug_enabled`) are toggles in «Runtime variables» instead of text prompts.
+- **No restart needed to enable it**: `/debug/*` routes are always registered and
+  access is gated inside `DebugAccess._auth` at request time; `debug_enabled` and
+  `debug_ip_allow` were removed from the restart-required keys.
+- `debug_disabled` hint now points at the in-section toggle instead of runtime
+  variables (FA/EN/RU).
+
 ## [5.1.0] - 2026-10-29 · "Clean Deck"
 
 ### Changed

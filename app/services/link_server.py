@@ -76,19 +76,25 @@ class LinkServer:
 
     # ── ساخت اپلیکیشن ──────────────────────────────────────
     def build_app(self) -> web.Application:
-        debug_on = bool(self.debug is not None and self.settings.debug_enabled)
-        # سرور لینک آپلود نمی‌گیرد؛ فقط وقتی API عیب‌یابی روشن است سقف
+        # مسیرهای /debug/* همیشه ثبت می‌شوند و دسترسی واقعی داخل ``DebugAccess._auth``
+        # با ``debug_enabled`` کنترل می‌شود؛ این‌طوری روشن/خاموش‌کردن از پنل
+        # بدون ری‌استارت اثر می‌گذارد.
+        debug_ready = self.debug is not None
+        # سرور لینک آپلود نمی‌گیرد؛ فقط وقتی API عیب‌یابی در دسترس است سقف
         # بالاتر می‌رود تا ZIP/سورس بزرگ رد نشود.
         limit = 1024 * 1024
-        if debug_on:
+        if debug_ready:
             limit = max(limit, int(self.cfg.max_source_zip_mb) * 1024 * 1024)
         app = web.Application(client_max_size=limit)
         app.router.add_get("/", self._index)
         app.router.add_get("/health", self._health)
         app.router.add_get("/f/{token}", self._serve)
-        if debug_on:
+        if debug_ready:
             self.debug.register(app)
-            log.info("debug API enabled at /debug/*")
+            log.info(
+                "debug API routes registered at /debug/* (enabled=%s)",
+                self.settings.debug_enabled,
+            )
         return app
 
     async def start(self) -> None:

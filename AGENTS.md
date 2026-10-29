@@ -69,8 +69,9 @@ set). Fix lint before pushing.
 - **Deploy**: `services/updater.py` (ZIP export/validate/apply, backup,
   restart, yt-dlp upgrade). Restart hook lives in `container.Services.teardown`.
 - **Diagnostics**: `services/debug_access.py`. Tokens are hashed, max 24h,
-  scoped `read`/`write`/`restart`, and routes are only registered when
-  `debug_enabled` is on.
+  scoped `read`/`write`/`restart`. `/debug/*` routes are always registered and
+  gated at request time by `debug_enabled` (default on), so the admin can toggle
+  it from the 🩺 section without a restart.
 - **Forced join**: `services/force_join.py` + the gate at the top of
   `bot/app.py`. Membership checks are cached and fail-open on Telegram errors.
 - **Preview mode**: `bot/guards.py` + `flows/start.py`; admins in preview must

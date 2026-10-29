@@ -101,7 +101,9 @@ class RuntimeSettings:
             "topic_security": "",
             "force_join_enabled": False,
             "force_join_chats": "",
-            "debug_enabled": False,
+            # پیش‌فرض روشن است تا عیب‌یابی روی هر سروری بدون تنظیم دستی کار کند؛
+            # ادمین هر لحظه می‌تواند از بخش «🩺 عیب‌یابی» خاموشش کند.
+            "debug_enabled": True,
             "debug_ip_allow": "",
         }.get(key)
 

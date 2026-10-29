@@ -10,7 +10,9 @@ from telegram import InlineKeyboardMarkup as Kb
 from telegram import ReplyKeyboardMarkup
 
 from app.core import text
+from app.core.human import parse_bool
 from app.services.drafts import Draft
+from app.services.runtime_settings import SCHEMA as RUNTIME_SCHEMA
 
 # ── پیشوندها ────────────────────────────────────────────────
 M_HELP = "m|help"
@@ -198,8 +200,15 @@ def link_actions(lang: str, url: str) -> Kb:
                [Btn(text.t(lang, "my_links_btn"), callback_data="u|ls|0")]])
 
 
+def _debug_toggle_btn(lang: str, enabled: bool) -> Btn:
+    return Btn(
+        text.t(lang, "btn_debug_toggle", flag="🟢" if enabled else "🔴"),
+        callback_data="a|dbtoggle",
+    )
+
+
 # ── پنل ادمین ──────────────────────────────────────────────
-def admin_section_menu(lang: str, section: str) -> Kb:
+def admin_section_menu(lang: str, section: str, *, debug_enabled: bool = False) -> Kb:
     """اکشن‌های یک بخش؛ ناوبری فقط با کیبورد ثابت انجام می‌شود (بدون دکمهٔ بازگشت)."""
     if section == SEC_STATS:
         rows = [
@@ -224,6 +233,7 @@ def admin_section_menu(lang: str, section: str) -> Kb:
         return deploy_menu(lang)
     elif section == SEC_DEBUG:
         rows = [
+            [_debug_toggle_btn(lang, debug_enabled)],
             [_btn(lang, "btn_admin_debug", "a|debug"), _btn(lang, "btn_admin_preview", "a|preview")],
         ]
     elif section == SEC_COOKIES:
@@ -264,6 +274,11 @@ def logs_menu(lang: str) -> Kb:
 def runtime_menu(lang: str, items: list[tuple[str, str, str]]) -> Kb:
     rows: list[list] = []
     for key, label, value in items:
+        if RUNTIME_SCHEMA.get(key, ("", ""))[0] == "bool":
+            # کلیدهای روشن/خاموش با یک ضربه عوض می‌شوند (مثل debug_enabled).
+            flag = "🟢" if parse_bool(value, False) else "🔴"
+            rows.append([Btn(f"{label}: {flag}", callback_data=f"a|rtoggle|{key}")])
+            continue
         shown = value if len(value) <= 24 else f"{value[:21]}…"
         rows.append([Btn(f"{label}: {shown}", callback_data=f"a|redit|{key}")])
     return Kb(rows)
@@ -346,7 +361,9 @@ def join_gate(lang: str, targets: list) -> Kb:
 # ── عیب‌یابی ───────────────────────────────────────────────
 def debug_menu(lang: str, tokens: list, enabled: bool, max_hours: int) -> Kb:
     rows: list[list] = [
+        [_debug_toggle_btn(lang, enabled)],
         [_btn(lang, "btn_debug_health", "a|dbhealth")],
+        [_btn(lang, "btn_admin_preview", "a|preview")],
     ]
     if enabled:
         rows += [

@@ -49,13 +49,13 @@ STATUS_ICON = {
 }
 
 # تغییر این مقادیر فقط بعد از ری‌استارت کامل اثر می‌گذارد.
+# debug_enabled / debug_ip_allow عمداً اینجا نیستند: مسیرهای /debug/* همیشه ثبت
+# می‌شوند و دسترسی در هر درخواست از تنظیمات زنده خوانده می‌شود.
 RESTART_KEYS = {
     "telegram_api_url",
     "telegram_api_file_url",
     "telegram_api_id",
     "telegram_api_hash",
-    "debug_enabled",
-    "debug_ip_allow",
 }
 
 
@@ -336,6 +336,23 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await _render_runtime(update, context)
         return
 
+    if action == "rtoggle":
+        if not args or args[0] not in RUNTIME_KEYS or args[0] not in SCHEMA:
+            await safe_answer(query)
+            return
+        key = args[0]
+        value = await svc.settings.toggle(key)
+        await safe_answer(
+            query,
+            text.t(lang, "admin_runtime_saved",
+                   label=svc.settings.label(key, lang),
+                   value=("🟢" if value else "🔴")),
+        )
+        await svc.admin_group.audit("security", "runtime_updated",
+                                    update.effective_user.id, f"key={key}, value={value}")
+        await _render_runtime(update, context)
+        return
+
     if action == "redit":
         if not args:
             await safe_answer(query)
@@ -567,6 +584,18 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
     # ── عیب‌یابی ──
     if action == "debug":
         await safe_answer(query)
+        await _render_debug(update, context)
+        return
+
+    if action == "dbtoggle":
+        enabled = await svc.settings.toggle("debug_enabled")
+        await safe_answer(
+            query,
+            text.t(lang, "debug_toggle_on" if enabled else "debug_toggle_off"),
+        )
+        await svc.admin_group.audit(
+            "security", "debug_toggled", update.effective_user.id, f"enabled={enabled}"
+        )
         await _render_debug(update, context)
         return
 
@@ -1113,7 +1142,13 @@ async def _create_debug_token(
     body += "\n\n" + text.t(lang, "debug_handoff", base=human.esc(base))
     await svc.admin_group.audit("security", "debug_token_created", update.effective_user.id,
                                 f"scope={row.scopes}, id={row.id}, hours={hours}")
-    await reply(update, body, reply_markup=kb.admin_section_menu(lang, kb.SEC_DEBUG))
+    await reply(
+        update,
+        body,
+        reply_markup=kb.admin_section_menu(
+            lang, kb.SEC_DEBUG, debug_enabled=svc.settings.debug_enabled
+        ),
+    )
 
 
 async def _render_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1140,10 +1175,13 @@ async def _render_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         problems=block,
     )
     query = update.callback_query
+    menu = kb.admin_section_menu(
+        lang, kb.SEC_DEBUG, debug_enabled=svc.settings.debug_enabled
+    )
     if query is not None:
-        await edit(query.message, body, reply_markup=kb.admin_section_menu(lang, kb.SEC_DEBUG))
+        await edit(query.message, body, reply_markup=menu)
     else:
-        await reply(update, body, reply_markup=kb.admin_section_menu(lang, kb.SEC_DEBUG))
+        await reply(update, body, reply_markup=menu)
 
 
 async def _show_user(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
