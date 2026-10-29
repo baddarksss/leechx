@@ -39,6 +39,13 @@ if TYPE_CHECKING:  # pragma: no cover
 MAX_HOURS = 24
 TOKEN_PREFIX = "lxdbg_"
 SCOPES: tuple[str, ...] = ("read", "write", "restart")
+# هر scope سطح‌های پایین‌ترِ خودش را هم می‌دهد: write ⇒ read، restart ⇒ read+write.
+# بدون این، دکمهٔ «read + fix code» نمی‌توانست حتی سورس را بخواند.
+SCOPE_GRANTS: dict[str, tuple[str, ...]] = {
+    "read": ("read",),
+    "write": ("read", "write"),
+    "restart": ("read", "write", "restart"),
+}
 MAX_READ_BYTES = 256 * 1024
 MAX_WRITE_BYTES = 512 * 1024
 
@@ -92,9 +99,17 @@ class DebugAccess:
         return self.settings.debug_enabled
 
     @staticmethod
-    def normalize_scopes(scopes: str | None) -> str:
-        wanted = {part.strip() for part in (scopes or "read").split(",")}
-        ordered = [scope for scope in SCOPES if scope in wanted]
+    def granted_scopes(scopes: str | None) -> set[str]:
+        """مجموعهٔ دسترسی‌های واقعی یک رشتهٔ scope (با احتساب سلسله‌مراتب)."""
+        granted: set[str] = set()
+        for part in (scopes or "").split(","):
+            granted.update(SCOPE_GRANTS.get(part.strip(), ()))
+        return granted
+
+    @classmethod
+    def normalize_scopes(cls, scopes: str | None) -> str:
+        granted = cls.granted_scopes(scopes)
+        ordered = [scope for scope in SCOPES if scope in granted]
         return ",".join(ordered or ["read"])
 
     @staticmethod
@@ -167,7 +182,7 @@ class DebugAccess:
             return None, self._error(401, "invalid or revoked token")
         if row.expires_at <= _now():
             return None, self._error(401, "token expired")
-        if scope not in (row.scopes or "").split(","):
+        if scope not in self.granted_scopes(row.scopes):
             return None, self._error(403, f"token lacks '{scope}' scope")
         try:
             await repo.touch_debug_token(row.id)

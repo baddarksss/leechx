@@ -7,6 +7,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.1.5] - 2026-10-29 · "Clean Deck"
+
+### Fixed
+- **Diagnostics token scopes are now cumulative**: `write` implies `read` and
+  `restart` implies `read`+`write`. Before, the button labelled "Read + fix
+  code" created a `write`-only token that could not read source or logs, and
+  the "Full token" button created a `restart`-only token that answered
+  `403 token lacks 'read' scope` on `/debug/health`, `/debug/logs` and
+  `/debug/source`. Scope checks also accept the hierarchy, so tokens issued
+  before this version start working without re-issuing.
+- Docs: scope hierarchy, default-on diagnostics, and a troubleshooting row for
+  the old `token lacks 'read' scope` error.
+
 ## [5.1.4] - 2026-10-29 · "Clean Deck"
 
 ### Fixed

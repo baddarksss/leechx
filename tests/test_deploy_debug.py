@@ -196,13 +196,23 @@ async def test_token_ttl_is_capped_and_scopes_are_normalized(db, tmp_path):
     assert raw.startswith("lxdbg_")
     assert row.token_hash == hash_token(raw)
     assert raw not in row.token_hash
-    assert row.scopes == "read,restart"
+    assert row.scopes == "read,write,restart"
     assert row.expires_at <= int(time.time()) + MAX_HOURS * 3600 + 5
     assert row.expires_at > int(time.time()) + (MAX_HOURS - 1) * 3600
 
     _, read_row = await debug.create(1, hours=0, scopes="unknown")
     assert read_row.scopes == "read"
     assert read_row.expires_at <= int(time.time()) + 3600
+
+
+def test_scope_hierarchy_is_cumulative():
+    """برچسب «read + write» و «full» باید واقعاً همان دسترسی را بدهد."""
+    assert DebugAccess.normalize_scopes("write") == "read,write"
+    assert DebugAccess.normalize_scopes("restart") == "read,write,restart"
+    assert DebugAccess.granted_scopes("restart") == {"read", "write", "restart"}
+    assert DebugAccess.granted_scopes("write") == {"read", "write"}
+    assert DebugAccess.granted_scopes("read") == {"read"}
+    assert DebugAccess.granted_scopes("") == set()
 
 
 @pytest.mark.asyncio
@@ -279,6 +289,30 @@ async def test_debug_api_write_scope_and_path_guard(db, tmp_path):
 
         restart = await client.post("/debug/restart", headers=headers)
         assert restart.status == 403  # write ≠ restart
+
+
+@pytest.mark.asyncio
+async def test_full_token_can_read_write_and_restart(db, tmp_path):
+    """توکن «کامل» باید read و write را هم داشته باشد (قبلاً فقط restart بود)."""
+    debug, _settings, updater, application = await make_debug(db, tmp_path)
+    raw, row = await debug.create(1, hours=1, scopes="restart")
+    assert row.scopes == "read,write,restart"
+    headers = {"Authorization": f"Bearer {raw}"}
+
+    async with TestClient(TestServer(application)) as client:
+        assert (await client.get("/debug/health", headers=headers)).status == 200
+        logs = await client.get("/debug/logs?limit=2", headers=headers)
+        assert logs.status == 200
+        source = await client.get("/debug/source?path=main.py", headers=headers)
+        assert source.status == 200
+
+        written = await client.post(
+            "/debug/source",
+            headers=headers,
+            json={"path": "app/full_scope.py", "content": "Y = 2\n"},
+        )
+        assert written.status == 200
+        assert (updater.root / "app" / "full_scope.py").read_text(encoding="utf-8") == "Y = 2\n"
 
 
 @pytest.mark.asyncio
