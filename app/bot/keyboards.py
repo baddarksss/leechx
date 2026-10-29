@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from telegram import InlineKeyboardButton as Btn
 from telegram import InlineKeyboardMarkup as Kb
+from telegram import ReplyKeyboardMarkup
 
 from app.core import text
 from app.services.drafts import Draft
@@ -41,7 +42,8 @@ def main_menu(lang: str, admin: bool) -> Kb:
          Btn(text.t(lang, "btn_status"), callback_data=M_STATUS)],
         [Btn(text.t(lang, "btn_sites"), callback_data=M_SITES),
          Btn(text.t(lang, "btn_settings"), callback_data=M_SETTINGS)],
-        [Btn(text.t(lang, "btn_contact"), callback_data=M_CONTACT)],
+        [Btn(text.t(lang, "btn_contact"), callback_data=M_CONTACT),
+         Btn(text.t(lang, "my_links_btn"), callback_data="u|ls|0")],
     ]
     if admin:
         rows.append([Btn(text.t(lang, "btn_admin"), callback_data=M_ADMIN)])
@@ -82,6 +84,33 @@ def quality_menu(lang: str, draft: Draft) -> Kb:
     return Kb(rows)
 
 
+def persistent_admin_labels(lang: str) -> dict[str, str]:
+    if lang == "en":
+        return {
+            "panel": "👑 Admin panel", "stats": "📊 Bot stats",
+            "jobs": "📋 Active jobs", "settings": "⚙️ Admin settings",
+            "reports": "📨 Reports", "links": "🔗 My links",
+            "cancel": "✖️ Cancel tasks", "home": "🏠 Home",
+        }
+    return {
+        "panel": "👑 پنل ادمین", "stats": "📊 آمار ربات",
+        "jobs": "📋 عملیات ربات", "settings": "⚙️ تنظیمات ادمین",
+        "reports": "📨 گزارش‌ها", "links": "🔗 لینک‌های من",
+        "cancel": "✖️ لغو عملیات", "home": "🏠 شروع",
+    }
+
+
+def admin_persistent_menu(lang: str) -> ReplyKeyboardMarkup:
+    labels = persistent_admin_labels(lang)
+    return ReplyKeyboardMarkup(
+        [[labels["panel"], labels["stats"]],
+         [labels["jobs"], labels["settings"]],
+         [labels["reports"], labels["links"]],
+         [labels["cancel"], labels["home"]]],
+        resize_keyboard=True, is_persistent=True,
+    )
+
+
 def cancel_job(lang: str, job_id: str) -> Kb:
     return Kb([[Btn(text.t(lang, "cancel_btn"), callback_data=f"x|{job_id}")]])
 
@@ -89,14 +118,12 @@ def cancel_job(lang: str, job_id: str) -> Kb:
 def delivery_menu(lang: str, draft: Draft) -> Kb:
     """کیبورد انتخاب نحوهٔ تحویل + تغییر نام."""
     rows = [
-        [
-            Btn(text.t(lang, "deliver_video_btn"), callback_data=f"o|{draft.id}|v"),
-            Btn(text.t(lang, "deliver_doc_btn"), callback_data=f"o|{draft.id}|d"),
-        ],
+        [Btn(text.t(lang, "deliver_video_btn"), callback_data=f"o|{draft.id}|v")],
+        [Btn(text.t(lang, "deliver_doc_btn"), callback_data=f"o|{draft.id}|d")],
         [Btn(text.t(lang, "deliver_link_btn"), callback_data=f"o|{draft.id}|l")],
         [Btn(text.t(lang, "deliver_rename_btn"), callback_data=f"o|{draft.id}|r")],
     ]
-    if draft.kind != "direct":
+    if draft.kind != "direct" and not draft.auto_quality:
         rows.append([Btn(text.t(lang, "deliver_back_btn"), callback_data=f"o|{draft.id}|q")])
     rows.append([Btn(text.t(lang, "btn_close"), callback_data=f"d|{draft.id}")])
     return Kb(rows)
@@ -114,7 +141,8 @@ def cookies_menu(lang: str, names: list[str]) -> Kb:
 
 
 def link_actions(lang: str, url: str) -> Kb:
-    return Kb([[Btn(text.t(lang, "open_link_btn"), url=url)]])
+    return Kb([[Btn(text.t(lang, "open_link_btn"), url=url)],
+               [Btn(text.t(lang, "my_links_btn"), callback_data="u|ls|0")]])
 
 
 def admin_menu(lang: str) -> Kb:

@@ -25,7 +25,9 @@ from app.bot.flows import errors as errors_flow
 from app.bot.flows import files as files_flow
 from app.bot.flows import start as start_flow
 from app.bot.flows import text_router
+from app.bot.flows import user_links as links_flow
 from app.bot.guards import is_admin
+from app.bot.update_processor import UserOrderedUpdateProcessor
 from app.config import Config
 from app.container import Services
 from app.core import text
@@ -38,8 +40,10 @@ COMMANDS = [
     ("help", "راهنما"),
     ("sites", "سایت‌های پشتیبانی"),
     ("me", "وضعیت من"),
+    ("settings", "تنظیمات"),
     ("lang", "تغییر زبان"),
     ("cancel", "لغو کار جاری"),
+    ("links", "لینک‌های مستقیم من"),
 ]
 
 
@@ -97,7 +101,7 @@ def build_app(cfg: Config) -> Application:
         Application.builder()
         .token(cfg.bot_token)
         .defaults(Defaults(parse_mode=ParseMode.HTML, tzinfo=UTC))
-        .concurrent_updates(48)
+        .concurrent_updates(UserOrderedUpdateProcessor(48))
         .post_init(post_init)
         .post_shutdown(post_shutdown)
     )
@@ -116,7 +120,9 @@ def build_app(cfg: Config) -> Application:
     app.add_handler(CommandHandler("sites", start_flow.cmd_sites))
     app.add_handler(CommandHandler("me", start_flow.cmd_me))
     app.add_handler(CommandHandler("lang", start_flow.cmd_lang))
+    app.add_handler(CommandHandler("settings", start_flow.cmd_settings))
     app.add_handler(CommandHandler("cancel", start_flow.cmd_cancel))
+    app.add_handler(CommandHandler("links", links_flow.cmd_links))
     app.add_handler(CommandHandler("admin", admin_flow.cmd_admin))
     app.add_handler(CommandHandler("setup", admin_flow.cmd_setup))
 
