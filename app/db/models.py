@@ -137,3 +137,20 @@ class Report(Base):
     status: Mapped[str] = mapped_column(String(16), default="open", index=True)
     created_at: Mapped[int] = mapped_column(Integer, default=now, index=True)
 
+
+class DebugToken(Base):
+    """توکن موقت دسترسی عیب‌یابی — فقط هش ذخیره می‌شود."""
+
+    __tablename__ = "debug_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    label: Mapped[str] = mapped_column(String(64), default="")
+    scopes: Mapped[str] = mapped_column(String(64), default="read")
+    created_by: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[int] = mapped_column(Integer, default=now)
+    expires_at: Mapped[int] = mapped_column(Integer, index=True)
+    last_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    uses: Mapped[int] = mapped_column(Integer, default=0)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+

@@ -18,7 +18,8 @@ from telegram.ext import (
     filters,
 )
 
-from app.bot.common import lang_of, reply
+from app.bot import keyboards as kb
+from app.bot.common import lang_of, reply, safe_answer
 from app.bot.flows import admin as admin_flow
 from app.bot.flows import callbacks as callbacks_flow
 from app.bot.flows import errors as errors_flow
@@ -26,12 +27,13 @@ from app.bot.flows import files as files_flow
 from app.bot.flows import start as start_flow
 from app.bot.flows import text_router
 from app.bot.flows import user_links as links_flow
-from app.bot.guards import is_admin
+from app.bot.guards import in_preview, is_staff
 from app.bot.update_processor import UserOrderedUpdateProcessor
 from app.config import Config
 from app.container import Services
-from app.core import text
+from app.core import human, text
 from app.db import dispose_db, init_db, repo
+from app.version import __version__
 
 log = logging.getLogger("leechx.bot")
 
@@ -53,12 +55,13 @@ async def post_init(application: Application) -> None:
     await init_db(cfg)
     services = Services.create(cfg)
     application.bot_data["services"] = services
+    services.attach_application(application)
     await services.setup(application.bot)
     try:
         await application.bot.set_my_commands([BotCommand(cmd, desc) for cmd, desc in COMMANDS])
     except Exception:  # noqa: BLE001
         log.warning("could not set commands", exc_info=True)
-    log.info("bot @%s ready", getattr(application.bot, "username", "?"))
+    log.info("bot @%s ready (LeechX v%s)", getattr(application.bot, "username", "?"), __version__)
 
 
 async def post_shutdown(application: Application) -> None:
@@ -82,17 +85,58 @@ async def gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         log.exception("user upsert failed")
         return
 
+    # زبان اولین پیام را از کلاینت تلگرام حدس می‌زنیم (فارسی/انگلیسی/روسی).
+    if row.lang == text.DEFAULT_LANG and row.last_seen == row.created_at:
+        detected = text.lang_from_telegram(getattr(user, "language_code", None))
+        if detected != row.lang:
+            try:
+                await repo.set_lang(user.id, detected)
+                row.lang = detected
+            except Exception:  # noqa: BLE001
+                log.debug("could not store detected language", exc_info=True)
+
     context.user_data.setdefault("lang", row.lang or cfg.default_lang)
-    admin = await is_admin(cfg, user.id)
-    context.user_data["is_admin"] = admin
+    preview = in_preview(context)
+    staff = await is_staff(cfg, user.id)
+    context.user_data["is_admin"] = staff and not preview
 
     if row.is_banned:
         await reply(update, text.t(lang_of(context), "banned"))
         raise ApplicationHandlerStop
 
-    if services.settings.maintenance and not admin:
+    if services.settings.maintenance and not (staff and not preview):
         await reply(update, text.t(lang_of(context), "maintenance"))
         raise ApplicationHandlerStop
+
+    # ── عضویت اجباری ──────────────────────────────────────
+    # ادمین‌ها معاف‌اند، اما در «حالت پیش‌نمایش کاربر» دقیقاً مثل کاربر عادی.
+    if staff and not preview:
+        return
+    if not services.force_join.enabled:
+        return
+
+    lang = lang_of(context)
+    missing, complete = await services.force_join.missing(context.bot, user.id)
+    if not missing:
+        return
+
+    query = update.callback_query
+    if query is not None:
+        if query.data == "m|joincheck":
+            return  # اجازه بده همین هندلر بررسی مجدد را انجام دهد
+        await safe_answer(query, text.t(lang, "join_gate_still"), alert=True)
+        raise ApplicationHandlerStop
+
+    body = text.t(lang, "join_gate_title", list=_join_targets(missing))
+    await reply(update, body, reply_markup=kb.join_gate(lang, missing))
+    raise ApplicationHandlerStop
+
+
+def _join_targets(targets) -> str:
+    return "\n".join(
+        f"• <b>{human.esc(t.title)}</b> — <a href=\"{human.esc(t.url())}\">link</a>"
+        for t in targets
+    )
 
 
 # ── ساخت اپلیکیشن ───────────────────────────────────────────

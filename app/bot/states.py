@@ -13,6 +13,8 @@ ST_GROUP_ID = "group_id"
 ST_BAN = "ban"
 ST_RUNTIME_VALUE = "runtime_value"
 ST_CONTACT = "contact"
+ST_JOIN_CHAT = "join_chat"
+ST_DEPLOY_ZIP = "deploy_zip"
 
 ADMIN_STATES = {
     ST_BROADCAST,
@@ -23,6 +25,8 @@ ADMIN_STATES = {
     ST_GROUP_ID,
     ST_BAN,
     ST_RUNTIME_VALUE,
+    ST_JOIN_CHAT,
+    ST_DEPLOY_ZIP,
 }
 
 

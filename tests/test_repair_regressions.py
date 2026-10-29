@@ -10,7 +10,8 @@ from types import SimpleNamespace
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from app.bot.flows import admin as admin_flow, start as start_flow
+from app.bot.flows import admin as admin_flow
+from app.bot.flows import start as start_flow
 from app.bot.states import ST_BAN, set_state
 from app.core import errors, urlcheck
 from app.db import repo
@@ -184,7 +185,9 @@ async def test_link_sibling_directory_is_blocked(db):
 async def test_same_user_updates_are_serial_but_other_users_run_concurrently():
     import asyncio
     from datetime import UTC, datetime
+
     from telegram import Chat, Message, Update, User
+
     from app.bot.update_processor import UserOrderedUpdateProcessor
 
     def make_update(uid, mid):
@@ -230,6 +233,7 @@ async def test_same_user_updates_are_serial_but_other_users_run_concurrently():
 @pytest.mark.asyncio
 async def test_direct_downloader_rejects_truncated_body(monkeypatch, tmp_path, db):
     import asyncio
+
     from app.services.downloader import Downloader, MediaInfo
     from app.services.formats import FormatOption
     async def safe_url(url): return True
@@ -262,8 +266,8 @@ async def test_direct_downloader_rejects_truncated_body(monkeypatch, tmp_path, d
 @pytest.mark.asyncio
 async def test_generated_link_respects_size_limit(db, tmp_path):
     from app.services.downloader import Downloader
-    from app.services.jobs import JobManager, JobTask
     from app.services.formats import FormatOption
+    from app.services.jobs import JobManager, JobTask
     from app.services.ratelimit import RateLimiter
     store=FileStore(db.files_dir,db.tmp_dir)
     settings=RuntimeSettings(db)

@@ -1,11 +1,11 @@
 """کار با لینک‌ها: استخراج، تشخیص لینک مستقیم، دامنه."""
 from __future__ import annotations
 
-import re
-from pathlib import Path
 import asyncio
 import ipaddress
+import re
 import socket
+from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)

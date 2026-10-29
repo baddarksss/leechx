@@ -3,15 +3,16 @@ from __future__ import annotations
 
 import logging
 
-from telegram import Update
+from telegram import ReplyKeyboardRemove, Update
 from telegram.ext import ContextTypes
 
 from app.bot import keyboards as kb
 from app.bot.common import edit, fmt_ts, lang_of, reply, safe_answer, services
-from app.bot.guards import is_admin
+from app.bot.guards import in_preview, is_admin
 from app.bot.states import ST_CONTACT, clear_state, get_state, set_state
 from app.core import human, text
 from app.db import repo
+from app.version import __version__, version_badge
 
 log = logging.getLogger("leechx.start")
 
@@ -35,23 +36,26 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             log.exception("owner claim failed")
 
     admin = await is_admin(svc.cfg, user.id)
+    staff = admin
+    preview = in_preview(context)
     body = text.t(lang, "start", ttl=_fmt_hours(svc.settings.ttl_hours))
-    await reply(update, body, reply_markup=kb.main_menu(lang, admin))
-    if admin and update.effective_chat.type == "private":
-        await reply(update, "📌 منوی ثابت مدیریت", reply_markup=kb.admin_persistent_menu(lang))
+    body += "\n\n" + version_badge()
+    await reply(update, body, reply_markup=kb.main_menu(lang, admin and not preview, preview=preview))
+    if staff and not preview and update.effective_chat.type == "private":
+        await reply(update, text.t(lang, "btn_admin"), reply_markup=kb.admin_persistent_menu(lang))
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
     lang = lang_of(context)
-    admin = await is_admin(svc.cfg, update.effective_user.id)
+    admin = await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context)
     body = text.t(
         lang,
         "help",
         ttl=_fmt_hours(svc.settings.ttl_hours),
         max_mb=svc.settings.max_upload_bytes // (1024 * 1024),
     )
-    await reply(update, body, reply_markup=kb.main_menu(lang, admin))
+    await reply(update, body, reply_markup=kb.main_menu(lang, admin, preview=in_preview(context)))
 
 
 async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -59,7 +63,7 @@ async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang = lang_of(context)
     user = update.effective_user
     row = await repo.get_user(user.id)
-    admin = await is_admin(svc.cfg, user.id)
+    admin = await is_admin(svc.cfg, user.id) and not in_preview(context)
     body = text.t(
         lang,
         "status",
@@ -67,8 +71,9 @@ async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         downloads=row.downloads if row else 0,
         joined=fmt_ts(row.created_at if row else None),
         admin=text.t(lang, "yes" if admin else "no"),
+        version=__version__,
     )
-    await reply(update, body, reply_markup=kb.main_menu(lang, admin))
+    await reply(update, body, reply_markup=kb.main_menu(lang, admin, preview=in_preview(context)))
 
 
 async def cmd_sites(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -98,8 +103,8 @@ async def cmd_sites(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             count=len(results),
             list="\n".join(lines) or text.t(lang, "sites_none"),
         )
-    admin = await is_admin(svc.cfg, update.effective_user.id)
-    await reply(update, body, reply_markup=kb.main_menu(lang, admin))
+    admin = await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context)
+    await reply(update, body, reply_markup=kb.main_menu(lang, admin, preview=in_preview(context)))
 
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -126,17 +131,17 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang = lang_of(context)
-    rows = [[kb.Btn(text.LANGS[code], callback_data=f"l|{code}")] for code in text.LANGS]
-    rows.append([kb.Btn(text.t(lang, "btn_back"), callback_data=kb.M_HOME)])
-    await reply(update, f"<b>{text.t(lang, 'btn_settings')}</b>", reply_markup=kb.Kb(rows))
+    body = text.t(lang, "settings_panel", lang=text.LANGS[lang], version=__version__)
+    await reply(update, body, reply_markup=kb.user_settings_menu(lang))
 
 
 async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    lang_of(context)
-    rows = [
-        [kb.Btn(text.LANGS[code], callback_data=f"l|{code}")] for code in text.LANGS
-    ]
-    await reply(update, "🌍", reply_markup=kb.Kb(rows))
+    lang = lang_of(context)
+    await reply(
+        update,
+        text.t(lang, "lang_title", current=text.LANGS[lang]),
+        reply_markup=kb.language_menu(lang),
+    )
 
 
 async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -178,23 +183,23 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
     query = update.callback_query
     svc = services(context)
     lang = lang_of(context)
-    admin = await is_admin(svc.cfg, update.effective_user.id)
+    preview = in_preview(context)
+    admin = await is_admin(svc.cfg, update.effective_user.id) and not preview
     clear_state(context)
     await safe_answer(query)
 
     if action == "close":
-        await edit(query.message, "✖️")
         try:
             await query.message.delete()
         except Exception:  # noqa: BLE001
-            pass
+            await edit(query.message, "✖️")
         return
 
     if action == "home":
         await edit(
             query.message,
-            text.t(lang, "start", ttl=_fmt_hours(svc.settings.ttl_hours)),
-            reply_markup=kb.main_menu(lang, admin),
+            text.t(lang, "start", ttl=_fmt_hours(svc.settings.ttl_hours)) + "\n\n" + version_badge(),
+            reply_markup=kb.main_menu(lang, admin, preview=preview),
         )
         return
 
@@ -207,7 +212,7 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
                 ttl=_fmt_hours(svc.settings.ttl_hours),
                 max_mb=svc.settings.max_upload_bytes // (1024 * 1024),
             ),
-            reply_markup=kb.main_menu(lang, admin),
+            reply_markup=kb.main_menu(lang, admin, preview=preview),
         )
         return
 
@@ -223,8 +228,9 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
                 downloads=row.downloads if row else 0,
                 joined=fmt_ts(row.created_at if row else None),
                 admin=text.t(lang, "yes" if admin else "no"),
+                version=__version__,
             ),
-            reply_markup=kb.main_menu(lang, admin),
+            reply_markup=kb.main_menu(lang, admin, preview=preview),
         )
         return
 
@@ -238,18 +244,29 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
                 count=svc.sites.count,
                 popular=svc.sites.popular(include_nsfw) or "—",
             ),
-            reply_markup=kb.main_menu(lang, admin),
+            reply_markup=kb.main_menu(lang, admin, preview=preview),
         )
         return
 
     if action == "settings":
-        rows = [[kb.Btn(text.LANGS[code], callback_data=f"l|{code}")] for code in text.LANGS]
-        rows.append([kb.Btn(text.t(lang, "btn_back"), callback_data=kb.M_HOME)])
         await edit(
             query.message,
-            f"<b>{text.t(lang, 'btn_settings')}</b>",
-            reply_markup=kb.Kb(rows),
+            text.t(lang, "settings_panel", lang=text.LANGS[lang], version=__version__),
+            reply_markup=kb.user_settings_menu(lang),
         )
+        return
+
+    if action == "lang":
+        await edit(
+            query.message,
+            text.t(lang, "lang_title", current=text.LANGS[lang]),
+            reply_markup=kb.language_menu(lang),
+        )
+        return
+
+    if action == "kbclose":
+        # مثل تلگرام بومی: ReplyKeyboardRemove روی همان پیام اعمال می‌شود.
+        await edit(query.message, text.t(lang, "kb_closed"), reply_markup=ReplyKeyboardRemove())
         return
 
     if action == "contact":
@@ -270,21 +287,83 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
         await admin_flow.show_panel(update, context)
         return
 
+    if action == "preview":
+        if not await is_admin(svc.cfg, update.effective_user.id):
+            await safe_answer(query, text.t(lang, "admin_only"), alert=True)
+            return
+        context.user_data["preview"] = True
+        context.user_data["is_admin"] = False
+        await edit(
+            query.message,
+            text.t(lang, "preview_banner"),
+            reply_markup=kb.main_menu(lang, False, preview=True),
+        )
+        return
+
+    if action == "exitpreview":
+        if not await is_admin(svc.cfg, update.effective_user.id):
+            await safe_answer(query, text.t(lang, "admin_only"), alert=True)
+            return
+        context.user_data["preview"] = False
+        context.user_data["is_admin"] = True
+        await edit(
+            query.message,
+            text.t(lang, "preview_exit_done") + "\n\n" + version_badge(),
+            reply_markup=kb.main_menu(lang, True),
+        )
+        return
+
+    if action == "joincheck":
+        await _verify_join(update, context, edit_message=True)
+        return
+
+
+async def _verify_join(update: Update, context: ContextTypes.DEFAULT_TYPE, *, edit_message: bool) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    user = update.effective_user
+    svc.force_join.clear_cache(user.id)
+    missing, complete = await svc.force_join.missing(context.bot, user.id, use_cache=False)
+    query = update.callback_query
+    if not missing:
+        await safe_answer(query, text.t(lang, "join_gate_ok"))
+        body = text.t(lang, "start", ttl=_fmt_hours(svc.settings.ttl_hours)) + "\n\n" + version_badge()
+        if edit_message and query is not None:
+            await edit(query.message, body, reply_markup=kb.main_menu(lang, False))
+        else:
+            await reply(update, body, reply_markup=kb.main_menu(lang, False))
+        return
+    if not complete:
+        await safe_answer(query, text.t(lang, "join_gate_error"), alert=True)
+    else:
+        await safe_answer(query, text.t(lang, "join_gate_still"), alert=True)
+    body = text.t(lang, "join_gate_title", list=_join_list(missing))
+    markup = kb.join_gate(lang, missing)
+    if edit_message and query is not None:
+        await edit(query.message, body, reply_markup=markup)
+    else:
+        await reply(update, body, reply_markup=markup)
+
+
+def _join_list(targets) -> str:
+    return "\n".join(
+        f"• <b>{human.esc(t.title)}</b> — <a href=\"{human.esc(t.url())}\">link</a>"
+        for t in targets
+    )
+
 
 async def on_lang(update: Update, context: ContextTypes.DEFAULT_TYPE, code: str) -> None:
     if code not in text.LANGS:
         return
     query = update.callback_query
-    svc = services(context)
     clear_state(context)
     await repo.set_lang(update.effective_user.id, code)
     context.user_data["lang"] = code
-    admin = await is_admin(svc.cfg, update.effective_user.id)
-    await safe_answer(query, text.LANGS[code])
+    await safe_answer(query, text.t(code, "lang_saved", lang=text.LANGS[code]))
     await edit(
         query.message,
-        text.t(code, "start", ttl=_fmt_hours(svc.settings.ttl_hours)),
-        reply_markup=kb.main_menu(code, admin),
+        text.t(code, "settings_panel", lang=text.LANGS[code], version=__version__),
+        reply_markup=kb.user_settings_menu(code),
     )
 
 

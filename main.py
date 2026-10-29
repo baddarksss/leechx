@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.config import get_config, load_config  # noqa: E402
 from app.logging_conf import setup_logging  # noqa: E402
+from app.version import __version__, version_line  # noqa: E402
 
 
 def _ensure_token() -> bool:
@@ -80,6 +81,7 @@ def main() -> int:
     if not cfg.bot_token.strip() and _ensure_token():
         cfg = load_config()
     setup_logging(cfg.log_level)
+    print(f"🤖 LeechX {version_line()}")
 
     problems = cfg.validate_runtime()
     if problems:
@@ -100,6 +102,7 @@ def main() -> int:
 
 
 async def _check(cfg) -> int:
+    print(f"• نسخه: LeechX v{__version__}")
     print(f"• دیتابیس: {cfg.sqlalchemy_url}")
     print(f"• پوشهٔ داده: {cfg.data_dir}")
     print(f"• سرور لینک: {cfg.public_base_url}")

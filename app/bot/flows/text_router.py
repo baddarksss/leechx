@@ -6,13 +6,20 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from app.bot.common import lang_of, reply, services
 from app.bot import keyboards as kb
-from app.bot.flows import user_links as links_flow
+from app.bot.common import lang_of, reply, services
 from app.bot.flows import admin as admin_flow
 from app.bot.flows import link as link_flow
 from app.bot.flows import start as start_flow
-from app.bot.states import ADMIN_STATES, ST_CONTACT, ST_RENAME, clear_state, get_state
+from app.bot.flows import user_links as links_flow
+from app.bot.states import (
+    ADMIN_STATES,
+    ST_CONTACT,
+    ST_DEPLOY_ZIP,
+    ST_RENAME,
+    clear_state,
+    get_state,
+)
 from app.core import text, urlcheck
 
 log = logging.getLogger("leechx.text")
@@ -31,10 +38,12 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await admin_flow.show_panel(update, context)
         elif key == "stats":
             await reply(update, await admin_flow._render_stats(context),
-                        reply_markup=kb.admin_menu(lang_of(context)))
+                        reply_markup=kb.admin_cat_menu(lang_of(context), kb.CAT_STATS))
         elif key == "jobs":
-            await reply(update, await admin_flow._render_jobs(),
-                        reply_markup=kb.admin_menu(lang_of(context)))
+            await reply(update, await admin_flow._render_jobs(lang_of(context)),
+                        reply_markup=kb.admin_cat_menu(lang_of(context), kb.CAT_STATS))
+        elif key == "deploy":
+            await admin_flow.show_deploy(update, context)
         elif key == "settings":
             svc = services(context)
             await reply(update, admin_flow._render_settings(context),
@@ -55,6 +64,9 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if state == ST_CONTACT:
         await start_flow.handle_contact(update, context)
+        return
+    if state == ST_DEPLOY_ZIP:
+        await reply(update, text.t(lang_of(context), "deploy_upload_prompt"))
         return
     if state in ADMIN_STATES:
         await admin_flow.handle_state(update, context, state)

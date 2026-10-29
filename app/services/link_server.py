@@ -58,20 +58,37 @@ def _parse_range(header: str | None, size: int) -> tuple[int, int] | None:
 
 
 class LinkServer:
-    def __init__(self, cfg: Config, settings: RuntimeSettings, store: FileStore, hub=None) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        settings: RuntimeSettings,
+        store: FileStore,
+        hub=None,
+        debug=None,
+    ) -> None:
         self.cfg = cfg
         self.settings = settings
         self.store = store
         self.hub = hub
+        self.debug = debug
         self._access_logged: dict[str, float] = {}
         self._runner: web.AppRunner | None = None
 
     # ── ساخت اپلیکیشن ──────────────────────────────────────
     def build_app(self) -> web.Application:
-        app = web.Application(client_max_size=1024 * 1024)  # این سرور آپلود نمی‌گیرد
+        debug_on = bool(self.debug is not None and self.settings.debug_enabled)
+        # سرور لینک آپلود نمی‌گیرد؛ فقط وقتی API عیب‌یابی روشن است سقف
+        # بالاتر می‌رود تا ZIP/سورس بزرگ رد نشود.
+        limit = 1024 * 1024
+        if debug_on:
+            limit = max(limit, int(self.cfg.max_source_zip_mb) * 1024 * 1024)
+        app = web.Application(client_max_size=limit)
         app.router.add_get("/", self._index)
         app.router.add_get("/health", self._health)
         app.router.add_get("/f/{token}", self._serve)
+        if debug_on:
+            self.debug.register(app)
+            log.info("debug API enabled at /debug/*")
         return app
 
     async def start(self) -> None:

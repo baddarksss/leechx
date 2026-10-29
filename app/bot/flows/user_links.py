@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from telegram import Update, CopyTextButton
+from telegram import CopyTextButton, Update
 from telegram.ext import ContextTypes
 
 from app.bot import keyboards as kb

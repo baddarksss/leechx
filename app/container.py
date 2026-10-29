@@ -16,16 +16,20 @@ from app.db import repo
 from app.services.admin_group import AdminGroup
 from app.services.cache import CacheHub
 from app.services.cookies import CookieStore
+from app.services.debug_access import DebugAccess
 from app.services.downloader import Downloader
 from app.services.drafts import DraftStore
 from app.services.filestore import FileStore
+from app.services.force_join import ForceJoin
 from app.services.jobs import JobManager
 from app.services.link_server import LinkServer
 from app.services.ratelimit import RateLimiter
 from app.services.runtime_settings import RuntimeSettings
 from app.services.sites import sites
-from app.services.uploader import Uploader
 from app.services.telegram_transfers import FileLinkTransfers
+from app.services.updater import SourceUpdater
+from app.services.uploader import Uploader
+from app.version import __version__
 
 log = logging.getLogger("leechx.container")
 
@@ -42,10 +46,14 @@ class Services:
     server: LinkServer
     cookies: CookieStore
     admin_group: AdminGroup
+    force_join: ForceJoin
+    updater: SourceUpdater
+    debug: DebugAccess
     drafts: DraftStore = field(default_factory=DraftStore)
     file_transfers: FileLinkTransfers | None = None
     cache: CacheHub | None = None
     sites: object = sites
+    application: object | None = None
     started_at: float = field(default_factory=time.time)
     _cleanup: asyncio.Task | None = None
 
@@ -58,10 +66,13 @@ class Services:
         uploader = Uploader(cfg, settings)
         limiter = RateLimiter(cfg.rate_limit_seconds)
         admin_group = AdminGroup(cfg, settings)
+        force_join = ForceJoin(settings)
+        updater = SourceUpdater(cfg)
+        debug = DebugAccess(cfg, settings, updater)
         jobs = JobManager(
             cfg, settings, store, downloader, uploader, limiter, hub=admin_group
         )
-        server = LinkServer(cfg, settings, store, hub=admin_group)
+        server = LinkServer(cfg, settings, store, hub=admin_group, debug=debug)
         instance = cls(
             cfg=cfg,
             settings=settings,
@@ -73,10 +84,14 @@ class Services:
             server=server,
             cookies=cookies,
             admin_group=admin_group,
+            force_join=force_join,
+            updater=updater,
+            debug=debug,
         )
         instance.file_transfers = FileLinkTransfers(instance)
         instance.cache = CacheHub(admin_group)
         instance.jobs.cache = instance.cache
+        debug.attach(instance)
         return instance
 
     @property
@@ -92,7 +107,18 @@ class Services:
         await self.server.start()
         await self.jobs.start(bot)
         self._cleanup = asyncio.create_task(self._cleanup_loop(), name="cleanup")
-        log.info("services ready")
+        log.info("services ready (LeechX v%s)", __version__)
+
+    def attach_application(self, application) -> None:
+        """اپلیکیشن تلگرام را نگه می‌دارد تا API عیب‌یابی بتواند نرم متوقفش کند."""
+        self.application = application
+        self.debug.set_application(application)
+
+    def request_restart(self) -> None:
+        """ری‌استارت نرم: بعد از خاموش‌شدن سرویس‌ها اجرا می‌شود."""
+        self.updater.request_restart()
+        if self.application is not None:
+            asyncio.get_running_loop().call_later(1.0, self.application.stop_running)
 
     async def teardown(self) -> None:
         if self._cleanup is not None:
@@ -105,6 +131,9 @@ class Services:
         await self.jobs.stop()
         await self.server.stop()
         log.info("services stopped")
+        if self.updater.restart_requested:
+            log.info("restart was requested; handing over to the new process")
+            self.updater.perform_restart()
 
     # ── پاک‌سازی دوره‌ای ────────────────────────────────────
     async def _cleanup_loop(self) -> None:
@@ -139,6 +168,10 @@ class Services:
         freed += extra_bytes
 
         self.drafts.prune()
+        try:
+            await repo.purge_debug_tokens()
+        except Exception:  # noqa: BLE001
+            log.debug("debug token purge failed", exc_info=True)
         if removed and self.admin_group is not None:
             await self.admin_group.audit("system", "cleanup", details=f"removed={removed}, bytes={freed}")
         if self.cache is not None:

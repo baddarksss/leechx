@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.config import Config
+from app.core import text
 from app.core.human import parse_bool, parse_float, parse_int
 from app.db import repo
 
@@ -38,6 +39,11 @@ SCHEMA: dict[str, tuple[str, str]] = {
     "topic_cache": ("text", "تاپیک کش رسانه‌ها"),
     "topic_audit": ("text", "تاپیک ممیزی عملیات"),
     "topic_security": ("text", "تاپیک امنیت"),
+    # ── قابلیت‌های جدید ──
+    "force_join_enabled": ("bool", "عضویت اجباری"),
+    "force_join_chats": ("text", "کانال/گروه‌های عضویت اجباری"),
+    "debug_enabled": ("bool", "دسترسی عیب‌یابی (توکن)"),
+    "debug_ip_allow": ("text", "IPهای مجاز توکن عیب‌یابی"),
 }
 
 # کلیدهایی که در پنل «متغیرهای اجرا» نمایش داده می‌شوند.
@@ -48,6 +54,8 @@ RUNTIME_KEYS: tuple[str, ...] = (
     "telegram_api_file_url",
     "telegram_api_id",
     "telegram_api_hash",
+    "debug_enabled",
+    "debug_ip_allow",
 )
 
 # کلیدهایی که مقدارشان نباید در پیام‌ها کامل نمایش داده شود.
@@ -88,9 +96,13 @@ class RuntimeSettings:
             "topic_uploads": "",
             "topic_reports": "",
             "topic_logs": "",
-    "topic_cache": "",
-    "topic_audit": "",
-    "topic_security": "",
+            "topic_cache": "",
+            "topic_audit": "",
+            "topic_security": "",
+            "force_join_enabled": False,
+            "force_join_chats": "",
+            "debug_enabled": False,
+            "debug_ip_allow": "",
         }.get(key)
 
     def get_float(self, key: str) -> float:
@@ -173,6 +185,24 @@ class RuntimeSettings:
     def nsfw_enabled(self) -> bool:
         return self.get_bool("nsfw_enabled")
 
+    @property
+    def force_join_enabled(self) -> bool:
+        return self.get_bool("force_join_enabled")
+
+    @property
+    def debug_enabled(self) -> bool:
+        return self.get_bool("debug_enabled")
+
+    @property
+    def debug_ip_allow(self) -> list[str]:
+        raw = self.get_str("debug_ip_allow")
+        return [part.strip() for part in raw.replace(";", ",").split(",") if part.strip()]
+
+    @property
+    def debug_max_hours(self) -> int:
+        # سقف سخت ۲۴ ساعت — حتی اگر env عدد بزرگ‌تری بدهد.
+        return max(1, min(int(self.cfg.debug_token_max_hours or 24), 24))
+
     # ── نوشتن ──────────────────────────────────────────────
     async def set(self, key: str, value: Any) -> None:
         if key not in SCHEMA:
@@ -189,7 +219,12 @@ class RuntimeSettings:
         await self.set(key, new_value)
         return new_value
 
-    def label(self, key: str) -> str:
+    def label(self, key: str, lang: str | None = None) -> str:
+        """برچسب محلی‌شدهٔ یک کلید؛ اگر ترجمه نبود از برچسب فارسی استفاده می‌کند."""
+        code = lang or text.DEFAULT_LANG
+        translated = text.t(code, f"run_{key}")
+        if translated != f"run_{key}":
+            return translated
         return SCHEMA.get(key, (None, key))[1]
 
     def snapshot(self) -> dict[str, Any]:

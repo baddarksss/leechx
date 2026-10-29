@@ -13,10 +13,10 @@ from app.bot.flows import user_links
 from app.db import repo
 from app.services.downloader import DownloadResult, MediaInfo
 from app.services.filestore import FileStore
+from app.services.formats import FormatOption
 from app.services.jobs import JobManager, JobTask
 from app.services.link_server import LinkServer
 from app.services.linktoken import make_token
-from app.services.formats import FormatOption
 from app.services.ratelimit import RateLimiter
 from app.services.runtime_settings import RuntimeSettings
 from app.services.telegram_transfers import FileLinkTransfers
@@ -203,7 +203,8 @@ async def test_upload_cancel_aborts_task_and_keeps_cancel_button(db):
 
 @pytest.mark.asyncio
 async def test_admin_shortcut_works_from_persistent_keyboard(monkeypatch):
-    from app.bot.flows import admin as admin_flow, text_router
+    from app.bot.flows import admin as admin_flow
+    from app.bot.flows import text_router
     from app.bot.states import ST_BAN, set_state
     up = update()
     up.effective_message.text = "👑 پنل ادمین"
@@ -280,7 +281,7 @@ async def test_cancel_remote_transfer_during_stream(db):
             await asyncio.wait_for(resume.wait(), 2)
             await response.write(b"y" * 10000)
             await response.write_eof()
-        except (ConnectionResetError, asyncio.TimeoutError):
+        except (TimeoutError, ConnectionResetError):
             pass
         return response
     app = web.Application()

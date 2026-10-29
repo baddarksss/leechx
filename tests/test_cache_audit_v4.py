@@ -12,8 +12,8 @@ from sqlalchemy import update
 from app.db import repo
 from app.db.base import session
 from app.db.models import MediaCacheEntry
-from app.services.admin_group import AdminGroup, TOPICS
-from app.services.cache import CacheHub, MEDIA_TTL, fingerprint, safe_source
+from app.services.admin_group import TOPICS, AdminGroup
+from app.services.cache import MEDIA_TTL, CacheHub, fingerprint, safe_source
 from app.services.downloader import DownloadResult
 from app.services.formats import FormatOption
 from app.services.jobs import JobTask
@@ -288,9 +288,10 @@ async def test_topic_missing_never_leaks_log_to_general_chat(db):
 @pytest.mark.asyncio
 async def test_direct_link_access_log_is_rate_limited_and_keeps_token_private(db):
     from aiohttp.test_utils import TestClient, TestServer
+
+    from app.services.filestore import FileStore
     from app.services.link_server import LinkServer
     from app.services.linktoken import make_token
-    from app.services.filestore import FileStore
     class Audit:
         def __init__(self): self.entries = []
         async def audit(self, category, action, user_id, details):

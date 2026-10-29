@@ -21,7 +21,10 @@ def test_wrong_secret_rejected():
 def test_tampered_rejected():
     token = make_token("abc", SECRET, 60)
     head, sig = token.split(".")
-    assert read_token(f"{head}.{sig[:-1]}X", SECRET) is None
+    # آخرین کاراکتر امضا را با کاراکتری *متفاوت* عوض می‌کنیم؛ اگر همان «X»
+    # باشد تست به‌طور تصادفی شکست می‌خورد.
+    replacement = "A" if sig[-1] != "A" else "B"
+    assert read_token(f"{head}.{sig[:-1]}{replacement}", SECRET) is None
     assert read_token("garbage", SECRET) is None
     assert read_token("", SECRET) is None
 

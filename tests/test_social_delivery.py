@@ -3,14 +3,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.bot.flows import link as link_flow, callbacks as callbacks_flow
+from app.bot.flows import callbacks as callbacks_flow
+from app.bot.flows import link as link_flow
 from app.bot.keyboards import delivery_menu
 from app.services.downloader import MediaInfo
 from app.services.drafts import Draft
 from app.services.formats import FormatOption
-from tests.test_flows import (
-    VIDEO_FORMATS, FakeQuery, make_context, make_update
-)
+from tests.test_flows import VIDEO_FORMATS, FakeQuery, make_context, make_update
 
 
 @pytest.mark.parametrize("url,extractor", [

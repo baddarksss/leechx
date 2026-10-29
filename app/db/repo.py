@@ -8,7 +8,18 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db.base import session
-from app.db.models import Admin, Job, LogEntry, MediaCacheEntry, Report, Setting, SharedFile, StatEvent, User
+from app.db.models import (
+    Admin,
+    DebugToken,
+    Job,
+    LogEntry,
+    MediaCacheEntry,
+    Report,
+    Setting,
+    SharedFile,
+    StatEvent,
+    User,
+)
 
 
 # ── آرشیو کش رسانه در سوپرگروه ─────────────────────────────
@@ -579,6 +590,102 @@ async def set_report_status(report_id: int, status: str = "closed") -> bool:
         row.status = status
         await s.commit()
         return True
+
+
+# ── توکن‌های عیب‌یابی ──────────────────────────────────────
+async def create_debug_token(
+    token_hash: str,
+    label: str,
+    scopes: str,
+    created_by: int,
+    expires_at: int,
+) -> DebugToken:
+    async with session() as s:
+        row = DebugToken(
+            token_hash=token_hash,
+            label=(label or "")[:64],
+            scopes=(scopes or "read")[:64],
+            created_by=created_by,
+            created_at=int(time.time()),
+            expires_at=int(expires_at),
+            uses=0,
+            revoked=False,
+        )
+        s.add(row)
+        await s.commit()
+        await s.refresh(row)
+        return row
+
+
+async def get_debug_token_by_hash(token_hash: str) -> DebugToken | None:
+    async with session() as s:
+        return (
+            await s.execute(
+                select(DebugToken).where(DebugToken.token_hash == token_hash).limit(1)
+            )
+        ).scalars().first()
+
+
+async def get_debug_token(token_id: int) -> DebugToken | None:
+    async with session() as s:
+        return await s.get(DebugToken, token_id)
+
+
+async def active_debug_tokens() -> Sequence[DebugToken]:
+    now = int(time.time())
+    async with session() as s:
+        return (
+            await s.execute(
+                select(DebugToken)
+                .where(
+                    DebugToken.revoked.is_(False),
+                    DebugToken.expires_at > now,
+                )
+                .order_by(DebugToken.created_at.desc())
+            )
+        ).scalars().all()
+
+
+async def touch_debug_token(token_id: int) -> None:
+    async with session() as s:
+        await s.execute(
+            update(DebugToken)
+            .where(DebugToken.id == token_id)
+            .values(uses=DebugToken.uses + 1, last_used=int(time.time()))
+        )
+        await s.commit()
+
+
+async def revoke_debug_token(token_id: int) -> bool:
+    async with session() as s:
+        row = await s.get(DebugToken, token_id)
+        if row is None:
+            return False
+        row.revoked = True
+        await s.commit()
+        return True
+
+
+async def revoke_all_debug_tokens() -> int:
+    async with session() as s:
+        res = await s.execute(
+            update(DebugToken).where(DebugToken.revoked.is_(False)).values(revoked=True)
+        )
+        await s.commit()
+        return int(res.rowcount or 0)
+
+
+async def purge_debug_tokens(now_ts: int | None = None) -> int:
+    """توکن‌های منقضی/باطل‌شده را برای تمیز ماندن جدول حذف می‌کند."""
+    ts = int(time.time()) if now_ts is None else now_ts
+    async with session() as s:
+        res = await s.execute(
+            delete(DebugToken).where(
+                (DebugToken.expires_at <= ts) | (DebugToken.revoked.is_(True))
+            )
+        )
+        await s.commit()
+        return int(res.rowcount or 0)
 
 
 # ── مالک اول ───────────────────────────────────────────────

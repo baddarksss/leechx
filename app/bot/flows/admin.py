@@ -1,24 +1,28 @@
-"""پنل ادمین: آمار، ادمین‌ها، تنظیمات، پیام همگانی، مدیریت کاربر."""
+"""پنل ادمین — شش دستهٔ روشن: آمار، کاربران، تنظیمات، گروه‌ها، دیپلوی، عیب‌یابی."""
 from __future__ import annotations
 
 import asyncio
 import logging
+import platform
+import shutil
 import time
 
-from telegram import MessageOriginUser, Update
+from telegram import MessageOriginChannel, MessageOriginChat, MessageOriginUser, Update
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from app.bot import keyboards as kb
 from app.bot.common import edit, fmt_ts, lang_of, reply, safe_answer, services
-from app.bot.guards import is_admin, require_admin
+from app.bot.guards import in_preview, is_admin, is_staff, require_admin
 from app.bot.states import (
     ST_ADD_ADMIN,
     ST_BAN,
     ST_BROADCAST,
     ST_COOKIE_ADD,
+    ST_DEPLOY_ZIP,
     ST_GROUP_ID,
+    ST_JOIN_CHAT,
     ST_LOOKUP_USER,
     ST_RUNTIME_VALUE,
     ST_SET_VALUE,
@@ -30,7 +34,9 @@ from app.bot.states import (
 from app.core import human, text
 from app.db import repo
 from app.services.cookies import CookieError
+from app.services.debug_access import SCOPES
 from app.services.runtime_settings import RUNTIME_KEYS, SCHEMA
+from app.version import CODENAME, RELEASE_DATE, __version__
 
 log = logging.getLogger("leechx.admin")
 
@@ -48,7 +54,20 @@ RESTART_KEYS = {
     "telegram_api_file_url",
     "telegram_api_id",
     "telegram_api_hash",
+    "debug_enabled",
+    "debug_ip_allow",
 }
+
+
+def _ffmpeg() -> str:
+    return shutil.which("ffmpeg") or "—"
+
+
+def _ytdlp(svc) -> str:
+    try:
+        return svc.updater.ytdlp_version()
+    except Exception:  # noqa: BLE001
+        return "—"
 
 
 # ── ورود به پنل ────────────────────────────────────────────
@@ -56,18 +75,25 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await require_admin(update, context):
         return
     lang = lang_of(context)
-    await reply(update, text.t(lang, "admin_panel"), reply_markup=kb.admin_menu(lang))
-    if update.effective_chat.type == "private":
-        await reply(update, "📌 منوی ثابت مدیریت", reply_markup=kb.admin_persistent_menu(lang))
+    svc = services(context)
+    await reply(
+        update,
+        text.t(lang, "admin_panel") + f"\n\n🤖 <b>LeechX v{__version__}</b> · {CODENAME}",
+        reply_markup=kb.admin_menu(lang),
+    )
+    if update.effective_chat.type == "private" and not in_preview(context):
+        await reply(update, text.t(lang, "btn_admin"), reply_markup=kb.admin_persistent_menu(lang))
+    _ = svc
 
 
 async def show_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang = lang_of(context)
     query = update.callback_query
+    body = text.t(lang, "admin_panel") + f"\n\n🤖 <b>LeechX v{__version__}</b> · {CODENAME}"
     if query is not None:
-        await edit(query.message, text.t(lang, "admin_panel"), reply_markup=kb.admin_menu(lang))
+        await edit(query.message, body, reply_markup=kb.admin_menu(lang))
     else:
-        await reply(update, text.t(lang, "admin_panel"), reply_markup=kb.admin_menu(lang))
+        await reply(update, body, reply_markup=kb.admin_menu(lang))
 
 
 # ── هندلر callbackها ───────────────────────────────────────
@@ -85,16 +111,38 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await show_panel(update, context)
         return
 
+    if action == "cat":
+        category = args[0] if args else ""
+        await safe_answer(query)
+        await edit(
+            msg,
+            text.t(lang, f"admin_cat_{category}") if category in kb.CATEGORIES else text.t(lang, "admin_panel"),
+            reply_markup=kb.admin_cat_menu(lang, category),
+        )
+        return
+
+    # ── آمار ──
     if action == "stats":
         await safe_answer(query)
-        await edit(msg, await _render_stats(context), reply_markup=kb.admin_menu(lang))
+        await edit(msg, await _render_stats(context), reply_markup=kb.admin_cat_menu(lang, kb.CAT_STATS))
         return
 
     if action == "jobs":
         await safe_answer(query)
-        await edit(msg, await _render_jobs(), reply_markup=kb.admin_menu(lang))
+        await edit(msg, await _render_jobs(lang), reply_markup=kb.admin_cat_menu(lang, kb.CAT_STATS))
         return
 
+    if action == "clean":
+        await safe_answer(query)
+        removed, freed = await svc.cleanup_once()
+        await edit(
+            msg,
+            text.t(lang, "admin_cleanup_done", files=removed, size=human.human_bytes(freed)),
+            reply_markup=kb.admin_cat_menu(lang, kb.CAT_STATS),
+        )
+        return
+
+    # ── کاربران ──
     if action == "admins":
         await safe_answer(query)
         await _render_admins(update, context)
@@ -118,48 +166,8 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
                                         update.effective_user.id, f"target={uid}, changed={ok}")
             await safe_answer(query, text.t(lang, "admin_remove_ok" if ok else "admin_remove_fail", uid=uid))
             if uid in svc.cfg.extra_admins:
-                await safe_answer(
-                    query,
-                    text.t(lang, "admin_env_admin"),
-                    alert=True,
-                )
+                await safe_answer(query, text.t(lang, "admin_env_admin"), alert=True)
             await _render_admins(update, context)
-        return
-
-    if action == "set":
-        await safe_answer(query)
-        await edit(
-            msg,
-            _render_settings(context),
-            reply_markup=kb.settings_menu(lang, svc.settings.snapshot()),
-        )
-        return
-
-    if action == "toggle":
-        if not args:
-            return
-        key = args[0]
-        if key in SCHEMA and SCHEMA[key][0] == "bool":
-            value = await svc.settings.toggle(key)
-            await svc.admin_group.audit("security", "setting_toggled",
-                                        update.effective_user.id, f"{key}={value}")
-            await safe_answer(query, f"{svc.settings.label(key)}: {'ON' if value else 'OFF'}")
-            await edit(
-                msg,
-                _render_settings(context),
-                reply_markup=kb.settings_menu(lang, svc.settings.snapshot()),
-            )
-        return
-
-    if action == "edit":
-        if not args:
-            return
-        key = args[0]
-        if key not in SCHEMA:
-            return
-        await safe_answer(query)
-        set_state(context, ST_SET_VALUE, key=key)
-        await edit(msg, text.t(lang, "admin_set_value", label=svc.settings.label(key)))
         return
 
     if action == "bc":
@@ -174,19 +182,64 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await edit(msg, text.t(lang, "admin_user_prompt"))
         return
 
-    if action == "clean":
+    if action == "banmenu":
         await safe_answer(query)
-        removed, freed = await svc.cleanup_once()
+        set_state(context, ST_BAN)
         await edit(
             msg,
-            text.t(
-                lang,
-                "admin_cleanup_done",
-                files=removed,
-                size=human.human_bytes(freed),
-            ),
-            reply_markup=kb.admin_menu(lang),
+            text.t(lang, "admin_ban_prompt") + "\n\n" + text.t(lang, "admin_forward_hint"),
+            reply_markup=kb.back_home(lang),
         )
+        return
+
+    if action in ("ban", "unban") and args:
+        uid = int(args[0])
+        await repo.set_banned(uid, action == "ban")
+        await svc.admin_group.audit("security", f"user_{action}", update.effective_user.id, f"target={uid}")
+        await safe_answer(query, "✅")
+        await _show_user(update, context, uid)
+        return
+
+    # ── تنظیمات ──
+    if action == "set":
+        await safe_answer(query)
+        await edit(
+            msg,
+            _render_settings(context),
+            reply_markup=kb.settings_menu(lang, svc.settings.snapshot()),
+        )
+        return
+
+    if action == "toggle":
+        if not args:
+            await safe_answer(query)
+            return
+        key = args[0]
+        if key in SCHEMA and SCHEMA[key][0] == "bool":
+            value = await svc.settings.toggle(key)
+            await svc.admin_group.audit("security", "setting_toggled",
+                                        update.effective_user.id, f"{key}={value}")
+            await safe_answer(query, f"{svc.settings.label(key, lang)}: {'ON' if value else 'OFF'}")
+            await edit(
+                msg,
+                _render_settings(context),
+                reply_markup=kb.settings_menu(lang, svc.settings.snapshot()),
+            )
+        else:
+            await safe_answer(query)
+        return
+
+    if action == "edit":
+        if not args:
+            await safe_answer(query)
+            return
+        key = args[0]
+        if key not in SCHEMA:
+            await safe_answer(query)
+            return
+        await safe_answer(query)
+        set_state(context, ST_SET_VALUE, key=key)
+        await edit(msg, text.t(lang, "admin_set_value", label=svc.settings.label(key, lang)))
         return
 
     if action == "cookies":
@@ -217,16 +270,29 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
             await _render_cookies(update, context)
         return
 
-    if action == "banmenu":
+    if action == "runtime":
         await safe_answer(query)
-        set_state(context, ST_BAN)
+        await _render_runtime(update, context)
+        return
+
+    if action == "redit":
+        if not args:
+            await safe_answer(query)
+            return
+        key = args[0]
+        if key not in RUNTIME_KEYS or key not in SCHEMA:
+            await safe_answer(query)
+            return
+        await safe_answer(query)
+        set_state(context, ST_RUNTIME_VALUE, key=key)
         await edit(
             msg,
-            text.t(lang, "admin_ban_prompt") + "\n\n" + text.t(lang, "admin_forward_hint"),
+            text.t(lang, "admin_runtime_prompt", label=svc.settings.label(key, lang)),
             reply_markup=kb.back_home(lang),
         )
         return
 
+    # ── گروه‌ها و عضویت ──
     if action == "group":
         await safe_answer(query)
         await _render_group(update, context)
@@ -237,9 +303,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         set_state(context, ST_GROUP_ID)
         await edit(
             msg,
-            text.t(lang, "admin_group_prompt")
-            + "\n\n"
-            + text.t(lang, "admin_group_hint_setup"),
+            text.t(lang, "admin_group_prompt") + "\n\n" + text.t(lang, "admin_group_hint_setup"),
             reply_markup=kb.back_home(lang),
         )
         return
@@ -248,10 +312,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await safe_answer(query)
         ok = False
         if svc.admin_group.configured:
-            ok = await svc.admin_group.send(
-                "logs",
-                "🧪 <b>LeechX</b> — admin group test message.",
-            )
+            ok = await svc.admin_group.send("logs", "🧪 <b>LeechX</b> — admin group test message.")
         await safe_answer(
             query,
             text.t(lang, "admin_group_test_ok" if ok else "admin_group_test_fail"),
@@ -267,6 +328,62 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await _render_group(update, context)
         return
 
+    if action == "join":
+        await safe_answer(query)
+        await _render_join(update, context)
+        return
+
+    if action == "jointoggle":
+        await safe_answer(query)
+        enabled = not svc.force_join.enabled
+        await svc.force_join.set_enabled(enabled)
+        await svc.admin_group.audit("security", "force_join_toggled",
+                                    update.effective_user.id, f"enabled={enabled}")
+        await _render_join(update, context)
+        return
+
+    if action == "joinadd":
+        await safe_answer(query)
+        set_state(context, ST_JOIN_CHAT)
+        await edit(
+            msg,
+            text.t(lang, "admin_join_prompt") + "\n\n" + text.t(lang, "admin_join_hint"),
+            reply_markup=kb.back_home(lang),
+        )
+        return
+
+    if action == "joinrm":
+        await safe_answer(query)
+        if args:
+            try:
+                chat_id = int(args[0])
+            except ValueError:
+                return
+            removed = await svc.force_join.remove(chat_id)
+            if removed is None:
+                await safe_answer(query, text.t(lang, "admin_join_bad"), alert=True)
+            else:
+                await safe_answer(query, text.t(lang, "admin_join_removed", title=human.esc(removed.title)))
+            await _render_join(update, context)
+        return
+
+    if action == "joincheck":
+        await safe_answer(query)
+        results = await svc.force_join.check_access(context.bot)
+        if not results:
+            body = text.t(lang, "admin_join_empty")
+        elif all(ok for _, ok, _ in results):
+            body = text.t(lang, "admin_join_check_ok")
+        else:
+            lines = [
+                f"• {'✅' if ok else '❌'} <b>{human.esc(t.title)}</b> — {human.esc(detail or '—')}"
+                for t, ok, detail in results
+            ]
+            body = text.t(lang, "admin_join_check_mixed", list="\n".join(lines))
+        await edit(msg, body, reply_markup=kb.force_join_menu(lang, svc.force_join.targets, svc.force_join.enabled))
+        return
+
+    # ── گزارش‌ها و لاگ‌ها ──
     if action == "reports":
         await safe_answer(query)
         await _render_reports(update, context)
@@ -297,36 +414,152 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await _render_logs(update, context)
         return
 
-    if action == "runtime":
+    # ── دیپلوی ──
+    if action == "deploy":
         await safe_answer(query)
-        await _render_runtime(update, context)
+        await _render_deploy(update, context)
         return
 
-    if action == "redit":
-        if not args:
-            await safe_answer(query)
-            return
-        key = args[0]
-        if key not in RUNTIME_KEYS or key not in SCHEMA:
-            await safe_answer(query)
-            return
+    if action == "dpsrc":
         await safe_answer(query)
-        set_state(context, ST_RUNTIME_VALUE, key=key)
+        await _send_source_zip(update, context)
+        return
+
+    if action == "dpup":
+        await safe_answer(query)
+        set_state(context, ST_DEPLOY_ZIP)
         await edit(
             msg,
-            text.t(lang, "admin_runtime_prompt", label=svc.settings.label(key)),
+            text.t(lang, "deploy_upload_prompt") + "\n\n" + text.t(lang, "deploy_update_note"),
             reply_markup=kb.back_home(lang),
         )
         return
 
-    if action in ("ban", "unban") and args:
-        uid = int(args[0])
-        await repo.set_banned(uid, action == "ban")
-        await svc.admin_group.audit("security", f"user_{action}", update.effective_user.id,
-                                    f"target={uid}")
-        await safe_answer(query, "✅")
-        await _show_user(update, context, uid)
+    if action == "dpstaged":
+        await safe_answer(query)
+        await _render_staged(update, context)
         return
+
+    if action == "dpapply":
+        await safe_answer(query)
+        await _apply_staged(update, context)
+        return
+
+    if action == "dpcancel":
+        await safe_answer(query)
+        context.user_data.pop("deploy_staged", None)
+        await _render_deploy(update, context)
+        return
+
+    if action == "dpbackup":
+        await safe_answer(query)
+        await _send_backup(update, context)
+        return
+
+    if action == "dprestart":
+        await safe_answer(query)
+        await edit(
+            msg,
+            text.t(lang, "deploy_restart_confirm"),
+            reply_markup=kb.deploy_restart_confirm(lang),
+        )
+        return
+
+    if action == "dprestartyes":
+        await safe_answer(query)
+        await edit(msg, text.t(lang, "deploy_restart_scheduled"))
+        await svc.admin_group.audit("security", "manual_restart", update.effective_user.id)
+        svc.request_restart()
+        return
+
+    if action in ("dpytdlp", "dpytdlpnight"):
+        await safe_answer(query)
+        nightly = action.endswith("night")
+        await edit(msg, text.t(lang, "deploy_ytdlp_working"))
+        try:
+            result = await svc.updater.upgrade_ytdlp(nightly=nightly)
+        except Exception as exc:  # noqa: BLE001
+            result = {"ok": False, "error": str(exc)[:200], "before": "?", "after": "?"}
+        try:
+            await asyncio.to_thread(svc.sites.build)
+        except Exception:  # noqa: BLE001
+            log.warning("site index rebuild failed", exc_info=True)
+        if result.get("ok"):
+            body = text.t(
+                lang,
+                "deploy_ytdlp_done",
+                before=human.esc(str(result.get("before", "?"))),
+                after=human.esc(str(result.get("after", "?"))),
+            )
+        else:
+            body = text.t(lang, "deploy_ytdlp_fail", reason=human.esc(str(result.get("error") or "unknown")))
+        await edit(msg, body, reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEPLOY))
+        await svc.admin_group.audit("system", "ytdlp_update", update.effective_user.id,
+                                    f"ok={result.get('ok')}")
+        return
+
+    if action == "dpver":
+        await safe_answer(query)
+        await edit(msg, _version_text(svc, lang), reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEPLOY))
+        return
+
+    # ── عیب‌یابی ──
+    if action == "debug":
+        await safe_answer(query)
+        await _render_debug(update, context)
+        return
+
+    if action == "dbmake":
+        await safe_answer(query)
+        if len(args) < 2:
+            return
+        scope, hours_raw = args[0], args[1]
+        await _create_debug_token(update, context, scope, hours_raw)
+        return
+
+    if action == "dbrevoke":
+        await safe_answer(query)
+        if args:
+            ok = await svc.debug.revoke(int(args[0]))
+            await safe_answer(query, text.t(lang, "debug_revoke_ok" if ok else "debug_revoke_fail"))
+            await _render_debug(update, context)
+        return
+
+    if action == "dbrevokeall":
+        await safe_answer(query)
+        count = await svc.debug.revoke_all()
+        await safe_answer(query, text.t(lang, "debug_revoke_ok"), alert=False)
+        await svc.admin_group.audit("security", "debug_tokens_revoked", update.effective_user.id,
+                                    f"count={count}")
+        await _render_debug(update, context)
+        return
+
+    if action == "dbhealth":
+        await safe_answer(query)
+        await _render_health(update, context)
+        return
+
+    if action == "preview":
+        await safe_answer(query)
+        await edit(
+            msg,
+            text.t(lang, "admin_preview_panel"),
+            reply_markup=kb.preview_menu(lang, in_preview(context)),
+        )
+        return
+
+    if action == "previewon":
+        await safe_answer(query)
+        context.user_data["preview"] = True
+        context.user_data["is_admin"] = False
+        await edit(
+            msg,
+            text.t(lang, "preview_banner"),
+            reply_markup=kb.main_menu(lang, False, preview=True),
+        )
+        return
+
+    await safe_answer(query)
 
 
 # ── رندرها ─────────────────────────────────────────────────
@@ -358,13 +591,14 @@ async def _render_stats(context: ContextTypes.DEFAULT_TYPE) -> str:
         active=svc.jobs.active_count,
         disk=f"{human.human_bytes(used)} / {human.human_bytes(svc.store.disk_free())} free",
         uptime=human.human_duration(svc.uptime),
+        version=__version__,
     )
 
 
-async def _render_jobs() -> str:
+async def _render_jobs(lang: str = "fa") -> str:
     rows = await repo.recent_jobs(10)
     if not rows:
-        return "—"
+        return text.t(lang, "admin_jobs", list="—")
     lines = []
     for job in rows:
         when = time.strftime("%m-%d %H:%M", time.localtime(job.created_at))
@@ -375,7 +609,7 @@ async def _render_jobs() -> str:
             f"{icon} <code>{job.id}</code> {when} · {job.quality or job.kind}\n"
             f"   {human.esc(title)} · {size} · <code>{job.user_id}</code>"
         )
-    return "<b>🧾 کارهای اخیر</b>\n\n" + "\n".join(lines)
+    return text.t(lang, "admin_jobs", list="\n".join(lines))
 
 
 async def _render_admins(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -384,9 +618,7 @@ async def _render_admins(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     rows = await repo.list_admins()
     owners = "، ".join(f"<code>{uid}</code>" for uid in svc.cfg.owners) or "—"
     if rows:
-        lines = []
-        for row in rows:
-            lines.append(f"• <code>{row.user_id}</code> — {fmt_ts(row.created_at)}")
+        lines = [f"• <code>{row.user_id}</code> — {fmt_ts(row.created_at)}" for row in rows]
         body = text.t(lang, "admin_admins", owners=owners, admins="\n".join(lines))
     else:
         body = text.t(lang, "admin_admins", owners=owners, admins="—")
@@ -438,11 +670,7 @@ async def _render_cookie_test(update: Update, context: ContextTypes.DEFAULT_TYPE
     for cookie in files:
         problems = svc.cookies.problems(cookie)
         if problems:
-            status = text.t(
-                lang,
-                "cookie_problem",
-                reason=human.esc("; ".join(problems)),
-            )
+            status = text.t(lang, "cookie_problem", reason=human.esc("; ".join(problems)))
         else:
             status = text.t(lang, "cookie_ok")
         lines.append(f"• <b>{cookie.name}</b> — {status}")
@@ -461,14 +689,8 @@ async def _render_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     svc = services(context)
     lang = lang_of(context)
     group = svc.admin_group
-    status = text.t(
-        lang,
-        "admin_group_configured" if group.configured else "admin_group_not_configured",
-    )
-    hint = text.t(
-        lang,
-        "admin_group_hint_ok" if group.configured else "admin_group_hint_setup",
-    )
+    status = text.t(lang, "admin_group_configured" if group.configured else "admin_group_not_configured")
+    hint = text.t(lang, "admin_group_hint_ok" if group.configured else "admin_group_hint_setup")
     body = text.t(
         lang,
         "admin_group_panel",
@@ -482,11 +704,39 @@ async def _render_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         hint=hint,
     )
     body += (
-        f"\n\n📦 کش رسانه‌ها: {group.topic_id('cache') or '—'}"
-        f"\n🧾 ممیزی عملیات: {group.topic_id('audit') or '—'}"
-        f"\n🔐 امنیت و تنظیمات: {group.topic_id('security') or '—'}"
+        f"\n\n📦 {group.topic_id('cache') or '—'}"
+        f"\n🧾 {group.topic_id('audit') or '—'}"
+        f"\n🔐 {group.topic_id('security') or '—'}"
     )
     menu = kb.group_menu(lang, group.configured)
+    query = update.callback_query
+    if query is not None:
+        await edit(query.message, body, reply_markup=menu)
+    else:
+        await reply(update, body, reply_markup=menu)
+
+
+async def _render_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    targets = svc.force_join.targets
+    if targets:
+        lines = [
+            f"• {'🟢' if svc.force_join.enabled else '⚪️'} <b>{human.esc(t.title)}</b>"
+            f"\n  <code>{t.chat_id}</code>"
+            for t in targets
+        ]
+        listing = "\n".join(lines)
+    else:
+        listing = text.t(lang, "admin_join_empty")
+    body = text.t(
+        lang,
+        "admin_join_panel",
+        status="🟢 ON" if svc.force_join.enabled else "🔴 OFF",
+        count=len(targets),
+        list=listing,
+    )
+    menu = kb.force_join_menu(lang, targets, svc.force_join.enabled)
     query = update.callback_query
     if query is not None:
         await edit(query.message, body, reply_markup=menu)
@@ -504,9 +754,7 @@ async def _render_reports(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         for row in rows:
             kind = text.t(
                 lang,
-                "admin_report_kind_contact"
-                if row.kind == "contact"
-                else "admin_report_kind_unsupported",
+                "admin_report_kind_contact" if row.kind == "contact" else "admin_report_kind_unsupported",
             )
             icon = "✉️" if row.kind == "contact" else "🌐"
             parts = []
@@ -567,17 +815,283 @@ async def _render_logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def _render_runtime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
     lang = lang_of(context)
-    items = [
-        (key, svc.settings.label(key), svc.settings.masked(key))
-        for key in RUNTIME_KEYS
-    ]
+    items = [(key, svc.settings.label(key, lang), svc.settings.masked(key)) for key in RUNTIME_KEYS]
     body = text.t(lang, "admin_runtime")
+    body += (
+        "\n\n🩺 <b>Local Bot API</b>\n"
+        + text.t(lang, "local_api_help").split("\n\n", 1)[0]
+    )
     menu = kb.runtime_menu(lang, items)
     query = update.callback_query
     if query is not None:
         await edit(query.message, body, reply_markup=menu)
     else:
         await reply(update, body, reply_markup=menu)
+
+
+# ── دیپلوی ─────────────────────────────────────────────────
+def _version_text(svc, lang: str = "fa") -> str:
+    return text.t(
+        lang,
+        "version_info",
+        version=__version__,
+        codename=CODENAME,
+        date=RELEASE_DATE,
+        python=platform.python_version(),
+        ytdlp=human.esc(_ytdlp(svc)),
+        ffmpeg=human.esc(_ffmpeg()),
+        uptime=human.human_duration(svc.uptime),
+    )
+
+
+async def show_deploy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """ورود از کیبورد ثابت به بخش دیپلوی (بدون callback)."""
+    if not await require_admin(update, context):
+        return
+    clear_state(context)
+    await _render_deploy(update, context)
+
+
+async def _render_deploy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    stats = svc.updater.stats()
+    staged = context.user_data.get("deploy_staged")
+    if staged:
+        await _render_staged(update, context)
+        return
+    body = text.t(
+        lang,
+        "deploy_panel",
+        version=__version__,
+        codename=CODENAME,
+        ytdlp=human.esc(_ytdlp(svc)),
+        python=platform.python_version(),
+        size=stats["size"],
+        backup=stats["backup"],
+        last_update=stats["last_update"],
+    )
+    menu = kb.deploy_menu(lang, staged=False, has_backup=bool(svc.updater.latest_backup()))
+    query = update.callback_query
+    if query is not None:
+        await edit(query.message, body, reply_markup=menu)
+    else:
+        await reply(update, body, reply_markup=menu)
+
+
+async def _render_staged(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    staged = context.user_data.get("deploy_staged")
+    if not staged:
+        await _render_deploy(update, context)
+        return
+    preview = svc.updater.inspect_zip(staged)
+    if not preview.ok:
+        context.user_data.pop("deploy_staged", None)
+        await edit(
+            update.callback_query.message if update.callback_query else update.effective_message,
+            text.t(lang, "deploy_zip_bad", reason=human.esc(preview.reason)),
+            reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEPLOY),
+        )
+        return
+    notes = "\n".join(f"• {human.esc(note)}" for note in preview.notes)
+    body = text.t(
+        lang,
+        "deploy_staged",
+        current=__version__,
+        new=preview.version,
+        files=preview.files,
+        size=human.human_bytes(preview.size),
+        notes=notes,
+    )
+    body += "\n\n" + text.t(lang, "deploy_update_note")
+    menu = kb.deploy_menu(lang, staged=True)
+    query = update.callback_query
+    if query is not None:
+        await edit(query.message, body, reply_markup=menu)
+    else:
+        await reply(update, body, reply_markup=menu)
+
+
+async def _send_source_zip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    chat_id = update.effective_chat.id
+    path = await asyncio.to_thread(svc.updater.export_zip, "source")
+    caption = text.t(
+        lang,
+        "deploy_source_caption",
+        version=__version__,
+        files=len(svc.updater.source_files()),
+        size=human.human_bytes(path.stat().st_size),
+    )
+    try:
+        with path.open("rb") as handle:
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=handle,
+                filename=path.name,
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+            )
+    except TelegramError:
+        log.exception("could not send source zip")
+        await reply(update, text.t(lang, "deploy_failed", reason="Telegram upload failed"))
+
+
+async def _send_backup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    path = svc.updater.latest_backup()
+    if path is None:
+        await reply(update, text.t(lang, "deploy_no_backup"))
+        return
+    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(path.stat().st_mtime))
+    try:
+        with path.open("rb") as handle:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=handle,
+                filename=path.name,
+                caption=text.t(lang, "deploy_backup_caption", when=when),
+                parse_mode=ParseMode.HTML,
+            )
+    except TelegramError:
+        log.exception("could not send backup zip")
+        await reply(update, text.t(lang, "deploy_no_backup"))
+
+
+async def _apply_staged(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    staged = context.user_data.pop("deploy_staged", None)
+    if not staged:
+        await _render_deploy(update, context)
+        return
+    result = await asyncio.to_thread(svc.updater.apply_zip, staged)
+    try:
+        staged.unlink(missing_ok=True)
+    except OSError:
+        pass
+    if not result.ok:
+        await edit(
+            update.callback_query.message if update.callback_query else update.effective_message,
+            text.t(lang, "deploy_failed", reason=human.esc(result.reason)),
+            reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEPLOY),
+        )
+        return
+    await svc.admin_group.audit("system", "source_deployed", update.effective_user.id,
+                                f"version={result.version}, files={result.files}")
+    await edit(
+        update.callback_query.message if update.callback_query else update.effective_message,
+        text.t(lang, "deploy_applied", version=human.esc(result.version)),
+    )
+    svc.request_restart()
+
+
+# ── عیب‌یابی ───────────────────────────────────────────────
+async def _render_debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    tokens = await svc.debug.active()
+    listing = "\n".join(
+        text.t(
+            lang,
+            "debug_token_item",
+            id=row.id,
+            scopes=row.scopes,
+            expires=time.strftime("%m-%d %H:%M", time.localtime(row.expires_at)),
+            uses=row.uses,
+        )
+        for row in tokens
+    )
+    body = text.t(
+        lang,
+        "debug_panel",
+        state="🟢 ON" if svc.settings.debug_enabled else "🔴 OFF",
+        active=len(tokens),
+    )
+    body += "\n\n" + (listing or text.t(lang, "debug_none"))
+    if not svc.settings.debug_enabled:
+        body += "\n\n" + text.t(lang, "debug_disabled")
+    menu = kb.debug_menu(lang, tokens, svc.settings.debug_enabled, svc.debug.max_hours())
+    query = update.callback_query
+    if query is not None:
+        await edit(query.message, body, reply_markup=menu)
+    else:
+        await reply(update, body, reply_markup=menu)
+
+
+async def _create_debug_token(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    scope: str,
+    hours_raw: str,
+) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    if not svc.settings.debug_enabled:
+        await reply(update, text.t(lang, "debug_disabled"))
+        return
+    if scope not in SCOPES:
+        scope = "read"
+    try:
+        hours = int(hours_raw)
+    except ValueError:
+        hours = 6
+    raw, row = await svc.debug.create(
+        update.effective_user.id,
+        hours=hours,
+        scopes=svc.debug.normalize_scopes(scope),
+        label=f"ui:{scope}",
+    )
+    base = svc.settings.get_str("public_base_url") or svc.cfg.public_base_url
+    body = text.t(
+        lang,
+        "debug_token_created",
+        base=human.esc(base),
+        token=raw,
+        scopes=text.t(lang, f"debug_scope_{svc.debug.scope_label(row.scopes)}"),
+        expires=time.strftime("%Y-%m-%d %H:%M", time.localtime(row.expires_at)),
+        hours=max(1, int((row.expires_at - int(time.time())) / 3600)),
+    )
+    if "127.0.0.1" in base or "localhost" in base:
+        body += "\n\n" + text.t(lang, "debug_no_public_url", base=human.esc(base))
+    body += "\n\n" + text.t(lang, "debug_handoff", base=human.esc(base))
+    await svc.admin_group.audit("security", "debug_token_created", update.effective_user.id,
+                                f"scope={row.scopes}, id={row.id}, hours={hours}")
+    await reply(update, body, reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEBUG))
+
+
+async def _render_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    health = await svc.debug._health_payload()
+    problems = health.get("problems") or []
+    if problems:
+        block = text.t(lang, "debug_health_problem", list="\n".join(f"• {human.esc(p)}" for p in problems))
+    else:
+        block = text.t(lang, "debug_health_ok")
+    body = text.t(
+        lang,
+        "debug_health",
+        version=health["version"],
+        python=health["python"],
+        ytdlp=human.esc(health["ytdlp"]),
+        ffmpeg=human.esc(health["ffmpeg"]),
+        db=health["database"],
+        disk=health["disk_free"],
+        web=health["web"],
+        jobs=health["active_jobs"],
+        users=health["users"],
+        problems=block,
+    )
+    query = update.callback_query
+    if query is not None:
+        await edit(query.message, body, reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEBUG))
+    else:
+        await reply(update, body, reply_markup=kb.admin_cat_menu(lang, kb.CAT_DEBUG))
 
 
 async def _show_user(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
@@ -673,7 +1187,7 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         svc.limiter.set_interval(svc.settings.rate_limit_seconds)
         await reply(
             update,
-            text.t(lang, "admin_set_ok", label=svc.settings.label(key), value=value),
+            text.t(lang, "admin_set_ok", label=svc.settings.label(key, lang), value=value),
             reply_markup=kb.settings_menu(lang, svc.settings.snapshot()),
         )
         return
@@ -724,6 +1238,11 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         )
         return
 
+    if state == ST_JOIN_CHAT:
+        clear_state(context)
+        await _add_join_target(update, context, raw)
+        return
+
     if state == ST_RUNTIME_VALUE:
         key = get_data(context).get("key", "")
         clear_state(context)
@@ -731,9 +1250,7 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
             await reply(update, text.t(lang, "admin_bad_value"))
             return
         value = "" if raw.strip() == "-" else raw.strip()
-        if key == "public_base_url" and value and not value.startswith(
-            ("http://", "https://")
-        ):
+        if key == "public_base_url" and value and not value.startswith(("http://", "https://")):
             await reply(update, text.t(lang, "admin_bad_value"))
             return
         await svc.settings.set(key, value)
@@ -745,15 +1262,12 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         body = text.t(
             lang,
             "admin_runtime_saved",
-            label=svc.settings.label(key),
+            label=svc.settings.label(key, lang),
             value=human.esc(svc.settings.masked(key)),
         )
         if key in RESTART_KEYS:
             body += "\n\n" + text.t(lang, "admin_runtime_restart")
-        items = [
-            (item, svc.settings.label(item), svc.settings.masked(item))
-            for item in RUNTIME_KEYS
-        ]
+        items = [(item, svc.settings.label(item, lang), svc.settings.masked(item)) for item in RUNTIME_KEYS]
         await reply(update, body, reply_markup=kb.runtime_menu(lang, items))
         return
 
@@ -776,6 +1290,29 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         return
 
     clear_state(context)
+
+
+async def _add_join_target(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: str) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    try:
+        target = await svc.force_join.resolve(context.bot, raw)
+    except (ValueError, TelegramError):
+        await reply(update, text.t(lang, "admin_join_bad"))
+        return
+    results = await svc.force_join.check_access(context.bot)
+    for item, ok, _detail in results:
+        if item.chat_id == target.chat_id and not ok:
+            await reply(update, text.t(lang, "admin_join_admin_needed", title=human.esc(target.title)))
+            return
+    await svc.force_join.add(target)
+    await svc.admin_group.audit("security", "force_join_target_added", update.effective_user.id,
+                                f"chat={target.chat_id}")
+    await reply(
+        update,
+        text.t(lang, "admin_join_added", title=human.esc(target.title), chat=target.chat_id),
+        reply_markup=kb.force_join_menu(lang, svc.force_join.targets, svc.force_join.enabled),
+    )
 
 
 async def _resolve_user(raw: str, context: ContextTypes.DEFAULT_TYPE | None = None, create: bool = False):
@@ -821,7 +1358,7 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if user is None:
         return
 
-    allowed = await is_admin(svc.cfg, user.id)
+    allowed = await is_staff(svc.cfg, user.id) and not in_preview(context)
     if not allowed:
         await reply(update, text.t(lang, "setup_need_admin"))
         return
@@ -851,8 +1388,9 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """در حالت «بن کردن»، پیام فورواردشده را به کاربر اصلی تبدیل می‌کند."""
-    if get_state(context) != ST_BAN:
+    """در حالت «بن کردن» یا «عضویت اجباری»، پیام فورواردشده را تبدیل می‌کند."""
+    state = get_state(context)
+    if state not in (ST_BAN, ST_JOIN_CHAT):
         message = update.effective_message
         if message is None:
             return
@@ -870,12 +1408,24 @@ async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     message = update.effective_message
     origin = getattr(message, "forward_origin", None)
+
+    if state == ST_JOIN_CHAT:
+        chat_id = None
+        if isinstance(origin, (MessageOriginChat, MessageOriginChannel)):
+            chat_id = getattr(getattr(origin, "sender_chat", None), "id", None) or getattr(
+                getattr(origin, "chat", None), "id", None
+            )
+        clear_state(context)
+        if chat_id is None:
+            await reply(update, text.t(lang, "admin_join_bad"))
+        else:
+            await _add_join_target(update, context, str(chat_id))
+        raise ApplicationHandlerStop
+
     if not isinstance(origin, MessageOriginUser):
         await reply(
             update,
-            text.t(lang, "admin_forward_hint")
-            + "\n\n"
-            + text.t(lang, "admin_ban_prompt"),
+            text.t(lang, "admin_forward_hint") + "\n\n" + text.t(lang, "admin_ban_prompt"),
         )
         raise ApplicationHandlerStop
 
@@ -907,4 +1457,5 @@ async def broadcast(
 
     await asyncio.gather(*(send(uid) for uid in ids))
     log.info("broadcast finished: ok=%d fail=%d", ok, fail)
+    _ = lang
     return ok, fail

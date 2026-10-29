@@ -1,4 +1,4 @@
-"""کنترل دسترسی."""
+"""کنترل دسترسی — با پشتیبانی از «حالت پیش‌نمایش کاربر»."""
 from __future__ import annotations
 
 import logging
@@ -20,7 +20,8 @@ def is_owner(cfg, user_id: int) -> bool:
     return user_id in cfg.owners
 
 
-async def is_admin(cfg, user_id: int) -> bool:
+async def is_staff(cfg, user_id: int) -> bool:
+    """ادمین واقعی (بدون توجه به حالت پیش‌نمایش)."""
     if user_id in cfg.owners or user_id in cfg.extra_admins:
         return True
     try:
@@ -30,13 +31,34 @@ async def is_admin(cfg, user_id: int) -> bool:
         return False
 
 
+# نام قدیمی برای سازگاری با کد موجود.
+async def is_admin(cfg, user_id: int) -> bool:
+    return await is_staff(cfg, user_id)
+
+
+def in_preview(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    return bool(context.user_data.get("preview"))
+
+
+def current_admin(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """ادمین مؤثر: در حالت پیش‌نمایش، دسترسی مدیریتی خاموش است."""
+    return bool(context.user_data.get("is_admin")) and not in_preview(context)
+
+
 async def require_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """اگر کاربر ادمین نباشد، پیام مناسب می‌فرستد و False برمی‌گرداند."""
     user = update.effective_user
     services: Services = context.bot_data["services"]
-    if user and await is_admin(services.cfg, user.id):
-        return True
     lang = context.user_data.get("lang", text.DEFAULT_LANG)
+    if user and await is_staff(services.cfg, user.id):
+        if not in_preview(context):
+            context.user_data["is_admin"] = True
+            return True
+        message = update.effective_message
+        if message is not None:
+            await message.reply_text(text.t(lang, "preview_blocked"))
+        return False
+
     msg = update.effective_message
     if msg is not None:
         await msg.reply_text(text.t(lang, "admin_only"))

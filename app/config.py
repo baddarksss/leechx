@@ -75,6 +75,15 @@ class Config(BaseSettings):
     log_level: str = "INFO"
     cleanup_interval_seconds: int = 300
 
+    # ── دیپلوی/بروزرسانی ────────────────────────────────────
+    # دستور اختیاری برای ری‌استارت (مثلاً "docker compose restart" یا
+    # "systemctl restart leechx"). خالی = جایگزینی فرآیند با os.execv.
+    update_restart_command: str = ""
+    # حداکثر حجم ZIP سورس برای آپلود از داخل ربات (مگابایت)
+    max_source_zip_mb: int = 80
+    # حداکثر عمر توکن عیب‌یابی (ساعت)
+    debug_token_max_hours: int = 24
+
     # ── تعداد ادمین‌های قابل افزودن (0 = بی‌نهایت) ───────────
     max_admins: int = 20
 

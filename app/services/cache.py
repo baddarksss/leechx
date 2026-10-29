@@ -95,8 +95,8 @@ class CacheHub:
         if task.cancel.is_set():
             return False
         try:
-            from app.core.caption import build_caption
             from app.core import human
+            from app.core.caption import build_caption
             copied = await bot.copy_message(
                 chat_id=task.chat_id,
                 from_chat_id=group_id,

@@ -20,9 +20,13 @@ per-user concurrency limits, automatic disk cleanup and a modular design.
 | 📁 **File → direct link** | signed URL, `Range` support, 6h TTL by default |
 | 🧹 **Zero leftovers** | the working directory is removed right after upload |
 | ⚡️ **Job queue** | `WORKERS` global + `PER_USER_CONCURRENCY` per user |
-| 👑 **Admin panel** | live stats, admin group with topics, ban by forward/username/ID, reports, logs, runtime variables, broadcast, cleanup |
+| 👑 **Admin panel** | categorized screens (stats, users, settings, groups, deploy, diagnostics), admin group with topics, ban by forward/username/ID, reports, logs, broadcast, cleanup |
 | 🌐 **Site database** | `/sites` search over every yt-dlp extractor |
-| 🌍 **i18n** | Persian + English |
+| 🌍 **i18n** | Persian 🇮🇷, English 🇬🇧 and Russian 🇷🇺 with one-tap switching |
+| 🔐 **Forced membership** | require joining one or more channels/groups before the bot works |
+| 📦 **In-bot deploy** | export the live source as ZIP, upload a new ZIP, validate, back up and restart |
+| 🩺 **Diagnostics tokens** | time-limited (max 24h) scoped `lxdbg_` tokens for AI/remote troubleshooting |
+| 👁 **Member preview** | admins can test the bot exactly as a normal user and return with one tap |
 | 🐳 **Docker** | compose file with optional local Bot API server (2 GB) |
 
 ---
@@ -85,6 +89,9 @@ See [`.env.example`](.env.example). Key values:
 | `PROXY` | — | download proxy |
 | `COOKIES_DIR` | `./data/cookies` | cookie files for YouTube/Instagram and other restricted sites |
 | `DATABASE_URL` | SQLite | set a Postgres URL for scale |
+| `UPDATE_RESTART_COMMAND` | empty | optional restart command used after an in-bot source update (empty = `os.execv`) |
+| `MAX_SOURCE_ZIP_MB` | `80` | max size of a source ZIP uploaded from the admin panel |
+| `DEBUG_TOKEN_MAX_HOURS` | `24` | max diagnostics-token lifetime (hard cap 24) |
 
 Cookies for restricted sites: use **Admin panel → 🍪 Cookies** to upload a
 `cookies.txt` file or paste Netscape text. Files are stored in
@@ -93,6 +100,45 @@ are converted to Netscape automatically. Full guide:
 [`docs/COOKIES.md`](docs/COOKIES.md).
 
 ---
+
+## Versioning, in-bot deploy and diagnostics
+
+**Versioning.** `app/version.py` is the only source of truth (`__version__`,
+`CODENAME`). `pyproject.toml` and the newest `CHANGELOG.md` entry must match;
+`tests/test_version.py` fails otherwise. Bump before every release/change:
+
+```bash
+python -m app.version patch   # prints the next version
+```
+
+**Deploy from the bot.** Admin panel → 🚀 **Deploy**:
+
+1. **Download source ZIP** — the running code (never `.env`, `data/` or `.git`).
+2. **Validate ZIP** — checks `main.py`, `app/version.py`, size, file count,
+   symlinks and path traversal; shows the incoming version.
+3. **Apply** — backs up the current source to `data/updates/`, replaces files,
+   then asks to **restart** (uses `UPDATE_RESTART_COMMAND` or `os.execv`).
+
+**Forced membership.** Admin panel → 👥 **Groups** → 🔐 **Forced join**.
+Add `@channel`/numeric IDs, enable the gate, then the bot checks membership
+(cached for 3 minutes, fail-open if Telegram errors). Admins are exempt, but
+**not** while testing 👁 Member preview.
+
+**Diagnostics tokens.** Admin panel → 🩺 **Diagnostics** creates a one-time
+`lxdbg_…` token (read / write / restart, max 24h, hashed in DB, revocable).
+It exposes `/debug/health|state|logs|source|restart|ytdlp-update|pytest` on the
+same web server only while diagnostics are enabled. Full Persian guide with
+`curl` examples: [`docs/DEBUG_API_FA.md`](docs/DEBUG_API_FA.md).
+
+**Local Bot API.** `TELEGRAM_API_URL` / `TELEGRAM_API_FILE_URL` point the bot at
+a self-hosted `telegram-bot-api` server (default `http://telegram-bot-api:8081/bot`
+and `/file/bot`). It lifts the 50 MB Bot API download limit up to 2 GB and is
+optional. Changing these URLs needs a restart because they are read when the
+application is built.
+
+**yt-dlp updates.** Admin panel → 🩺 **Diagnostics** → **Update yt-dlp**
+(stable or nightly) runs `pip install -U yt-dlp`, then rebuilds the site index.
+New sites added by yt-dlp become available immediately after the update.
 
 ## Admin group, reports and logs
 

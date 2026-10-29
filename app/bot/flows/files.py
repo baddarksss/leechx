@@ -1,15 +1,17 @@
 """جریان «فایل → لینک مستقیم»."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import mimetypes
+import time
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.bot.common import lang_of, reply, services
 from app.bot.guards import require_admin
-from app.bot.states import ST_COOKIE_ADD, clear_state, get_state
+from app.bot.states import ST_COOKIE_ADD, ST_DEPLOY_ZIP, clear_state, get_state
 from app.core import human, text
 from app.services.cookies import MAX_COOKIE_BYTES, CookieError
 
@@ -21,6 +23,68 @@ def _attachment(message):
     if isinstance(att, (list, tuple)):
         att = att[-1]
     return att
+
+
+async def _handle_source_zip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """ZIP سورس جدید را می‌گیرد، اعتبارسنجی و برای تأیید نگه می‌دارد."""
+    svc = services(context)
+    lang = lang_of(context)
+    if not await require_admin(update, context):
+        clear_state(context)
+        return
+
+    att = _attachment(update.effective_message)
+    if att is None:
+        await reply(update, text.t(lang, "deploy_upload_prompt"))
+        return
+
+    size = int(getattr(att, "file_size", 0) or 0)
+    limit = max(1, int(svc.cfg.max_source_zip_mb)) * 1024 * 1024
+    if size and size > limit:
+        await reply(
+            update,
+            text.t(
+                lang,
+                "deploy_zip_too_big",
+                size=human.human_bytes(size),
+                max=human.human_bytes(limit),
+            ),
+        )
+        return
+
+    name = getattr(att, "file_name", None) or "source.zip"
+    if not name.lower().endswith(".zip"):
+        await reply(update, text.t(lang, "deploy_zip_bad", reason="not a .zip file"))
+        return
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    target = svc.updater.workdir / f"incoming-{stamp}.zip"
+    try:
+        tg_file = await att.get_file()
+        download = getattr(tg_file, "download_to_drive", None)
+        if download is not None:
+            await download(custom_path=target)
+        else:  # pragma: no cover - سازگاری با نسخه‌های قدیمی PTB/fakeها
+            data = bytes(await tg_file.download_as_bytearray())
+            target.write_bytes(data)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("source zip download failed: %s", exc)
+        await reply(update, text.t(lang, "deploy_zip_bad", reason=human.esc(str(exc)[:120])))
+        return
+
+    preview = await asyncio.to_thread(svc.updater.inspect_zip, target)
+    if not preview.ok:
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            pass
+        await reply(update, text.t(lang, "deploy_zip_bad", reason=human.esc(preview.reason)))
+        return
+
+    clear_state(context)
+    context.user_data["deploy_staged"] = target
+    from app.bot.flows import admin as admin_flow
+
+    await admin_flow._render_staged(update, context)
 
 
 async def _handle_cookie_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -88,6 +152,9 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     state = get_state(context)
     if state == ST_COOKIE_ADD:
         await _handle_cookie_upload(update, context)
+        return
+    if state == ST_DEPLOY_ZIP:
+        await _handle_source_zip(update, context)
         return
     if state:
         await reply(update, text.t(lang, "state_text_only"))
