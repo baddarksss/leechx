@@ -29,7 +29,7 @@ from app.services.formats import FormatOption
 from app.services.linktoken import make_token
 from app.services.ratelimit import RateLimiter
 from app.services.runtime_settings import RuntimeSettings
-from app.services.uploader import Uploader
+from app.services.uploader import PLAYABLE_VIDEO_EXT, Uploader, media_kind
 
 log = logging.getLogger("leechx.jobs")
 
@@ -75,6 +75,7 @@ class JobTask:
     kind: str = "link"
     mode: str = "video"
     custom_name: str = ""
+    custom_thumbnail: bytes | None = None
     cancel: asyncio.Event = field(default_factory=asyncio.Event)
     progress: Progress = field(default_factory=Progress)
     created_at: float = field(default_factory=time.time)
@@ -169,6 +170,13 @@ class JobManager:
     def get(self, job_id: str) -> JobTask | None:
         return self._tasks.get(job_id)
 
+    async def _record_traffic(self, **amounts: int) -> None:
+        """Traffic statistics are best-effort and must never interrupt delivery."""
+        try:
+            await repo.record_traffic(**amounts)
+        except Exception:  # noqa: BLE001
+            log.warning("traffic counters could not be updated", exc_info=True)
+
     def cancel(self, job_id: str, user_id: int) -> bool:
         task = self._tasks.get(job_id)
         if task is None or task.user_id != user_id:
@@ -258,6 +266,8 @@ class JobManager:
     async def _run(self, task: JobTask) -> None:
         started = int(time.time())
         workdir = self.store.job_dir(task.id)
+        source_traffic_recorded = 0
+        upload_traffic_recorded = 0
         try:
             await repo.update_job(task.id, status="running", started_at=started)
             task.progress.stage = "downloading"
@@ -265,7 +275,7 @@ class JobManager:
             if self.hub is not None:
                 await self.hub.notify_job("download", task)
 
-            if task.mode != "link" and self.cache is not None:
+            if task.mode != "link" and self.cache is not None and not task.custom_thumbnail:
                 try:
                     cached = await self.cache.cached_delivery(self.bot, task)
                 except Exception:
@@ -277,7 +287,9 @@ class JobManager:
                         finished_at=int(time.time()),
                     )
                     await repo.bump_downloads(task.user_id)
+                    await repo.bump_uploads(task.user_id)
                     await repo.log_event(task.user_id, "download_done")
+                    await repo.log_event(task.user_id, "upload_done")
                     await repo.log_event(task.user_id, "bytes", float(cached))
                     await self._edit_final(
                         task, text.t(task.lang, "done") +
@@ -299,6 +311,12 @@ class JobManager:
                 task.cancel,
                 task.info,
             )
+            source_bytes = int(
+                getattr(task.progress, "downloaded_bytes_total", 0) or result.size or 0
+            )
+            if source_bytes > 0:
+                await self._record_traffic(source_download_bytes=source_bytes)
+                source_traffic_recorded = source_bytes
 
             if task.cancel.is_set():
                 raise errors.JobCancelled()
@@ -317,6 +335,16 @@ class JobManager:
                         workdir / "thumb.jpg",
                         self.cfg.proxy,
                     )
+                    if result.thumbnail is not None:
+                        try:
+                            thumbnail_bytes = result.thumbnail.stat().st_size
+                        except OSError:
+                            thumbnail_bytes = 0
+                        if thumbnail_bytes > 0:
+                            await self._record_traffic(
+                                source_download_bytes=thumbnail_bytes
+                            )
+                            source_traffic_recorded += thumbnail_bytes
 
                 task.progress.stage = "uploading"
                 task.progress.pct = 0.0
@@ -334,13 +362,32 @@ class JobManager:
                         result,
                         task.progress,
                         task.url,
-                        as_document=task.mode == "document",
+                        as_document=(
+                            task.mode == "document"
+                            or (
+                                task.mode == "video"
+                                and (
+                                    media_kind(result) != "video"
+                                    or result.suffix not in PLAYABLE_VIDEO_EXT
+                                )
+                            )
+                        ),
                         filename=result.path.name,
+                        custom_thumbnail=task.custom_thumbnail,
                         cancel=task.cancel,
                     )
                 )
                 try:
                     uploaded_message = await task.upload_task
+                    uploaded_bytes = int(
+                        getattr(task.progress, "uploaded_bytes_total", 0)
+                        or task.progress.uploaded
+                        or result.size
+                        or 0
+                    )
+                    if uploaded_bytes > 0:
+                        await self._record_traffic(telegram_upload_bytes=uploaded_bytes)
+                        upload_traffic_recorded = uploaded_bytes
                 except asyncio.CancelledError:
                     if task.cancel.is_set():
                         raise errors.JobCancelled() from None
@@ -368,7 +415,9 @@ class JobManager:
                 finished_at=int(time.time()),
             )
             await repo.bump_downloads(task.user_id)
+            await repo.bump_uploads(task.user_id)
             await repo.log_event(task.user_id, "download_done")
+            await repo.log_event(task.user_id, "upload_done")
             await repo.log_event(task.user_id, "bytes", float(result.size))
             if task.mode != "link":
                 await self._edit_final(
@@ -420,6 +469,26 @@ class JobManager:
             if self.hub is not None:
                 await self.hub.notify_job_result(task, "crashed", reason=type(exc).__name__)
         finally:
+            # Preserve measured partial bytes on failed/canceled network transfers.
+            source_observed = max(
+                0, int(getattr(task.progress, "downloaded_bytes_total", 0) or 0)
+            )
+            if source_observed > source_traffic_recorded:
+                await self._record_traffic(
+                    source_download_bytes=source_observed - source_traffic_recorded
+                )
+            upload_observed = max(
+                0,
+                int(
+                    getattr(task.progress, "uploaded_bytes_total", 0)
+                    or task.progress.uploaded
+                    or 0
+                ),
+            )
+            if upload_observed > upload_traffic_recorded:
+                await self._record_traffic(
+                    telegram_upload_bytes=upload_observed - upload_traffic_recorded
+                )
             self.store.drop_job_dir(task.id)
             self.limiter.release_slot(task.user_id)
             self._tasks.pop(task.id, None)

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from io import BytesIO
 from pathlib import Path
 from typing import BinaryIO
 
@@ -113,12 +114,14 @@ class Uploader:
         as_document: bool = False,
         filename: str | None = None,
         caption_title: str | None = None,
+        custom_thumbnail: bytes | None = None,
         cancel: asyncio.Event | None = None,
     ) -> Message:
         self._check_size(result.size)
         progress.stage = "uploading"
         progress.pct = 0.0
         progress.uploaded = 0
+        progress.uploaded_bytes_total = 0
         progress.total = result.size
 
         kind = media_kind(result)
@@ -134,25 +137,44 @@ class Uploader:
         thumb_handle = None
         thumb_file = None
 
+        def on_media_read(n: int) -> None:
+            progress.uploaded += n
+            progress.uploaded_bytes_total += n
+            if progress.total:
+                progress.pct = min(99.9, progress.uploaded * 100.0 / progress.total)
+
+        def on_thumbnail_read(n: int) -> None:
+            progress.uploaded_bytes_total += n
+
         def open_media() -> InputFile:
             fh = result.path.open("rb")
             opened.append(fh)
+            return InputFile(
+                ProgressReader(fh, on_media_read, cancel),
+                filename=display_name,
+                read_file_handle=False,
+            )
 
-            def on_read(n: int) -> None:
-                progress.uploaded += n
-                if progress.total:
-                    progress.pct = min(99.9, progress.uploaded * 100.0 / progress.total)
-
-            return InputFile(ProgressReader(fh, on_read, cancel), filename=display_name, read_file_handle=False)
+        def make_thumbnail_input(handle, filename: str) -> InputFile:
+            return InputFile(
+                ProgressReader(handle, on_thumbnail_read, cancel),
+                filename=filename,
+                read_file_handle=False,
+            )
 
         def reset() -> None:
             progress.pct = 0.0
             progress.uploaded = 0
 
         try:
-            if result.thumbnail and result.thumbnail.exists():
+            if custom_thumbnail:
+                if len(custom_thumbnail) > 200 * 1024:
+                    raise ValueError("custom thumbnail exceeds Telegram's 200 KB limit")
+                thumb_handle = BytesIO(custom_thumbnail)
+                thumb_file = make_thumbnail_input(thumb_handle, "thumbnail.jpg")
+            elif result.thumbnail and result.thumbnail.exists():
                 thumb_handle = result.thumbnail.open("rb")
-                thumb_file = InputFile(thumb_handle, filename="thumb.jpg", read_file_handle=False)
+                thumb_file = make_thumbnail_input(thumb_handle, "thumb.jpg")
 
             if not as_document and kind == "audio":
                 return await bot.send_audio(

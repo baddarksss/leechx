@@ -7,13 +7,23 @@ import platform
 import shutil
 import time
 
-from telegram import MessageOriginChannel, MessageOriginChat, MessageOriginUser, ReplyKeyboardRemove, Update
+from telegram import MessageOriginChannel, MessageOriginChat, MessageOriginUser, Update
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
+from telegram.error import RetryAfter, TelegramError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from app.bot import keyboards as kb
-from app.bot.common import edit, fmt_ts, lang_of, reply, safe_answer, services
+from app.bot.common import (
+    edit,
+    fmt_ts,
+    lang_of,
+    panel,
+    reply,
+    run_detached,
+    safe_answer,
+    send_home,
+    services,
+)
 from app.bot.guards import in_preview, is_admin, is_staff, require_admin
 from app.bot.states import (
     ST_ADD_ADMIN,
@@ -86,40 +96,27 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await require_admin(update, context):
         return
     lang = lang_of(context)
-    await reply(update, _panel_body(lang), reply_markup=_admin_kb(lang, update))
+    markup = _admin_kb(lang, update)
+    if markup is None:
+        await reply(update, _panel_body(lang))
+        return
+    await send_home(update, context, _panel_body(lang), markup)
 
 
 async def show_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang = lang_of(context)
-    query = update.callback_query
-    body = _panel_body(lang)
-    if query is not None:
-        await edit(query.message, body, reply_markup=_admin_kb(lang, update))
-    else:
-        await reply(update, body, reply_markup=_admin_kb(lang, update))
-
-
-async def _drop_previous_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """پیام بخش قبلی را پاک می‌کند تا چت با منوهای تکراری شلوغ نشود."""
-    old_id = context.user_data.pop("admin_panel_msg", None)
-    chat = update.effective_chat
-    if not old_id or chat is None:
+    if update.callback_query is not None:
+        # کیبورد ثابت با ویرایش پیام نمی‌آید؛ متن پنل در همان پیام می‌ماند.
+        await panel(update, context, _panel_body(lang))
         return
-    try:
-        await context.bot.delete_message(chat.id, old_id)
-    except TelegramError:
-        pass
+    await cmd_admin(update, context)
 
 
 async def show_section(update: Update, context: ContextTypes.DEFAULT_TYPE, section: str) -> None:
-    """بخش‌ها همان‌جای کیبورد ثابت باز می‌شوند؛ محتوای هر بخش یک‌جا و بدون منوی تکراری است."""
+    """هر بخش در همان پیام پنل باز می‌شود (ویرایش، نه پیام تازه)."""
     lang = lang_of(context)
     svc = services(context)
-    query = update.callback_query
-    msg = query.message if query is not None else None
     clear_state(context)
-    if query is None:
-        await _drop_previous_panel(update, context)
 
     if section == kb.SEC_STATS:
         body = await _render_stats(context)
@@ -151,13 +148,7 @@ async def show_section(update: Update, context: ContextTypes.DEFAULT_TYPE, secti
         await show_panel(update, context)
         return
 
-    if msg is not None:
-        await edit(msg, body, reply_markup=markup)
-        context.user_data["admin_panel_msg"] = msg.message_id
-    else:
-        sent = await reply(update, body, reply_markup=markup)
-        if sent is not None:
-            context.user_data["admin_panel_msg"] = sent.message_id
+    await panel(update, context, body, markup)
 
 
 # ── هندلر callbackها ───────────────────────────────────────
@@ -185,19 +176,30 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
     # ── آمار ──
     if action == "stats":
         await safe_answer(query)
-        await edit(msg, await _render_stats(context), reply_markup=kb.admin_section_menu(lang, kb.SEC_STATS))
+        await panel(update, context, await _render_stats(context), reply_markup=kb.admin_section_menu(lang, kb.SEC_STATS))
         return
 
     if action == "jobs":
         await safe_answer(query)
-        await edit(msg, await _render_jobs(lang), reply_markup=kb.admin_section_menu(lang, kb.SEC_STATS))
+        await panel(update, context, await _render_jobs(lang), reply_markup=kb.admin_section_menu(lang, kb.SEC_STATS))
+        return
+
+    if action == "traffic":
+        await safe_answer(query)
+        await panel(
+            update,
+            context,
+            await _render_traffic(lang),
+            reply_markup=kb.admin_section_menu(lang, kb.SEC_STATS),
+        )
         return
 
     if action == "clean":
         await safe_answer(query)
         removed, freed = await svc.cleanup_once()
-        await edit(
-            msg,
+        await panel(
+            update,
+            context,
             text.t(lang, "admin_cleanup_done", files=removed, size=human.human_bytes(freed)),
             reply_markup=kb.admin_section_menu(lang, kb.SEC_STATS),
         )
@@ -212,49 +214,56 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
     if action == "admadd":
         await safe_answer(query)
         set_state(context, ST_ADD_ADMIN)
-        await edit(msg, text.t(lang, "admin_add_prompt"))
+        await panel(update, context, text.t(lang, "admin_add_prompt"))
         return
 
     if action == "admrm":
-        await safe_answer(query)
-        if args:
-            uid = int(args[0])
-            if uid in svc.cfg.owners:
-                await safe_answer(query, text.t(lang, "admin_owner_immutable"), alert=True)
-                return
-            ok = await repo.remove_admin(uid)
-            await svc.admin_group.audit("security", "admin_removed",
-                                        update.effective_user.id, f"target={uid}, changed={ok}")
+        uid = _int_arg(args)
+        if uid is None:
+            await safe_answer(query)
+            return
+        if uid in svc.cfg.owners:
+            await safe_answer(query, text.t(lang, "admin_owner_immutable"), alert=True)
+            return
+        ok = await repo.remove_admin(uid)
+        await svc.admin_group.audit("security", "admin_removed",
+                                    update.effective_user.id, f"target={uid}, changed={ok}")
+        if uid in svc.cfg.extra_admins:
+            await safe_answer(query, text.t(lang, "admin_env_admin"), alert=True)
+        else:
             await safe_answer(query, text.t(lang, "admin_remove_ok" if ok else "admin_remove_fail", uid=uid))
-            if uid in svc.cfg.extra_admins:
-                await safe_answer(query, text.t(lang, "admin_env_admin"), alert=True)
-            await _render_admins(update, context)
+        await _render_admins(update, context)
         return
 
     if action == "bc":
         await safe_answer(query)
         set_state(context, ST_BROADCAST)
-        await edit(msg, text.t(lang, "admin_broadcast_prompt"))
+        await panel(update, context, text.t(lang, "admin_broadcast_prompt"))
         return
 
     if action == "user":
         await safe_answer(query)
         set_state(context, ST_LOOKUP_USER)
-        await edit(msg, text.t(lang, "admin_user_prompt"))
+        await panel(update, context, text.t(lang, "admin_user_prompt"))
         return
 
     if action == "banmenu":
         await safe_answer(query)
         set_state(context, ST_BAN)
-        await edit(
-            msg,
+        await panel(
+            update,
+            context,
             text.t(lang, "admin_ban_prompt") + "\n\n" + text.t(lang, "admin_forward_hint"),
             reply_markup=kb.admin_section_menu(lang, kb.SEC_USERS),
         )
         return
 
-    if action in ("ban", "unban") and args:
-        uid = int(args[0])
+    if action in ("ban", "unban") and _int_arg(args) is not None:
+        uid = _int_arg(args)
+        if action == "ban" and await is_staff(svc.cfg, uid):
+            # ادمین/مالک نباید ناخواسته خودش یا همکارش را قفل کند.
+            await safe_answer(query, text.t(lang, "admin_ban_staff"), alert=True)
+            return
         await repo.set_banned(uid, action == "ban")
         await svc.admin_group.audit("security", f"user_{action}", update.effective_user.id, f"target={uid}")
         await safe_answer(query, "✅")
@@ -264,8 +273,9 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
     # ── تنظیمات ──
     if action == "set":
         await safe_answer(query)
-        await edit(
-            msg,
+        await panel(
+            update,
+            context,
             _render_settings(context),
             reply_markup=kb.settings_menu(lang, svc.settings.snapshot()),
         )
@@ -281,8 +291,9 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
             await svc.admin_group.audit("security", "setting_toggled",
                                         update.effective_user.id, f"{key}={value}")
             await safe_answer(query, f"{svc.settings.label(key, lang)}: {'ON' if value else 'OFF'}")
-            await edit(
-                msg,
+            await panel(
+                update,
+                context,
                 _render_settings(context),
                 reply_markup=kb.settings_menu(lang, svc.settings.snapshot()),
             )
@@ -300,7 +311,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
             return
         await safe_answer(query)
         set_state(context, ST_SET_VALUE, key=key)
-        await edit(msg, text.t(lang, "admin_set_value", label=svc.settings.label(key, lang)))
+        await panel(update, context, text.t(lang, "admin_set_value", label=svc.settings.label(key, lang)))
         return
 
     if action == "cookies":
@@ -311,7 +322,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
     if action == "ckadd":
         await safe_answer(query)
         set_state(context, ST_COOKIE_ADD)
-        await edit(msg, text.t(lang, "cookie_add_prompt"))
+        await panel(update, context, text.t(lang, "cookie_add_prompt"))
         return
 
     if action == "cktest":
@@ -320,15 +331,19 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         return
 
     if action == "ckdel":
-        await safe_answer(query)
         if args:
             name = args[0]
             ok = svc.cookies.delete(name)
+            await svc.admin_group.audit("security", "cookie_deleted",
+                                        update.effective_user.id, f"name={name}, changed={ok}")
             await safe_answer(
                 query,
-                text.t(lang, "cookie_deleted" if ok else "cookie_missing", name=human.esc(name)),
+                # متن toast ساده است و HTML نمی‌پذیرد.
+                text.t(lang, "cookie_deleted" if ok else "cookie_missing", name=name),
             )
             await _render_cookies(update, context)
+        else:
+            await safe_answer(query)
         return
 
     if action == "runtime":
@@ -363,8 +378,9 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
             return
         await safe_answer(query)
         set_state(context, ST_RUNTIME_VALUE, key=key)
-        await edit(
-            msg,
+        await panel(
+            update,
+            context,
             text.t(lang, "admin_runtime_prompt", label=svc.settings.label(key, lang)),
             reply_markup=kb.admin_section_menu(lang, kb.SEC_SETTINGS),
         )
@@ -379,15 +395,15 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
     if action == "groupid":
         await safe_answer(query)
         set_state(context, ST_GROUP_ID)
-        await edit(
-            msg,
+        await panel(
+            update,
+            context,
             text.t(lang, "admin_group_prompt") + "\n\n" + text.t(lang, "admin_group_hint_setup"),
             reply_markup=kb.admin_section_menu(lang, kb.SEC_GROUPS),
         )
         return
 
     if action == "grouptest":
-        await safe_answer(query)
         ok = False
         if svc.admin_group.configured:
             ok = await svc.admin_group.send("logs", "🧪 <b>LeechX</b> — admin group test message.")
@@ -399,7 +415,6 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         return
 
     if action == "groupoff":
-        await safe_answer(query)
         await svc.admin_group.audit("security", "group_disconnected", update.effective_user.id)
         await svc.admin_group.disable()
         await safe_answer(query, text.t(lang, "admin_group_off_done"))
@@ -423,26 +438,27 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
     if action == "joinadd":
         await safe_answer(query)
         set_state(context, ST_JOIN_CHAT)
-        await edit(
-            msg,
+        await panel(
+            update,
+            context,
             text.t(lang, "admin_join_prompt") + "\n\n" + text.t(lang, "admin_join_hint"),
             reply_markup=kb.admin_section_menu(lang, kb.SEC_GROUPS),
         )
         return
 
     if action == "joinrm":
-        await safe_answer(query)
-        if args:
-            try:
-                chat_id = int(args[0])
-            except ValueError:
-                return
-            removed = await svc.force_join.remove(chat_id)
-            if removed is None:
-                await safe_answer(query, text.t(lang, "admin_join_bad"), alert=True)
-            else:
-                await safe_answer(query, text.t(lang, "admin_join_removed", title=human.esc(removed.title)))
-            await _render_join(update, context)
+        chat_id = _int_arg(args)
+        if chat_id is None:
+            await safe_answer(query)
+            return
+        removed = await svc.force_join.remove(chat_id)
+        if removed is None:
+            await safe_answer(query, text.t(lang, "admin_join_bad"), alert=True)
+        else:
+            await svc.admin_group.audit("security", "force_join_target_removed",
+                                        update.effective_user.id, f"chat={chat_id}")
+            await safe_answer(query, text.t(lang, "admin_join_removed", title=removed.title))
+        await _render_join(update, context)
         return
 
     if action == "joincheck":
@@ -458,7 +474,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
                 for t, ok, detail in results
             ]
             body = text.t(lang, "admin_join_check_mixed", list="\n".join(lines))
-        await edit(msg, body, reply_markup=kb.force_join_menu(lang, svc.force_join.targets, svc.force_join.enabled))
+        await panel(update, context, body, reply_markup=kb.force_join_menu(lang, svc.force_join.targets, svc.force_join.enabled))
         return
 
     # ── گزارش‌ها و لاگ‌ها ──
@@ -468,8 +484,8 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         return
 
     if action == "rpclose":
-        if args:
-            rid = int(args[0])
+        rid = _int_arg(args)
+        if rid is not None:
             ok = await repo.set_report_status(rid)
             await safe_answer(
                 query,
@@ -486,7 +502,6 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         return
 
     if action == "logclear":
-        await safe_answer(query)
         count = await repo.clear_logs()
         await safe_answer(query, text.t(lang, "admin_logs_cleared", count=count))
         await _render_logs(update, context)
@@ -500,14 +515,15 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
 
     if action == "dpsrc":
         await safe_answer(query)
-        await _send_source_zip(update, context)
+        await run_detached(context, _send_source_zip(update, context), update)
         return
 
     if action == "dpup":
         await safe_answer(query)
         set_state(context, ST_DEPLOY_ZIP)
-        await edit(
-            msg,
+        await panel(
+            update,
+            context,
             text.t(lang, "deploy_upload_prompt") + "\n\n" + text.t(lang, "deploy_update_note"),
             reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY),
         )
@@ -531,13 +547,14 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
 
     if action == "dpbackup":
         await safe_answer(query)
-        await _send_backup(update, context)
+        await run_detached(context, _send_backup(update, context), update)
         return
 
     if action == "dprestart":
         await safe_answer(query)
-        await edit(
-            msg,
+        await panel(
+            update,
+            context,
             text.t(lang, "deploy_restart_confirm"),
             reply_markup=kb.deploy_restart_confirm(lang),
         )
@@ -545,40 +562,25 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
 
     if action == "dprestartyes":
         await safe_answer(query)
-        await edit(msg, text.t(lang, "deploy_restart_scheduled"))
+        await panel(update, context, text.t(lang, "deploy_restart_scheduled"))
         await svc.admin_group.audit("security", "manual_restart", update.effective_user.id)
         svc.request_restart()
         return
 
     if action in ("dpytdlp", "dpytdlpnight"):
         await safe_answer(query)
-        nightly = action.endswith("night")
-        await edit(msg, text.t(lang, "deploy_ytdlp_working"))
-        try:
-            result = await svc.updater.upgrade_ytdlp(nightly=nightly)
-        except Exception as exc:  # noqa: BLE001
-            result = {"ok": False, "error": str(exc)[:200], "before": "?", "after": "?"}
-        try:
-            await asyncio.to_thread(svc.sites.build)
-        except Exception:  # noqa: BLE001
-            log.warning("site index rebuild failed", exc_info=True)
-        if result.get("ok"):
-            body = text.t(
-                lang,
-                "deploy_ytdlp_done",
-                before=human.esc(str(result.get("before", "?"))),
-                after=human.esc(str(result.get("after", "?"))),
-            )
-        else:
-            body = text.t(lang, "deploy_ytdlp_fail", reason=human.esc(str(result.get("error") or "unknown")))
-        await edit(msg, body, reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY))
-        await svc.admin_group.audit("system", "ytdlp_update", update.effective_user.id,
-                                    f"ok={result.get('ok')}")
+        await panel(update, context, text.t(lang, "deploy_ytdlp_working"))
+        # نصب pip چند ده ثانیه طول می‌کشد؛ پنل در این مدت قفل نمی‌شود.
+        await run_detached(
+            context,
+            _upgrade_ytdlp(update, context, msg, nightly=action.endswith("night")),
+            update,
+        )
         return
 
     if action == "dpver":
         await safe_answer(query)
-        await edit(msg, _version_text(svc, lang), reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY))
+        await panel(update, context, _version_text(svc, lang), reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY))
         return
 
     # ── عیب‌یابی ──
@@ -599,6 +601,14 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await _render_debug(update, context)
         return
 
+    if action == "dbttl":
+        current = int(context.user_data.get("debug_ttl") or 6)
+        hours = kb.next_debug_ttl(current, svc.debug.max_hours())
+        context.user_data["debug_ttl"] = hours
+        await safe_answer(query, text.t(lang, "btn_debug_ttl", hours=hours))
+        await _render_debug(update, context)
+        return
+
     if action == "dbmake":
         await safe_answer(query)
         if len(args) < 2:
@@ -607,18 +617,43 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await _create_debug_token(update, context, scope, hours_raw)
         return
 
-    if action == "dbrevoke":
-        await safe_answer(query)
-        if args:
-            ok = await svc.debug.revoke(int(args[0]))
-            await safe_answer(query, text.t(lang, "debug_revoke_ok" if ok else "debug_revoke_fail"))
+    if action == "dbinfo":
+        token_id = _int_arg(args)
+        row = next((t for t in await svc.debug.active() if t.id == token_id), None)
+        if row is None:
+            await safe_answer(query, text.t(lang, "debug_revoke_fail"), alert=True)
             await _render_debug(update, context)
+            return
+        await safe_answer(
+            query,
+            text.t(
+                lang,
+                "debug_token_info",
+                id=row.id,
+                scopes=text.t(lang, kb.debug_scope_key(row.scopes)),
+                expires=time.strftime("%m-%d %H:%M", time.localtime(row.expires_at)),
+                uses=row.uses,
+            ),
+            alert=True,
+        )
+        return
+
+    if action == "dbrevoke":
+        token_id = _int_arg(args)
+        if token_id is None:
+            await safe_answer(query)
+            return
+        ok = await svc.debug.revoke(token_id)
+        if ok:
+            await svc.admin_group.audit("security", "debug_token_revoked",
+                                        update.effective_user.id, f"id={token_id}")
+        await safe_answer(query, text.t(lang, "debug_revoke_ok" if ok else "debug_revoke_fail"))
+        await _render_debug(update, context)
         return
 
     if action == "dbrevokeall":
-        await safe_answer(query)
         count = await svc.debug.revoke_all()
-        await safe_answer(query, text.t(lang, "debug_revoke_ok"), alert=False)
+        await safe_answer(query, text.t(lang, "debug_revoke_ok"))
         await svc.admin_group.audit("security", "debug_tokens_revoked", update.effective_user.id,
                                     f"count={count}")
         await _render_debug(update, context)
@@ -631,16 +666,45 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
 
     if action in ("preview", "previewon"):
         await safe_answer(query)
-        context.user_data["preview"] = True
-        context.user_data["is_admin"] = False
         from app.bot.flows import start as start_flow
 
-        # کیبورد ثابت ادمین برداشته می‌شود تا دقیقاً تجربهٔ یک ممبر عادی بماند.
-        await edit(msg, text.t(lang, "preview_banner"), reply_markup=ReplyKeyboardRemove())
-        await start_flow.cmd_start(update, context)
+        # کیبورد ثابت کاربر جایگزین کیبورد ادمین می‌شود تا دقیقاً تجربهٔ یک ممبر عادی بماند.
+        await start_flow.start_preview(update, context)
         return
 
     await safe_answer(query)
+
+
+def _int_arg(args: list[str], index: int = 0) -> int | None:
+    try:
+        return int(args[index])
+    except (IndexError, ValueError):
+        return None
+
+
+async def _upgrade_ytdlp(update: Update, context: ContextTypes.DEFAULT_TYPE, msg, *, nightly: bool) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    try:
+        result = await svc.updater.upgrade_ytdlp(nightly=nightly)
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "error": str(exc)[:200], "before": "?", "after": "?"}
+    try:
+        await asyncio.to_thread(svc.sites.build)
+    except Exception:  # noqa: BLE001
+        log.warning("site index rebuild failed", exc_info=True)
+    if result.get("ok"):
+        body = text.t(
+            lang,
+            "deploy_ytdlp_done",
+            before=human.esc(str(result.get("before", "?"))),
+            after=human.esc(str(result.get("after", "?"))),
+        )
+    else:
+        body = text.t(lang, "deploy_ytdlp_fail", reason=human.esc(str(result.get("error") or "unknown")))
+    await edit(msg, body, reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY))
+    await svc.admin_group.audit("system", "ytdlp_update", update.effective_user.id,
+                                f"ok={result.get('ok')}")
 
 
 # ── رندرها ─────────────────────────────────────────────────
@@ -655,7 +719,7 @@ async def _render_stats(context: ContextTypes.DEFAULT_TYPE) -> str:
     active_links = await repo.count_active_shared()
     reports = await repo.count_open_reports()
     shared_size = await repo.shared_total_size()
-    used = svc.store.total_size() + shared_size
+    used = await asyncio.to_thread(svc.store.total_size) + shared_size
     return text.t(
         lang,
         "admin_stats",
@@ -673,6 +737,22 @@ async def _render_stats(context: ContextTypes.DEFAULT_TYPE) -> str:
         disk=f"{human.human_bytes(used)} / {human.human_bytes(svc.store.disk_free())} free",
         uptime=human.human_duration(svc.uptime),
         version=__version__,
+    )
+
+
+async def _render_traffic(lang: str = "fa") -> str:
+    totals = await repo.traffic_totals()
+    return text.t(
+        lang,
+        "admin_traffic",
+        downloaded=human.human_bytes(totals["downloaded_bytes"]),
+        source_downloaded=human.human_bytes(totals["source_download_bytes"]),
+        telegram_received=human.human_bytes(totals["telegram_receive_bytes"]),
+        uploaded=human.human_bytes(totals["uploaded_bytes"]),
+        telegram_uploaded=human.human_bytes(totals["telegram_upload_bytes"]),
+        link_served=human.human_bytes(totals["direct_link_serve_bytes"]),
+        total=human.human_bytes(totals["total_bytes"]),
+        note=text.t(lang, "traffic_note"),
     )
 
 
@@ -704,11 +784,7 @@ async def _render_admins(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         body = text.t(lang, "admin_admins", owners=owners, admins="—")
     menu = kb.admins_menu(lang, [row.user_id for row in rows])
-    query = update.callback_query
-    if query is not None:
-        await edit(query.message, body, reply_markup=menu)
-    else:
-        await reply(update, body, reply_markup=menu)
+    await panel(update, context, body, menu)
 
 
 def _render_settings(context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -736,11 +812,7 @@ async def _render_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         lines = [text.t(lang, "cookie_empty")]
     body = text.t(lang, "admin_cookies", count=len(files), list="\n".join(lines))
     menu = kb.cookies_menu(lang, [cookie.name for cookie in files])
-    query = update.callback_query
-    if query is not None:
-        await edit(query.message, body, reply_markup=menu)
-    else:
-        await reply(update, body, reply_markup=menu)
+    await panel(update, context, body, menu)
 
 
 async def _render_cookie_test(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -759,11 +831,7 @@ async def _render_cookie_test(update: Update, context: ContextTypes.DEFAULT_TYPE
         lines = [text.t(lang, "cookie_empty")]
     body = text.t(lang, "cookie_test_result", list="\n".join(lines))
     menu = kb.cookies_menu(lang, [cookie.name for cookie in files])
-    query = update.callback_query
-    if query is not None:
-        await edit(query.message, body, reply_markup=menu)
-    else:
-        await reply(update, body, reply_markup=menu)
+    await panel(update, context, body, menu)
 
 
 async def _render_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -790,11 +858,7 @@ async def _render_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"\n🔐 {group.topic_id('security') or '—'}"
     )
     menu = kb.group_menu(lang, group.configured)
-    query = update.callback_query
-    if query is not None:
-        await edit(query.message, body, reply_markup=menu)
-    else:
-        await reply(update, body, reply_markup=menu)
+    await panel(update, context, body, menu)
 
 
 async def _render_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -818,11 +882,7 @@ async def _render_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         list=listing,
     )
     menu = kb.force_join_menu(lang, targets, svc.force_join.enabled)
-    query = update.callback_query
-    if query is not None:
-        await edit(query.message, body, reply_markup=menu)
-    else:
-        await reply(update, body, reply_markup=menu)
+    await panel(update, context, body, menu)
 
 
 async def _render_reports(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -859,11 +919,7 @@ async def _render_reports(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
         body = text.t(lang, "admin_reports", count=len(rows), list="\n\n".join(items))
     menu = kb.reports_menu(lang, [row.id for row in rows])
-    query = update.callback_query
-    if query is not None:
-        await edit(query.message, body, reply_markup=menu)
-    else:
-        await reply(update, body, reply_markup=menu)
+    await panel(update, context, body, menu)
 
 
 async def _render_logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -886,11 +942,7 @@ async def _render_logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             lines.append(line)
         body = text.t(lang, "admin_logs", count=len(rows), list="\n\n".join(lines))
     menu = kb.logs_menu(lang)
-    query = update.callback_query
-    if query is not None:
-        await edit(query.message, body, reply_markup=menu)
-    else:
-        await reply(update, body, reply_markup=menu)
+    await panel(update, context, body, menu)
 
 
 async def _render_runtime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -903,11 +955,7 @@ async def _render_runtime(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         + text.t(lang, "local_api_help").split("\n\n", 1)[0]
     )
     menu = kb.runtime_menu(lang, items)
-    query = update.callback_query
-    if query is not None:
-        await edit(query.message, body, reply_markup=menu)
-    else:
-        await reply(update, body, reply_markup=menu)
+    await panel(update, context, body, menu)
 
 
 # ── دیپلوی ─────────────────────────────────────────────────
@@ -936,7 +984,7 @@ async def show_deploy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def _render_deploy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
     lang = lang_of(context)
-    stats = svc.updater.stats()
+    stats = await asyncio.to_thread(svc.updater.stats)
     staged = context.user_data.get("deploy_staged")
     if staged:
         await _render_staged(update, context)
@@ -953,11 +1001,7 @@ async def _render_deploy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         last_update=stats["last_update"],
     )
     menu = kb.deploy_menu(lang, staged=False, has_backup=bool(svc.updater.latest_backup()))
-    query = update.callback_query
-    if query is not None:
-        await edit(query.message, body, reply_markup=menu)
-    else:
-        await reply(update, body, reply_markup=menu)
+    await panel(update, context, body, menu)
 
 
 async def _render_staged(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -967,11 +1011,12 @@ async def _render_staged(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not staged:
         await _render_deploy(update, context)
         return
-    preview = svc.updater.inspect_zip(staged)
+    preview = await asyncio.to_thread(svc.updater.inspect_zip, staged)
     if not preview.ok:
         context.user_data.pop("deploy_staged", None)
-        await edit(
-            update.callback_query.message if update.callback_query else update.effective_message,
+        await panel(
+            update,
+            context,
             text.t(lang, "deploy_zip_bad", reason=human.esc(preview.reason)),
             reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY),
         )
@@ -988,11 +1033,7 @@ async def _render_staged(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
     body += "\n\n" + text.t(lang, "deploy_update_note")
     menu = kb.deploy_menu(lang, staged=True)
-    query = update.callback_query
-    if query is not None:
-        await edit(query.message, body, reply_markup=menu)
-    else:
-        await reply(update, body, reply_markup=menu)
+    await panel(update, context, body, menu)
 
 
 async def _send_source_zip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1056,16 +1097,18 @@ async def _apply_staged(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except OSError:
         pass
     if not result.ok:
-        await edit(
-            update.callback_query.message if update.callback_query else update.effective_message,
+        await panel(
+            update,
+            context,
             text.t(lang, "deploy_failed", reason=human.esc(result.reason)),
             reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY),
         )
         return
     await svc.admin_group.audit("system", "source_deployed", update.effective_user.id,
                                 f"version={result.version}, files={result.files}")
-    await edit(
-        update.callback_query.message if update.callback_query else update.effective_message,
+    await panel(
+        update,
+        context,
         text.t(lang, "deploy_applied", version=human.esc(result.version)),
     )
     svc.request_restart()
@@ -1076,32 +1119,25 @@ async def _render_debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     svc = services(context)
     lang = lang_of(context)
     tokens = await svc.debug.active()
-    listing = "\n".join(
-        text.t(
-            lang,
-            "debug_token_item",
-            id=row.id,
-            scopes=row.scopes,
-            expires=time.strftime("%m-%d %H:%M", time.localtime(row.expires_at)),
-            uses=row.uses,
-        )
-        for row in tokens
-    )
     body = text.t(
         lang,
         "debug_panel",
         state="🟢 ON" if svc.settings.debug_enabled else "🔴 OFF",
         active=len(tokens),
     )
-    body += "\n\n" + (listing or text.t(lang, "debug_none"))
+    if not tokens:
+        body += "\n\n" + text.t(lang, "debug_none")
     if not svc.settings.debug_enabled:
         body += "\n\n" + text.t(lang, "debug_disabled")
-    menu = kb.debug_menu(lang, tokens, svc.settings.debug_enabled, svc.debug.max_hours())
-    query = update.callback_query
-    if query is not None:
-        await edit(query.message, body, reply_markup=menu)
-    else:
-        await reply(update, body, reply_markup=menu)
+    # فهرست توکن‌ها فقط به‌صورت دکمه (هر کدام با 🗑 کنارش) نمایش داده می‌شود.
+    menu = kb.debug_menu(
+        lang,
+        tokens,
+        svc.settings.debug_enabled,
+        svc.debug.max_hours(),
+        ttl=int(context.user_data.get("debug_ttl") or 6),
+    )
+    await panel(update, context, body, menu)
 
 
 async def _create_debug_token(
@@ -1113,7 +1149,7 @@ async def _create_debug_token(
     svc = services(context)
     lang = lang_of(context)
     if not svc.settings.debug_enabled:
-        await reply(update, text.t(lang, "debug_disabled"))
+        await _render_debug(update, context)
         return
     if scope not in SCOPES:
         scope = "read"
@@ -1128,27 +1164,20 @@ async def _create_debug_token(
         label=f"ui:{scope}",
     )
     base = svc.settings.get_str("public_base_url") or svc.cfg.public_base_url
+    url = svc.debug.access_url(base, raw)
     body = text.t(
         lang,
         "debug_token_created",
-        base=human.esc(base),
-        token=raw,
-        scopes=text.t(lang, f"debug_scope_{svc.debug.scope_label(row.scopes)}"),
-        expires=time.strftime("%Y-%m-%d %H:%M", time.localtime(row.expires_at)),
-        hours=max(1, int((row.expires_at - int(time.time())) / 3600)),
+        url=human.esc(url),
+        scopes=text.t(lang, kb.debug_scope_key(row.scopes)),
+        expires=time.strftime("%m-%d %H:%M", time.localtime(row.expires_at)),
     )
     if "127.0.0.1" in base or "localhost" in base:
         body += "\n\n" + text.t(lang, "debug_no_public_url", base=human.esc(base))
-    body += "\n\n" + text.t(lang, "debug_handoff", base=human.esc(base))
     await svc.admin_group.audit("security", "debug_token_created", update.effective_user.id,
                                 f"scope={row.scopes}, id={row.id}, hours={hours}")
-    await reply(
-        update,
-        body,
-        reply_markup=kb.admin_section_menu(
-            lang, kb.SEC_DEBUG, debug_enabled=svc.settings.debug_enabled
-        ),
-    )
+    # همان پیام پنل ویرایش می‌شود؛ پیام تازه‌ای در چت نمی‌آید.
+    await panel(update, context, body, kb.debug_token_menu(lang, url, row.id))
 
 
 async def _render_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1174,26 +1203,16 @@ async def _render_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         users=health["users"],
         problems=block,
     )
-    query = update.callback_query
-    menu = kb.admin_section_menu(
-        lang, kb.SEC_DEBUG, debug_enabled=svc.settings.debug_enabled
-    )
-    if query is not None:
-        await edit(query.message, body, reply_markup=menu)
-    else:
-        await reply(update, body, reply_markup=menu)
+    await panel(update, context, body, kb.debug_back_menu(lang))
 
 
 async def _show_user(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
     svc = services(context)
     lang = lang_of(context)
     user = await repo.get_user(uid)
-    msg = update.callback_query.message if update.callback_query else update.effective_message
     if user is None:
-        if update.callback_query is not None:
-            await edit(msg, text.t(lang, "admin_add_fail"))
-        else:
-            await reply(update, text.t(lang, "admin_add_fail"))
+        await panel(update, context, text.t(lang, "admin_add_fail"),
+                    kb.admin_section_menu(lang, kb.SEC_USERS))
         return
     body = text.t(
         lang,
@@ -1212,10 +1231,7 @@ async def _show_user(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: in
         [kb.Btn(label, callback_data=f"a|{action}|{uid}")],
         *(kb.admin_section_menu(lang, kb.SEC_USERS).inline_keyboard),
     ])
-    if update.callback_query is not None:
-        await edit(msg, body, reply_markup=markup)
-    else:
-        await reply(update, body, reply_markup=markup)
+    await panel(update, context, body, markup)
 
 
 # ── ورودی متنی حالت‌ها ─────────────────────────────────────
@@ -1229,39 +1245,38 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
     message = update.effective_message
     raw = (message.text or "").strip() if message else ""
     if not raw:
-        await reply(update, text.t(lang, "admin_bad_value"))
+        await panel(update, context, text.t(lang, "admin_bad_value"))
         return
 
     if state == ST_BROADCAST:
         clear_state(context)
         ids = await repo.all_user_ids()
-        await reply(update, text.t(lang, "admin_broadcast_started", count=len(ids)))
-        ok, fail = await broadcast(context, ids, message.text_html or human.esc(raw), lang)
-        await reply(update, text.t(lang, "admin_broadcast_done", ok=ok, fail=fail))
-        await svc.admin_group.audit("security", "broadcast_completed",
-                                    update.effective_user.id, f"sent={ok}, failed={fail}")
+        status = await panel(update, context, text.t(lang, "admin_broadcast_started", count=len(ids)))
+        body = message.text_html or human.esc(raw)
+        # ارسال به همه چند دقیقه طول می‌کشد؛ خارج از قفل ادمین اجرا می‌شود.
+        await run_detached(context, _run_broadcast(update, context, ids, body, status), update)
         return
 
     if state == ST_ADD_ADMIN:
         user = await _resolve_user(raw, context=context)
         clear_state(context)
         if user is None:
-            await reply(update, text.t(lang, "admin_add_fail"))
+            await panel(update, context, text.t(lang, "admin_add_fail"))
             return
         if await repo.count_admins() >= svc.cfg.max_admins > 0:
-            await reply(update, text.t(lang, "admin_limit_reached", max=svc.cfg.max_admins))
+            await panel(update, context, text.t(lang, "admin_limit_reached", max=svc.cfg.max_admins))
             return
         await repo.add_admin(user.id, update.effective_user.id)
         await svc.admin_group.audit("security", "admin_added",
                                     update.effective_user.id, f"new_admin={user.id}")
-        await reply(update, text.t(lang, "admin_add_ok", uid=user.id))
+        await panel(update, context, text.t(lang, "admin_add_ok", uid=user.id))
         return
 
     if state == ST_SET_VALUE:
         key = get_data(context).get("key", "")
         clear_state(context)
         if key not in SCHEMA:
-            await reply(update, text.t(lang, "admin_bad_value"))
+            await panel(update, context, text.t(lang, "admin_bad_value"))
             return
         kind = SCHEMA[key][0]
         try:
@@ -1272,14 +1287,18 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
             else:
                 value = float(raw)
         except ValueError:
-            await reply(update, text.t(lang, "admin_bad_value"))
+            await panel(update, context, text.t(lang, "admin_bad_value"))
+            return
+        if kind != "bool" and value < 0:
+            await panel(update, context, text.t(lang, "admin_bad_value"))
             return
         await svc.settings.set(key, value)
         await svc.admin_group.audit("security", "setting_updated",
                                     update.effective_user.id, f"key={key} (value hidden)")
         svc.limiter.set_interval(svc.settings.rate_limit_seconds)
-        await reply(
+        await panel(
             update,
+            context,
             text.t(lang, "admin_set_ok", label=svc.settings.label(key, lang), value=value),
             reply_markup=kb.settings_menu(lang, svc.settings.snapshot()),
         )
@@ -1289,7 +1308,7 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         clear_state(context)
         user = await _resolve_user(raw, context=context)
         if user is None:
-            await reply(update, text.t(lang, "admin_add_fail"))
+            await panel(update, context, text.t(lang, "admin_add_fail"))
             return
         await _show_user(update, context, user.id)
         return
@@ -1298,7 +1317,7 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         clear_state(context)
         user = await _resolve_user(raw, context=context, create=True)
         if user is None:
-            await reply(update, text.t(lang, "admin_add_fail"))
+            await panel(update, context, text.t(lang, "admin_add_fail"))
             return
         await _show_user(update, context, user.id)
         return
@@ -1307,7 +1326,7 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         clear_state(context)
         token = raw.strip()
         if not token.lstrip("-").isdigit() or int(token) >= 0:
-            await reply(update, text.t(lang, "admin_group_bad_id"))
+            await panel(update, context, text.t(lang, "admin_group_bad_id"))
             return
         chat_id = int(token)
         title = ""
@@ -1315,17 +1334,18 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
             chat = await context.bot.get_chat(chat_id)
             if (chat.type != "supergroup" or not getattr(chat, "is_forum", False)
                     or getattr(chat, "username", None)):
-                await reply(update, "⚠️ یک سوپرگروه خصوصی با Topics فعال وارد کن.")
+                await panel(update, context, "⚠️ یک سوپرگروه خصوصی با Topics فعال وارد کن.")
                 return
             title = getattr(chat, "title", "") or ""
         except TelegramError:
-            await reply(update, text.t(lang, "admin_group_test_fail"))
+            await panel(update, context, text.t(lang, "admin_group_test_fail"))
             return
         created = await svc.admin_group.configure(chat_id, title)
         ok = sum(1 for value in created.values() if value)
         failed = len(created) - ok
-        await reply(
+        await panel(
             update,
+            context,
             text.t(lang, "admin_group_saved", created=ok, failed=failed),
             reply_markup=kb.group_menu(lang, True),
         )
@@ -1340,11 +1360,11 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         key = get_data(context).get("key", "")
         clear_state(context)
         if key not in RUNTIME_KEYS or key not in SCHEMA:
-            await reply(update, text.t(lang, "admin_bad_value"))
+            await panel(update, context, text.t(lang, "admin_bad_value"))
             return
         value = "" if raw.strip() == "-" else raw.strip()
         if key == "public_base_url" and value and not value.startswith(("http://", "https://")):
-            await reply(update, text.t(lang, "admin_bad_value"))
+            await panel(update, context, text.t(lang, "admin_bad_value"))
             return
         await svc.settings.set(key, value)
         await svc.admin_group.audit("security", "runtime_updated",
@@ -1361,7 +1381,7 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         if key in RESTART_KEYS:
             body += "\n\n" + text.t(lang, "admin_runtime_restart")
         items = [(item, svc.settings.label(item, lang), svc.settings.masked(item)) for item in RUNTIME_KEYS]
-        await reply(update, body, reply_markup=kb.runtime_menu(lang, items))
+        await panel(update, context, body, reply_markup=kb.runtime_menu(lang, items))
         return
 
     if state == ST_COOKIE_ADD:
@@ -1369,10 +1389,11 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         try:
             cookie = svc.cookies.save_text(raw)
         except CookieError as exc:
-            await reply(update, text.t(lang, "cookie_bad", reason=human.esc(str(exc)[:150])))
+            await panel(update, context, text.t(lang, "cookie_bad", reason=human.esc(str(exc)[:150])))
             return
-        await reply(
+        await panel(
             update,
+            context,
             text.t(
                 lang,
                 "cookie_saved",
@@ -1391,18 +1412,19 @@ async def _add_join_target(update: Update, context: ContextTypes.DEFAULT_TYPE, r
     try:
         target = await svc.force_join.resolve(context.bot, raw)
     except (ValueError, TelegramError):
-        await reply(update, text.t(lang, "admin_join_bad"))
+        await panel(update, context, text.t(lang, "admin_join_bad"))
         return
     results = await svc.force_join.check_access(context.bot)
     for item, ok, _detail in results:
         if item.chat_id == target.chat_id and not ok:
-            await reply(update, text.t(lang, "admin_join_admin_needed", title=human.esc(target.title)))
+            await panel(update, context, text.t(lang, "admin_join_admin_needed", title=human.esc(target.title)))
             return
     await svc.force_join.add(target)
     await svc.admin_group.audit("security", "force_join_target_added", update.effective_user.id,
                                 f"chat={target.chat_id}")
-    await reply(
+    await panel(
         update,
+        context,
         text.t(lang, "admin_join_added", title=human.esc(target.title), chat=target.chat_id),
         reply_markup=kb.force_join_menu(lang, svc.force_join.targets, svc.force_join.enabled),
     )
@@ -1510,14 +1532,15 @@ async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
         clear_state(context)
         if chat_id is None:
-            await reply(update, text.t(lang, "admin_join_bad"))
+            await panel(update, context, text.t(lang, "admin_join_bad"))
         else:
             await _add_join_target(update, context, str(chat_id))
         raise ApplicationHandlerStop
 
     if not isinstance(origin, MessageOriginUser):
-        await reply(
+        await panel(
             update,
+            context,
             text.t(lang, "admin_forward_hint") + "\n\n" + text.t(lang, "admin_ban_prompt"),
         )
         raise ApplicationHandlerStop
@@ -1528,27 +1551,62 @@ async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 # ── پیام همگانی ────────────────────────────────────────────
+async def _run_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, ids, body, status) -> None:
+    svc = services(context)
+    lang = lang_of(context)
+    ok, fail = await broadcast(context, ids, body, lang)
+    done = text.t(lang, "admin_broadcast_done", ok=ok, fail=fail)
+    if await edit(status, done) is None:
+        await reply(update, done)
+    await svc.admin_group.audit("security", "broadcast_completed",
+                                update.effective_user.id, f"sent={ok}, failed={fail}")
+
+
+# سقف تلگرام حدود ۳۰ پیام در ثانیه است؛ کمی پایین‌تر می‌مانیم.
+BROADCAST_PER_SECOND = 25
+BROADCAST_WORKERS = 8
+
+
 async def broadcast(
     context: ContextTypes.DEFAULT_TYPE,
     ids: list[int],
     body: str,
     lang: str,
 ) -> tuple[int, int]:
+    """ارسال همگانی با چند worker و سقف نرخ؛ RetryAfter رعایت و یک‌بار تکرار می‌شود."""
     bot = context.bot
-    sem = asyncio.Semaphore(15)
+    queue: asyncio.Queue[int] = asyncio.Queue()
+    for uid in ids:
+        queue.put_nowait(uid)
+    interval = BROADCAST_WORKERS / BROADCAST_PER_SECOND
     ok = fail = 0
 
-    async def send(uid: int) -> None:
-        nonlocal ok, fail
-        async with sem:
+    async def send(uid: int) -> bool:
+        for _attempt in range(2):
             try:
                 await bot.send_message(uid, body, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-                ok += 1
+                return True
+            except RetryAfter as exc:
+                delay = exc.retry_after
+                await asyncio.sleep(delay.total_seconds() if hasattr(delay, "total_seconds") else float(delay))
             except Exception:  # noqa: BLE001 — کاربر بلاک کرده / حذف شده
-                fail += 1
-            await asyncio.sleep(0.03)
+                return False
+        return False
 
-    await asyncio.gather(*(send(uid) for uid in ids))
+    async def worker() -> None:
+        nonlocal ok, fail
+        while True:
+            try:
+                uid = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            if await send(uid):
+                ok += 1
+            else:
+                fail += 1
+            await asyncio.sleep(interval)
+
+    await asyncio.gather(*(worker() for _ in range(min(BROADCAST_WORKERS, max(1, len(ids))))))
     log.info("broadcast finished: ok=%d fail=%d", ok, fail)
     _ = lang
     return ok, fail

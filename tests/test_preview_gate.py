@@ -112,6 +112,8 @@ async def make_gate(db, *, enabled: bool = True, status: str = "left"):
 @pytest.mark.asyncio
 async def test_gate_blocks_user_who_has_not_joined(db):
     services, bot = await make_gate(db)
+    await repo.upsert_user(42, "u", "U", lang="en")
+    await repo.set_lang(42, "en", selected=True)
     update = make_update(42)
     context = make_context(services, bot)
 
@@ -128,6 +130,8 @@ async def test_gate_blocks_user_who_has_not_joined(db):
 @pytest.mark.asyncio
 async def test_gate_allows_joined_user(db):
     services, bot = await make_gate(db, status="member")
+    await repo.upsert_user(42, "u", "U", lang="en")
+    await repo.set_lang(42, "en", selected=True)
     update = make_update(42)
     context = make_context(services, bot)
 
@@ -138,6 +142,8 @@ async def test_gate_allows_joined_user(db):
 @pytest.mark.asyncio
 async def test_gate_fails_open_when_telegram_errors(db):
     services, bot = await make_gate(db, status="error")
+    await repo.upsert_user(42, "u", "U", lang="en")
+    await repo.set_lang(42, "en", selected=True)
     update = make_update(42)
     context = make_context(services, bot)
 
@@ -154,6 +160,7 @@ async def test_gate_exempts_staff_but_not_staff_in_preview(db):
     await app_module.gate(staff_update, staff_context)
     assert staff_update.effective_message.texts == []
     assert bot.calls == 0
+    await repo.set_lang(1, "en", selected=True)
 
     preview_update = make_update(1)
     preview_context = make_context(services, bot, preview=True)
@@ -165,6 +172,8 @@ async def test_gate_exempts_staff_but_not_staff_in_preview(db):
 @pytest.mark.asyncio
 async def test_gate_lets_join_check_callback_through(db):
     services, bot = await make_gate(db)
+    await repo.upsert_user(42, "u", "U", lang="en")
+    await repo.set_lang(42, "en", selected=True)
     query = SimpleNamespace(data="m|joincheck")
 
     async def answer(*args, **kwargs):
@@ -188,12 +197,16 @@ async def test_gate_detects_language_on_first_message(db):
     update = make_update(500, language_code="ru")
     context = make_context(services, GateBot(), lang=None)
 
-    await app_module.gate(update, context)
+    with pytest.raises(ApplicationHandlerStop):
+        await app_module.gate(update, context)
 
     user = await repo.get_user(500)
     assert user is not None
     assert user.lang == "ru"
+    assert user.language_selected is False
     assert context.user_data["lang"] == "ru"
+    assert update.effective_message.texts
+    assert "Выбери язык" in update.effective_message.texts[-1]
 
 
 @pytest.mark.asyncio

@@ -111,6 +111,14 @@ async def test_direct_job_full_pipeline(db, file_server):
     since = int(time.time()) - 60
     assert await repo.user_events_since(42, "download_done", since) == 1.0
     assert await repo.user_events_since(42, "bytes", since) == float(len(PAYLOAD))
+    traffic = await repo.traffic_totals()
+    assert traffic["source_download_bytes"] == len(PAYLOAD)
+    # The stub uploader does not consume the InputFile; successful-send fallback
+    # still uses the exact size of the delivered file payload.
+    assert traffic["telegram_upload_bytes"] == len(PAYLOAD)
+    assert traffic["downloaded_bytes"] == len(PAYLOAD)
+    assert traffic["uploaded_bytes"] == len(PAYLOAD)
+    assert traffic["total_bytes"] == 2 * len(PAYLOAD)
 
     # هیچ فایلی از کار باقی نمانده است
     assert not (store.jobs / "pipe1").exists()
@@ -150,6 +158,12 @@ async def test_link_mode_stores_shared_file_and_cleans_job_dir(db, file_server):
     shared = await repo.get_shared("pipe3")
     assert shared is not None
     assert shared.size == len(PAYLOAD)
+    traffic = await repo.traffic_totals()
+    assert traffic["source_download_bytes"] == len(PAYLOAD)
+    assert traffic["telegram_upload_bytes"] == 0
+    assert traffic["direct_link_serve_bytes"] == 0
+    assert traffic["downloaded_bytes"] == len(PAYLOAD)
+    assert traffic["uploaded_bytes"] == 0
     assert store.link_path("pipe3", shared.name).exists()
     assert not (store.jobs / "pipe3").exists()  # پوشهٔ کار پاک شده
     assert manager.active_count == 0

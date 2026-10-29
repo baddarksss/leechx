@@ -6,6 +6,7 @@ import re
 import pytest
 
 from app.core import text
+from app.version import __version__
 
 PLACEHOLDER = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 
@@ -79,3 +80,50 @@ def test_unknown_language_uses_default_language():
 
 def test_missing_key_returns_key_not_exception():
     assert text.t("fa", "definitely_missing_key") == "definitely_missing_key"
+
+
+@pytest.mark.parametrize("code", text.LANG_ORDER)
+def test_settings_panel_and_language_confirmation_format(code):
+    panel = text.t(
+        code,
+        "settings_panel",
+        language=text.LANGS[code],
+        version=__version__,
+        send_as=text.t(code, "delivery_mode_video"),
+        destination=text.t(code, "delivery_destination_telegram"),
+    )
+    saved = text.t(code, "lang_saved", language=text.LANGS[code])
+    assert text.LANGS[code] in panel
+    assert __version__ in panel
+    assert text.t(code, "delivery_mode_video") in panel
+    assert text.t(code, "delivery_destination_telegram") in panel
+    assert text.LANGS[code] in saved
+    assert text.t(code, "lang_start_prompt")
+
+
+@pytest.mark.parametrize("code", text.LANG_ORDER)
+def test_delivery_panel_and_status_are_localized_and_non_admin(code):
+    delivery = text.t(
+        code,
+        "delivery_panel",
+        title="clip",
+        quality="1080p",
+        size="10 MB",
+        send_as=text.t(code, "delivery_mode_video"),
+        destination=text.t(code, "delivery_destination_telegram"),
+        ttl_line="\n" + text.t(code, "delivery_ttl_short", ttl="6"),
+    )
+    status = text.t(
+        code,
+        "status",
+        uid=7,
+        downloads=3,
+        uploads=2,
+        joined="2026-01-01",
+        version=__version__,
+    )
+    assert "clip" in delivery
+    assert "6" in delivery
+    assert __version__ in status
+    assert "3" in status and "2" in status
+    assert "admin" not in status.lower()

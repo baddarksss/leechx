@@ -38,6 +38,8 @@ if TYPE_CHECKING:  # pragma: no cover
 
 MAX_HOURS = 24
 TOKEN_PREFIX = "lxdbg_"
+# آدرس تک‌تکه: {base}/debug/k/{token}/... — توکن داخل مسیر، بدون هدر.
+KEY_PREFIX = "/debug/k"
 SCOPES: tuple[str, ...] = ("read", "write", "restart")
 # هر scope سطح‌های پایین‌ترِ خودش را هم می‌دهد: write ⇒ read، restart ⇒ read+write.
 # بدون این، دکمهٔ «read + fix code» نمی‌توانست حتی سورس را بخواند.
@@ -155,9 +157,17 @@ class DebugAccess:
     async def revoke_all(self) -> int:
         return await repo.revoke_all_debug_tokens()
 
+    @staticmethod
+    def access_url(base: str, raw: str) -> str:
+        """یک آدرس کامل که توکن داخلش است؛ همین را به هوش مصنوعی می‌دهی."""
+        return f"{(base or '').rstrip('/')}{KEY_PREFIX}/{raw}"
+
     # ── احراز هویت ─────────────────────────────────────────
     @staticmethod
     def _bearer(request: web.Request) -> str:
+        in_path = request.match_info.get("token", "")
+        if in_path:
+            return in_path.strip()
         header = request.headers.get("Authorization", "")
         if header.lower().startswith("bearer "):
             return header[7:].strip()
@@ -305,6 +315,51 @@ class DebugAccess:
         }
 
     # ── هندلرهای HTTP ──────────────────────────────────────
+    async def _h_index(self, request: web.Request) -> web.Response:
+        """راهنمای خودکار برای هوش مصنوعی: همهٔ آدرس‌های کامل همین توکن."""
+        row, error = await self._auth(request, "read")
+        if error:
+            return error
+        raw = request.match_info.get("token", "")
+        base = (self.settings.get_str("public_base_url") or self.cfg.public_base_url or "").rstrip("/")
+        if not base:
+            base = str(request.url.origin())
+        root = self.access_url(base, raw) if raw else f"{base}/debug"
+        granted = self.granted_scopes(row.scopes)
+        endpoints = {
+            "health": {"method": "GET", "url": f"{root}/health", "scope": "read"},
+            "state": {"method": "GET", "url": f"{root}/state", "scope": "read"},
+            "logs": {"method": "GET", "url": f"{root}/logs?limit=50&level=ERROR", "scope": "read"},
+            "source_list": {"method": "GET", "url": f"{root}/source", "scope": "read"},
+            "source_read": {"method": "GET", "url": f"{root}/source?path=app/version.py", "scope": "read"},
+            "source_write": {
+                "method": "POST", "url": f"{root}/source", "scope": "write",
+                "body": {"files": {"app/example.py": "<full new file content>"}},
+            },
+            "pytest": {"method": "POST", "url": f"{root}/pytest", "scope": "write"},
+            "restart": {"method": "POST", "url": f"{root}/restart", "scope": "restart"},
+            "ytdlp_update": {"method": "POST", "url": f"{root}/ytdlp-update", "scope": "restart"},
+        }
+        return web.json_response(
+            {
+                "ok": True,
+                "service": "LeechX debug API",
+                "version": __version__,
+                "scopes": sorted(granted),
+                "expires_at": row.expires_at,
+                "endpoints": {
+                    name: spec for name, spec in endpoints.items() if spec["scope"] in granted
+                },
+                "workflow": [
+                    "GET health, logs and the relevant source files first.",
+                    "POST full file contents to source (only app/, tests/, docs/ and project files).",
+                    "POST pytest, then POST restart to load the changes.",
+                    "Never print or store this URL: it contains the access token.",
+                ],
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
     async def _h_health(self, request: web.Request) -> web.Response:
         _, error = await self._auth(request, "read")
         if error:
@@ -388,11 +443,16 @@ class DebugAccess:
         if not files:
             return self._error(400, "send {\"files\": {path: content}} or {path, content}")
 
+        root = self.updater.root
         for name, body in files.items():
             if not self._writable(name):
                 return self._error(400, f"path is not writable: {name[:120]}")
             if len(body.encode("utf-8")) > MAX_WRITE_BYTES:
                 return self._error(400, f"file is too large: {name[:120]}")
+            rel = name.replace("\\", "/").lstrip("/")
+            # لینک نمادین داخل پروژه نباید راهی به بیرون باز کند.
+            if not (root / rel).resolve().is_relative_to(root):
+                return self._error(400, f"path escapes the project: {name[:120]}")
 
         stamp = time.strftime("%Y%m%d-%H%M%S")
         backup_root = self.cfg.data_dir / "debug-backups" / stamp
@@ -471,6 +531,7 @@ class DebugAccess:
 
     def register(self, app: web.Application) -> None:
         routes = [
+            ("GET", "/debug", self._h_index),
             ("GET", "/debug/health", self._h_health),
             ("GET", "/debug/state", self._h_state),
             ("GET", "/debug/logs", self._h_logs),
@@ -482,6 +543,11 @@ class DebugAccess:
         ]
         for method, path, handler in routes:
             app.router.add_route(method, path, handler)
+            # همان مسیر با توکن داخل آدرس: /debug/k/{token}/health و ...
+            suffix = path[len("/debug"):]
+            app.router.add_route(method, f"{KEY_PREFIX}/{{token}}{suffix}", handler)
+            if not suffix:
+                app.router.add_route(method, f"{KEY_PREFIX}/{{token}}/", handler)
 
 
 def hash_token(raw: str) -> str:

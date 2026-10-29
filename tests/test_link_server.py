@@ -51,6 +51,11 @@ async def test_health_and_serving(setup):
         assert head.status == 200
         assert head.headers["Content-Length"] == str(len(CONTENT))
 
+    traffic = await repo.traffic_totals()
+    assert traffic["direct_link_serve_bytes"] == len(CONTENT) + 4 + 4
+    assert traffic["uploaded_bytes"] == len(CONTENT) + 8
+    assert traffic["downloaded_bytes"] == 0
+
 
 @pytest.mark.asyncio
 async def test_bad_tokens(setup):

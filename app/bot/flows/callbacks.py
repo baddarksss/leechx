@@ -24,6 +24,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     query = update.callback_query
     if query is None or query.data is None:
         return
+    try:
+        await _dispatch(update, context, query)
+    finally:
+        # The processor watchdog also covers user-lock and pre-handler gate delays.
+        await safe_answer(query)
+
+
+async def _dispatch(update: Update, context: ContextTypes.DEFAULT_TYPE, query) -> None:
     data = query.data
     parts = data.split("|")
     prefix, args = parts[0], parts[1:]
@@ -76,6 +84,7 @@ async def _on_quality(update: Update, context: ContextTypes.DEFAULT_TYPE, args: 
 
     draft.option = option
     draft.lang = draft.lang or lang
+    link_flow.normalize_delivery_mode(draft)
     await safe_answer(query, option.label)
     await edit(
         query.message,
@@ -85,7 +94,7 @@ async def _on_quality(update: Update, context: ContextTypes.DEFAULT_TYPE, args: 
 
 
 async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args: list[str]) -> None:
-    """ویدیو / فایل / لینک مستقیم / تغییر نام / بازگشت به کیفیت."""
+    """Per-link selections, rename/thumbnail, then queue the chosen delivery."""
     svc = services(context)
     lang = lang_of(context)
     query = update.callback_query
@@ -101,9 +110,22 @@ async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
         return
     user_lang = draft.lang or lang
 
+    if action == "tab":
+        section = args[2] if len(args) > 2 else ""
+        if section in {"format", "destination", "edits"}:
+            await safe_answer(query, text.t(user_lang, "delivery_section_hint"))
+        else:
+            await safe_answer(query)
+        return
+
     if action == "r":
         await safe_answer(query)
         await link_flow.start_rename(update, context, draft)
+        return
+
+    if action in {"thumbnail", "thumb"}:
+        await safe_answer(query)
+        await link_flow.start_thumbnail(update, context, draft)
         return
 
     if action == "q":
@@ -111,25 +133,74 @@ async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
         if draft.kind == "direct" or draft.auto_quality:
             return
         draft.option = None
-        await edit(query.message, link_flow.quality_text(user_lang, draft), reply_markup=kb.quality_menu(user_lang, draft))
+        await edit(query.message, link_flow.quality_text(user_lang, draft),
+                   reply_markup=kb.quality_menu(user_lang, draft))
         return
 
-    mode = MODE_BY_FLAG.get(action)
-    if mode is None or draft.option is None:
-        await safe_answer(query)
+    if action == "format":
+        if len(args) < 3 or args[2] not in {"video", "document"}:
+            await safe_answer(query)
+            return
+        requested = args[2]
+        if requested == "video" and not link_flow.can_send_as_video(draft):
+            draft.send_as = "document"
+            await safe_answer(
+                query, text.t(user_lang, "video_mode_unavailable"), alert=True
+            )
+        else:
+            draft.send_as = requested
+            await safe_answer(query, text.t(user_lang, "delivery_choice_saved"))
+        await edit(
+            query.message,
+            link_flow.delivery_text(user_lang, draft, svc.settings.ttl_hours),
+            reply_markup=kb.delivery_menu(user_lang, draft),
+        )
         return
+
+    if action == "destination":
+        if len(args) < 3 or args[2] not in {"telegram", "link"}:
+            await safe_answer(query)
+            return
+        draft.destination = args[2]
+        await safe_answer(query, text.t(user_lang, "delivery_choice_saved"))
+        await edit(
+            query.message,
+            link_flow.delivery_text(user_lang, draft, svc.settings.ttl_hours),
+            reply_markup=kb.delivery_menu(user_lang, draft),
+        )
+        return
+
+    new_panel = action == "start"
+    if new_panel:
+        if draft.option is None:
+            await safe_answer(query)
+            return
+        link_flow.normalize_delivery_mode(draft)
+        mode = "link" if draft.destination == "link" else draft.send_as
+    else:
+        # Keep callbacks already present on older Telegram messages working.
+        mode = MODE_BY_FLAG.get(action)
+        if mode is None or draft.option is None:
+            await safe_answer(query)
+            return
+        if mode == "video" and not link_flow.can_send_as_video(draft):
+            mode = "document"
 
     if not svc.limiter.has_slot(draft.user_id, svc.cfg.per_user_concurrency):
         await safe_answer(query, text.t(user_lang, "too_many_active"), alert=True)
         return
 
     svc.drafts.pop(draft_id, draft.user_id)
-    label = {
-        "video": text.t(user_lang, "deliver_video_btn"),
-        "document": text.t(user_lang, "deliver_doc_btn"),
-        "link": text.t(user_lang, "deliver_link_btn"),
-    }[mode]
-    await safe_answer(query, label)
+    if mode == "link":
+        label = text.t(user_lang, "deliver_link_btn")
+    elif mode == "document":
+        label = text.t(user_lang, "deliver_doc_btn")
+    else:
+        label = text.t(user_lang, "deliver_video_btn")
+    await safe_answer(
+        query,
+        label if not new_panel else text.t(user_lang, kb.delivery_start_key(draft)),
+    )
     await link_flow.enqueue(context, query.message, draft, mode, user_lang)
 
 

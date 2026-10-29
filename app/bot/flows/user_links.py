@@ -8,7 +8,7 @@ from telegram import CopyTextButton, Update
 from telegram.ext import ContextTypes
 
 from app.bot import keyboards as kb
-from app.bot.common import edit, lang_of, reply, safe_answer, services
+from app.bot.common import edit, lang_of, panel, reply, safe_answer, services
 from app.core import human
 from app.db import repo
 from app.services.linktoken import make_token
@@ -70,11 +70,8 @@ async def show(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0
         menu_rows.append([kb.Btn("Next ➡️" if lang == "en" else "بعدی ⬅️", callback_data=f"u|ls|{page+1}")])
     menu_rows.append([kb.Btn("🔄" if lang == "en" else "🔄 به‌روزرسانی", callback_data=f"u|ls|{page}")])
     body = _caption(lang, count, page, lines)
-    if update.callback_query:
-        await safe_answer(update.callback_query)
-        await edit(update.callback_query.message, body, reply_markup=kb.Kb(menu_rows))
-    else:
-        await reply(update, body, reply_markup=kb.Kb(menu_rows))
+    await safe_answer(update.callback_query)
+    await panel(update, context, body, kb.Kb(menu_rows))
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, args: list[str]) -> None:

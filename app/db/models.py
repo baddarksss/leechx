@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 
-from sqlalchemy import BigInteger, Boolean, Float, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, Float, Index, Integer, String, Text, false
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -22,8 +22,18 @@ class User(Base):
     username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     first_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     lang: Mapped[str] = mapped_column(String(8), default="fa")
+    language_selected: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
-    downloads: Mapped[int] = mapped_column(Integer, default=0)
+    downloads: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    uploads: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    default_mode: Mapped[str] = mapped_column(
+        String(16), default="video", server_default="video", nullable=False
+    )
+    default_destination: Mapped[str] = mapped_column(
+        String(16), default="telegram", server_default="telegram", nullable=False
+    )
     created_at: Mapped[int] = mapped_column(Integer, default=now)
     last_seen: Mapped[int] = mapped_column(Integer, default=now)
 
@@ -96,6 +106,26 @@ class Setting(Base):
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[int] = mapped_column(Integer, default=now)
+
+
+class TrafficCounter(Base):
+    """Lifetime file-payload counters; values stay exact integer bytes."""
+
+    __tablename__ = "traffic_counters"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    source_download_bytes: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default="0", nullable=False
+    )
+    telegram_receive_bytes: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default="0", nullable=False
+    )
+    telegram_upload_bytes: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default="0", nullable=False
+    )
+    direct_link_serve_bytes: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default="0", nullable=False
+    )
 
 
 class StatEvent(Base):

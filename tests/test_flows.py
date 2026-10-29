@@ -99,7 +99,7 @@ def make_context(info: MediaInfo):
 
 
 @pytest.mark.asyncio
-async def test_direct_link_shows_delivery_menu_without_quality():
+async def test_direct_link_shows_delivery_menu_without_quality(db):
     info = MediaInfo(url="https://cdn.example.com/movie.mp4", title="movie.mp4", direct=True,
                      ext="mp4", mime="video/mp4", filesize=1024)
     update = make_update()
@@ -115,20 +115,32 @@ async def test_direct_link_shows_delivery_menu_without_quality():
 
     markup = update.effective_message.kwargs[-1]["reply_markup"]
     buttons = [btn for row in markup.inline_keyboard for btn in row if btn.callback_data]
-    actions = {btn.callback_data.split("|")[-1] for btn in buttons}
-    assert {"v", "d", "l", "r"} <= actions
+    callbacks = {btn.callback_data for btn in buttons}
+    assert f"o|{draft.id}|format|video" in callbacks
+    assert f"o|{draft.id}|format|document" in callbacks
+    assert f"o|{draft.id}|destination|telegram" in callbacks
+    assert f"o|{draft.id}|destination|link" in callbacks
+    assert f"o|{draft.id}|r" in callbacks
+    assert f"o|{draft.id}|thumbnail" in callbacks
+    assert f"o|{draft.id}|start" in callbacks
     assert not any(btn.callback_data.startswith("q|") for btn in buttons)
     assert update.effective_message.texts[0]  # پیام «در حال بررسی»
 
-    # کاربر «ویدیو» را انتخاب می‌کند
+    # Per-link options update in place; only the final Start queues work.
     query = FakeQuery(update.effective_message)
     callback_update = make_update(query)
-    await callbacks_flow._on_delivery(callback_update, context, [draft.id, "v"])
+    await callbacks_flow._on_delivery(callback_update, context, [draft.id, "format", "video"])
+    assert jobs.tasks == []
+    assert draft.send_as == "video"
+    await callbacks_flow._on_delivery(callback_update, context, [draft.id, "destination", "link"])
+    assert jobs.tasks == []
+    assert draft.destination == "link"
+    await callbacks_flow._on_delivery(callback_update, context, [draft.id, "start"])
 
     assert len(jobs.tasks) == 1
     task = jobs.tasks[0]
     assert task.kind == "direct"
-    assert task.mode == "video"
+    assert task.mode == "link"
     assert task.option.kind == "direct"
     assert task.info.direct is True
     assert task.info.ext == "mp4"
@@ -137,7 +149,7 @@ async def test_direct_link_shows_delivery_menu_without_quality():
 
 
 @pytest.mark.asyncio
-async def test_quality_menu_then_selection_enqueues_job():
+async def test_quality_menu_then_selection_enqueues_job(db):
     info = MediaInfo(
         url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         title="Never Gonna Give You Up",
@@ -174,17 +186,26 @@ async def test_quality_menu_then_selection_enqueues_job():
     assert len(services.drafts) == 1
 
     delivery_markup = update.effective_message.kwargs[-1]["reply_markup"]
-    actions = {
-        btn.callback_data.split("|")[-1]
+    callbacks = {
+        btn.callback_data
         for row in delivery_markup.inline_keyboard
         for btn in row
         if btn.callback_data
     }
-    assert {"v", "d", "l", "r", "q"} <= actions
+    assert f"o|{draft.id}|format|video" in callbacks
+    assert f"o|{draft.id}|format|document" in callbacks
+    assert f"o|{draft.id}|destination|telegram" in callbacks
+    assert f"o|{draft.id}|destination|link" in callbacks
+    assert f"o|{draft.id}|q" in callbacks
+    assert f"o|{draft.id}|start" in callbacks
 
-    # انتخاب «فایل» → کار با حالت document در صف
+    # Choose File, then explicitly press Start to queue the job.
     delivery_update = make_update(FakeQuery(update.effective_message))
-    await callbacks_flow._on_delivery(delivery_update, context, [draft.id, "d"])
+    await callbacks_flow._on_delivery(
+        delivery_update, context, [draft.id, "format", "document"]
+    )
+    assert jobs.tasks == []
+    await callbacks_flow._on_delivery(delivery_update, context, [draft.id, "start"])
 
     assert len(jobs.tasks) == 1
     task = jobs.tasks[0]
@@ -198,7 +219,7 @@ async def test_quality_menu_then_selection_enqueues_job():
 
 
 @pytest.mark.asyncio
-async def test_quality_selection_from_other_user_is_rejected():
+async def test_quality_selection_from_other_user_is_rejected(db):
     info = MediaInfo(url="https://x.com/a", title="t", formats=VIDEO_FORMATS)
     update = make_update()
     context, services, jobs = make_context(info)
@@ -214,7 +235,7 @@ async def test_quality_selection_from_other_user_is_rejected():
 
 
 @pytest.mark.asyncio
-async def test_rename_then_direct_link_mode():
+async def test_rename_then_direct_link_mode(db):
     info = MediaInfo(url="https://cdn.example.com/clip.mp4", title="clip.mp4", direct=True,
                      ext="mp4", mime="video/mp4")
     update = make_update()
@@ -246,7 +267,54 @@ async def test_rename_then_direct_link_mode():
 
 
 @pytest.mark.asyncio
-async def test_daily_quota_is_per_user(monkeypatch):
+async def test_custom_thumbnail_photo_is_saved_and_passed_to_queued_job(db):
+    info = MediaInfo(
+        url="https://cdn.example.com/clip.mp4",
+        title="clip.mp4",
+        direct=True,
+        ext="mp4",
+        mime="video/mp4",
+    )
+    first_update = make_update()
+    context, services, jobs = make_context(info)
+    await link_flow.handle_link(first_update, context, info.url)
+    draft = next(iter(services.drafts._items.values()))
+
+    query = FakeQuery(first_update.effective_message)
+    await callbacks_flow._on_delivery(
+        make_update(query), context, [draft.id, "thumbnail"]
+    )
+    assert context.user_data["state"] == "thumbnail"
+
+    class TelegramFile:
+        async def download_as_bytearray(self):
+            return bytearray(b"\xff\xd8custom-jpeg")
+
+    class PhotoSize:
+        width = 320
+        height = 180
+        file_size = 120
+        async def get_file(self):
+            return TelegramFile()
+
+    photo_message = FakeMessage()
+    photo_message.photo = [PhotoSize()]
+    photo_update = make_update()
+    photo_update.effective_message = photo_message
+    await link_flow.handle_thumbnail(photo_update, context)
+
+    assert draft.custom_thumbnail == b"\xff\xd8custom-jpeg"
+    assert context.user_data.get("state") is None
+    await callbacks_flow._on_delivery(
+        make_update(FakeQuery(first_update.effective_message)),
+        context,
+        [draft.id, "start"],
+    )
+    assert jobs.tasks[0].custom_thumbnail == b"\xff\xd8custom-jpeg"
+
+
+@pytest.mark.asyncio
+async def test_daily_quota_is_per_user(monkeypatch, db):
     info = MediaInfo(url="https://cdn.example.com/a.mp4", title="a.mp4", direct=True,
                      ext="mp4", mime="video/mp4")
     context, services, jobs = make_context(info)
@@ -266,3 +334,20 @@ async def test_daily_quota_is_per_user(monkeypatch):
     await link_flow.handle_link(allowed, context, info.url)
     assert len(services.drafts) == 1
     assert next(iter(services.drafts._items.values())).user_id == 2
+
+
+@pytest.mark.asyncio
+async def test_non_video_defaults_to_document_automatically(db):
+    info = MediaInfo(
+        url="https://cdn.example.com/track.mp3",
+        title="track.mp3",
+        direct=True,
+        ext="mp3",
+        mime="audio/mpeg",
+    )
+    update = make_update()
+    context, services, _jobs = make_context(info)
+    await link_flow.handle_link(update, context, info.url)
+    draft = next(iter(services.drafts._items.values()))
+    assert draft.send_as == "document"
+    assert not link_flow.can_send_as_video(draft)

@@ -121,16 +121,19 @@ class Progress:
     stage: str = "queued"      # queued | downloading | postprocessing | uploading | done | failed
     pct: float = 0.0
     downloaded: int = 0
+    downloaded_bytes_total: int = 0
     total: int = 0
     speed: float = 0.0
     eta: int | None = None
     uploaded: int = 0
+    uploaded_bytes_total: int = 0
     note: str = ""
 
     def reset_download(self) -> None:
         self.stage = "downloading"
         self.pct = 0.0
         self.downloaded = 0
+        self.downloaded_bytes_total = 0
         self.total = 0
         self.speed = 0.0
         self.eta = None
@@ -403,15 +406,26 @@ class Downloader:
     ) -> DownloadResult:
         progress.reset_download()
         finished: list[str] = []
+        per_file_downloaded: dict[str, int] = {}
+        downloaded_bytes_total = 0
 
         def hook(status: dict) -> None:
+            nonlocal downloaded_bytes_total
             if cancel.is_set():
                 raise errors.JobCancelled()
             if status.get("status") == "downloading":
                 total = status.get("total_bytes") or status.get("total_bytes_estimate") or 0
-                done = status.get("downloaded_bytes") or 0
+                done = max(0, int(status.get("downloaded_bytes") or 0))
+                info_dict = status.get("info_dict") or {}
+                filename = status.get("tmpfilename") or status.get("filename") or ""
+                format_id = info_dict.get("format_id") or ""
+                file_key = f"{filename}|{format_id}" if filename or format_id else "default"
+                previous = per_file_downloaded.get(file_key, 0)
+                downloaded_bytes_total += done - previous if done >= previous else done
+                per_file_downloaded[file_key] = done
                 progress.stage = "downloading"
-                progress.downloaded = int(done)
+                progress.downloaded = done
+                progress.downloaded_bytes_total = downloaded_bytes_total
                 progress.total = int(total or 0)
                 progress.speed = float(status.get("speed") or 0)
                 progress.eta = status.get("eta")
@@ -533,6 +547,7 @@ class Downloader:
                                 raise errors.JobCancelled()
                             fh.write(chunk)
                             progress.downloaded += len(chunk)
+                            progress.downloaded_bytes_total += len(chunk)
                             if total:
                                 progress.pct = min(99.9, progress.downloaded * 100.0 / total)
                     if not progress.downloaded or (total and progress.downloaded != total):

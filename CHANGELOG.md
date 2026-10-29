@@ -7,6 +7,126 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.4.2] - 2026-10-29 · "Focused Colors"
+
+### Fixed
+- Blue styling is now limited to delivery section headers; selectable options
+  and quality buttons use Telegram's default appearance, while Start remains green.
+
+## [5.4.1] - 2026-10-29 · "Responsive Delivery"
+
+### Added
+- Owner notification after startup/restart, sent after services are ready and
+  including the running version.
+- A callback acknowledgement watchdog that starts before per-user update
+  serialization and the onboarding/force-join gate.
+
+### Fixed
+- Callback IDs are only marked answered after Telegram confirms the answer, so
+  transient failures can be retried; slow callback queue/handler times are logged.
+- Delivery and quality controls use native Telegram button styling: blue for
+  options and green for the final start action. Section titles point down to
+  their controls; the Persian thumbnail button is labeled «تامبنیل».
+- Require python-telegram-bot 22.7+ for native inline-button styles.
+
+## [5.4.0] - 2026-10-29 · "Clear Delivery"
+
+### Added
+- Admin traffic report with cumulative source-download, Telegram-received,
+  Telegram-upload, and direct-link-served file bytes, plus downloaded, uploaded,
+  and combined totals. Counters are integer-precise and persist across restarts.
+- Traffic is measured as file payload bytes; HTTP headers/protocol overhead are
+  excluded, and the new directional counters begin with this release (the older
+  aggregate events cannot be reliably split by direction).
+
+### Changed
+- Delivery choices now have clear "Upload as" and "Upload to" sections, a
+  separate optional-edits group, and a prominent final action. The initial
+  release used colored emoji; 5.4.1 switches to Telegram's native button styles.
+- Removed the redundant Admin "Cancel tasks" menu item. Cancellation of the
+  admin's own jobs/forms and each user's inbound/file-transfer cancellation
+  paths remain available; old persistent keyboards keep routing safely.
+
+## [5.3.0] - 2026-10-29 · "Clean Chat"
+
+### Fixed
+- Buttons no longer need two or three taps: every callback is answered within
+  0.6 s, link probing, broadcasts, yt-dlp upgrades and ZIP sends run outside the
+  per-user lock, and edits that Telegram rejected silently (reply keyboards on
+  edited messages, media captions, "not modified") now fall back correctly.
+- Admin "home", "help", "status" and "admin panel" inline buttons, and the
+  preview switch, no longer fail silently because of a reply keyboard on edit.
+- Toast texts lost after a first empty answer (admin removal, cookie/join
+  target deletion, log clearing, token revocation) are now shown; HTML tags are
+  stripped from toasts.
+- Deploy results no longer try to edit the admin's uploaded file message.
+- Admins and the owner can no longer be banned from the user card.
+- Unhandled errors show only the error type to users and ignore transient
+  Telegram errors instead of posting raw exception text.
+
+### Changed
+- Single-message UI: every menu edits the user's panel message instead of
+  sending a new one; persistent-keyboard taps, typed commands and form inputs
+  (including cookie text) are deleted from the chat after they are handled.
+- Diagnostics: no duplicate buttons (one duration selector + one button per
+  scope), each token row has its own 🗑, and a new token is shown as one full
+  copyable URL (`/debug/k/<token>`) with a short message. `GET` on that URL
+  returns a self-describing list of endpoints for the AI.
+- Broadcast uses a rate-limited worker pool and honours Telegram `RetryAfter`.
+- Debug API writes refuse symlinks that resolve outside the project.
+
+## [5.2.1] - 2026-10-29 · "Smooth Delivery"
+
+### Fixed
+- Switching language now refreshes Telegram's persistent keyboard; stale buttons
+  from any supported language still route to their intended action.
+- Fixed stale-language status taps falling through to the generic link prompt.
+
+### Changed
+- Shortened the per-link delivery summary, kept only key file/quality/size and
+  selected delivery details, and made the final action label reflect the choice.
+- Clarified ZIP deployment limits: removed files are not deleted, dependencies
+  are not installed, and an in-bot ZIP apply does not update GitHub.
+
+## [5.2.0] - 2026-10-29 · "Delivery Presets"
+
+### Added
+- Added per-user defaults for Telegram format and destination, with per-link
+  overrides, a paired delivery panel, and optional custom thumbnails.
+- Added per-user upload/delivery totals alongside successful download totals.
+
+### Changed
+- The user keyboard now relies on Telegram's native collapse control; help is
+  lower, support is the final full-width row, and only `/start` is listed as a
+  bot command.
+- Removed the user-facing admin marker from My status and refreshed all three
+  language interfaces with grouped emoji styling.
+
+## [5.1.7] - 2026-10-29 · "Steady Keys"
+
+### Changed
+- Replaced the user's scattered inline main menu with a persistent, localized
+  two-column reply keyboard, grouping site/link tools, help/status, settings/
+  language, and contact/keyboard controls into consistent rows.
+- Routed user keyboard taps through the existing handlers; language updates,
+  membership-gate completion, and preview mode now refresh the correct keyboard.
+- Kept inline keyboards for language selection, join checks, and task-specific
+  actions; the admin keyboard remains unchanged.
+
+## [5.1.6] - 2026-10-29 · "Language Gate"
+
+### Fixed
+- Fixed the user settings screen failure caused by passing `lang` both as the
+  translation selector and as a format placeholder; settings and language
+  changes now render normally.
+
+### Added
+- Added a persistent first-use language choice (Persian, English, Russian)
+  before forced-channel membership checks, then continues to the join gate or
+  bot welcome screen. Existing users are prompted once after the upgrade.
+- Added a direct user-menu language shortcut and a SQLite/Postgres migration
+  for the language-choice flag.
+
 ## [5.1.5] - 2026-10-29 · "Clean Deck"
 
 ### Fixed

@@ -10,6 +10,9 @@ async def test_users_upsert_and_lookup(db):
     user = await repo.upsert_user(100, "Ali", "Ali A")
     assert user.id == 100
     assert user.lang == "fa"
+    assert user.default_mode == "video"
+    assert user.default_destination == "telegram"
+    assert user.uploads == 0
 
     again = await repo.upsert_user(100, "Ali2", "Ali B", lang="en")
     assert again.username == "Ali2"
@@ -30,7 +33,15 @@ async def test_ban_and_lang(db):
     assert (await repo.get_user(5)).lang == "en"
     await repo.bump_downloads(5)
     await repo.bump_downloads(5)
-    assert (await repo.get_user(5)).downloads == 2
+    await repo.bump_uploads(5)
+    await repo.set_user_preferences(5, default_mode="document", default_destination="link")
+    row = await repo.get_user(5)
+    assert row.downloads == 2
+    assert row.uploads == 1
+    assert row.default_mode == "document"
+    assert row.default_destination == "link"
+    with pytest.raises(ValueError):
+        await repo.set_user_preferences(5, default_mode="audio", default_destination="link")
 
 
 @pytest.mark.asyncio
@@ -186,3 +197,30 @@ async def test_user_events_since_is_per_user(db):
     assert await repo.user_events_since(2, "download_done", since) == 10
     assert await repo.user_events_since(3, "download_done", since) == 0
     assert await repo.user_events_since(1, "unknown", since) == 0
+
+
+@pytest.mark.asyncio
+async def test_traffic_counters_are_atomic_integer_totals_and_persist(db):
+    huge = 9_007_199_254_740_993
+    assert await repo.traffic_totals() == {
+        "source_download_bytes": 0,
+        "telegram_receive_bytes": 0,
+        "telegram_upload_bytes": 0,
+        "direct_link_serve_bytes": 0,
+        "downloaded_bytes": 0,
+        "uploaded_bytes": 0,
+        "total_bytes": 0,
+    }
+    await repo.record_traffic(source_download_bytes=huge, telegram_receive_bytes=512)
+    await repo.record_traffic(telegram_upload_bytes=1000, direct_link_serve_bytes=24)
+    await repo.record_traffic(source_download_bytes=-10, telegram_upload_bytes=0)
+
+    assert await repo.traffic_totals() == {
+        "source_download_bytes": huge,
+        "telegram_receive_bytes": 512,
+        "telegram_upload_bytes": 1000,
+        "direct_link_serve_bytes": 24,
+        "downloaded_bytes": huge + 512,
+        "uploaded_bytes": 1024,
+        "total_bytes": huge + 1536,
+    }

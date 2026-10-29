@@ -5,6 +5,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from telegram import Update
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from app.core import text
@@ -54,15 +55,28 @@ async def require_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
         if not in_preview(context):
             context.user_data["is_admin"] = True
             return True
-        message = update.effective_message
-        if message is not None:
-            await message.reply_text(text.t(lang, "preview_blocked"))
+        await _deny(update, text.t(lang, "preview_blocked"))
         return False
 
-    msg = update.effective_message
-    if msg is not None:
-        await msg.reply_text(text.t(lang, "admin_only"))
+    await _deny(update, text.t(lang, "admin_only"))
     return False
+
+
+async def _deny(update: Update, body: str) -> None:
+    """برای دکمه‌ها هشدار کوچک (بدون پیام تازه)؛ برای پیام متنی پاسخ کوتاه."""
+    query = getattr(update, "callback_query", None)
+    if query is not None:
+        from app.bot.common import safe_answer
+
+        await safe_answer(query, body, alert=True)
+        return
+    message = update.effective_message
+    if message is None:
+        return
+    try:
+        await message.reply_text(body)
+    except TelegramError:
+        log.debug("could not send access-denied notice", exc_info=True)
 
 
 def admin_ids_sync(cfg) -> set[int]:

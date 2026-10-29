@@ -77,6 +77,7 @@ def test_quality_menu_callback_data_is_valid():
         assert data.count("|") <= 3
     assert any(d.startswith("q|abc123|1080|v") for d in datas)
     assert any(d.startswith("q|abc123|mp3|a") for d in datas)
+    assert all(button.style is None for row in menu.inline_keyboard for button in row)
 
 
 def test_config_rejects_bad_token_and_allows_missing_owner(tmp_path, monkeypatch):
@@ -93,3 +94,9 @@ def test_config_rejects_bad_token_and_allows_missing_owner(tmp_path, monkeypatch
         assert not any("OWNER_IDS" in p for p in problems)
     finally:
         get_config.cache_clear()
+
+
+def test_bot_command_menu_exposes_only_start():
+    from app.bot.app import COMMANDS
+
+    assert [command for command, _description in COMMANDS] == ["start"]

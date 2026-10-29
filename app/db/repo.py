@@ -18,6 +18,7 @@ from app.db.models import (
     Setting,
     SharedFile,
     StatEvent,
+    TrafficCounter,
     User,
 )
 
@@ -122,9 +123,12 @@ async def get_user(user_id: int) -> User | None:
         return await s.get(User, user_id)
 
 
-async def set_lang(user_id: int, lang: str) -> None:
+async def set_lang(user_id: int, lang: str, *, selected: bool = True) -> None:
+    values = {"lang": lang}
+    if selected:
+        values["language_selected"] = True
     async with session() as s:
-        await s.execute(update(User).where(User.id == user_id).values(lang=lang))
+        await s.execute(update(User).where(User.id == user_id).values(**values))
         await s.commit()
 
 
@@ -137,6 +141,37 @@ async def set_banned(user_id: int, banned: bool) -> None:
 async def bump_downloads(user_id: int) -> None:
     async with session() as s:
         await s.execute(update(User).where(User.id == user_id).values(downloads=User.downloads + 1))
+        await s.commit()
+
+
+async def bump_uploads(user_id: int) -> None:
+    async with session() as s:
+        await s.execute(update(User).where(User.id == user_id).values(uploads=User.uploads + 1))
+        await s.commit()
+
+
+async def set_user_preferences(
+    user_id: int,
+    *,
+    default_mode: str,
+    default_destination: str,
+) -> None:
+    if default_mode not in {"video", "document"}:
+        raise ValueError("default_mode must be 'video' or 'document'")
+    if default_destination not in {"telegram", "link"}:
+        raise ValueError("default_destination must be 'telegram' or 'link'")
+    async with session() as s:
+        user = await s.get(User, user_id)
+        if user is None:
+            user = User(
+                id=user_id,
+                default_mode=default_mode,
+                default_destination=default_destination,
+            )
+            s.add(user)
+        else:
+            user.default_mode = default_mode
+            user.default_destination = default_destination
         await s.commit()
 
 
@@ -402,6 +437,70 @@ async def count_shared() -> int:
 async def shared_total_size() -> int:
     async with session() as s:
         return int((await s.scalar(select(func.coalesce(func.sum(SharedFile.size), 0)))) or 0)
+
+
+# ── ترافیک رسانه ───────────────────────────────────────────
+TRAFFIC_FIELDS = (
+    "source_download_bytes",
+    "telegram_receive_bytes",
+    "telegram_upload_bytes",
+    "direct_link_serve_bytes",
+)
+
+
+async def record_traffic(
+    *,
+    source_download_bytes: int = 0,
+    telegram_receive_bytes: int = 0,
+    telegram_upload_bytes: int = 0,
+    direct_link_serve_bytes: int = 0,
+) -> None:
+    """Atomically add file-payload bytes to lifetime counters.
+
+    These are content bytes, not HTTP headers or other protocol overhead.
+    ``init_db`` creates the singleton row before the bot starts serving traffic.
+    """
+    amounts = {
+        "source_download_bytes": max(0, int(source_download_bytes or 0)),
+        "telegram_receive_bytes": max(0, int(telegram_receive_bytes or 0)),
+        "telegram_upload_bytes": max(0, int(telegram_upload_bytes or 0)),
+        "direct_link_serve_bytes": max(0, int(direct_link_serve_bytes or 0)),
+    }
+    changes = {key: amount for key, amount in amounts.items() if amount}
+    if not changes:
+        return
+    async with session() as s:
+        result = await s.execute(
+            update(TrafficCounter)
+            .where(TrafficCounter.id == 1)
+            .values(**{
+                key: getattr(TrafficCounter, key) + amount
+                for key, amount in changes.items()
+            })
+        )
+        if not result.rowcount:
+            # Defensive recovery if a manually edited database lost the singleton.
+            row = TrafficCounter(id=1, **amounts)
+            s.add(row)
+        await s.commit()
+
+
+async def traffic_totals() -> dict[str, int]:
+    """Return exact lifetime counters plus downloaded/uploaded/combined totals."""
+    async with session() as s:
+        row = await s.get(TrafficCounter, 1)
+        values = {
+            key: int(getattr(row, key, 0) or 0) if row is not None else 0
+            for key in TRAFFIC_FIELDS
+        }
+    values["downloaded_bytes"] = (
+        values["source_download_bytes"] + values["telegram_receive_bytes"]
+    )
+    values["uploaded_bytes"] = (
+        values["telegram_upload_bytes"] + values["direct_link_serve_bytes"]
+    )
+    values["total_bytes"] = values["downloaded_bytes"] + values["uploaded_bytes"]
+    return values
 
 
 # ── آمار ───────────────────────────────────────────────────

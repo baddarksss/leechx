@@ -33,6 +33,9 @@ class Draft:
     lang: str = "fa"
     option: FormatOption | None = None
     custom_name: str = ""
+    send_as: str = "video"  # per-link override, initialized from the user's preference
+    destination: str = "telegram"  # telegram | link
+    custom_thumbnail: bytes | None = None  # bounded Telegram photo bytes, kept only in memory
     auto_quality: bool = False  # Instagram/TikTok skip manual quality selection
     created_at: float = field(default_factory=time.time)
 

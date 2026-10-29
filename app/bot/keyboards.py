@@ -1,13 +1,15 @@
-"""کیبوردهای شیشه‌ای — همهٔ callback dataها کوتاه و بدون فاصله هستند.
+"""کیبوردهای تلگرام — همهٔ callback dataها کوتاه و بدون فاصله هستند.
 
-چیدمان تازه: منوی کاربر ۲×۲، منوی ادمین در شش دستهٔ روشن، و دکمهٔ
-«بستن کیبورد» که مثل تلگرام بومی عمل می‌کند (نه دستور).
+منوی کاربر روی کارهای اصلی تمرکز دارد؛ جمع‌کردن کیبورد با کنترل بومی تلگرام
+انجام می‌شود. تنظیمات پیش‌فرض و انتخاب هر لینک در دکمه‌های inline مدیریت می‌شوند.
 """
 from __future__ import annotations
 
+import time
+
+from telegram import CopyTextButton, ReplyKeyboardMarkup
 from telegram import InlineKeyboardButton as Btn
 from telegram import InlineKeyboardMarkup as Kb
-from telegram import ReplyKeyboardMarkup
 
 from app.core import text
 from app.core.human import parse_bool
@@ -24,12 +26,15 @@ M_CONTACT = "m|contact"
 M_CLOSE = "m|close"
 M_HOME = "m|home"
 M_LANG = "m|lang"
-M_KB_CLOSE = "m|kbclose"
+M_KB_CLOSE = "m|kbclose"  # callback قدیمی؛ در منوهای جدید نمایش داده نمی‌شود
+M_PREF_MODE = "m|prefmode"
+M_PREF_DEST = "m|prefdest"
 M_PREVIEW = "m|preview"
 M_EXIT_PREVIEW = "m|exitpreview"
 
 A_STATS = "a|stats"
 A_JOBS = "a|jobs"
+A_TRAFFIC = "a|traffic"
 A_ADMINS = "a|admins"
 A_SET = "a|set"
 A_BC = "a|bc"
@@ -70,18 +75,60 @@ def _btn(lang: str, key: str, data: str, **kwargs) -> Btn:
     return Btn(text.t(lang, key, **kwargs), callback_data=data)
 
 
+def _delivery_btn(label: str, data: str, *, style: str | None = None) -> Btn:
+    """Apply native color only when a section header or final action requests it."""
+    if style is None:
+        return Btn(label, callback_data=data)
+    return Btn(label, callback_data=data, style=style)
+
+
 def main_menu(lang: str, admin: bool, preview: bool = False) -> Kb:
+    """Inline equivalent of the concise persistent user menu."""
     rows = [
-        [_btn(lang, "btn_help", M_HELP), _btn(lang, "btn_status", M_STATUS)],
         [_btn(lang, "btn_sites", M_SITES), _btn(lang, "my_links_btn", "u|ls|0")],
-        [_btn(lang, "btn_settings", M_SETTINGS), _btn(lang, "btn_contact", M_CONTACT)],
+        [_btn(lang, "btn_status", M_STATUS), _btn(lang, "btn_settings", M_SETTINGS)],
+        [_btn(lang, "btn_lang", M_LANG)],
     ]
     if preview:
         rows.append([_btn(lang, "btn_preview_exit", M_EXIT_PREVIEW)])
     elif admin:
         rows.append([_btn(lang, "btn_admin", M_ADMIN), _btn(lang, "btn_preview", M_PREVIEW)])
-    rows.append([_btn(lang, "btn_close", M_CLOSE)])
+    rows.extend([
+        [_btn(lang, "btn_help", M_HELP)],
+        [_btn(lang, "btn_contact", M_CONTACT)],
+    ])
     return Kb(rows)
+
+
+def user_persistent_labels(lang: str, *, preview: bool = False) -> dict[str, str]:
+    """Text labels and actions for the persistent user reply keyboard."""
+    labels = {
+        "links": text.t(lang, "my_links_btn"),
+        "status": text.t(lang, "btn_status"),
+        "settings": text.t(lang, "btn_settings"),
+        "lang": text.t(lang, "btn_lang"),
+        "help": text.t(lang, "btn_help"),
+        "contact": text.t(lang, "btn_contact"),
+    }
+    if preview:
+        labels["exitpreview"] = text.t(lang, "btn_preview_exit")
+    return labels
+
+
+def user_persistent_menu(lang: str, *, preview: bool = False) -> ReplyKeyboardMarkup:
+    """Grouped persistent menu; Telegram's native control collapses the keyboard."""
+    labels = user_persistent_labels(lang, preview=preview)
+    rows = [
+        [labels["links"], labels["status"]],
+        [labels["settings"], labels["lang"]],
+    ]
+    if preview:
+        rows.append([labels["exitpreview"]])
+    rows.extend([
+        [labels["help"]],
+        [labels["contact"]],
+    ])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, is_persistent=True)
 
 
 def back_home(lang: str, extra: list[list] | None = None) -> Kb:
@@ -93,24 +140,34 @@ def back_home(lang: str, extra: list[list] | None = None) -> Kb:
     return Kb(rows)
 
 
-def language_menu(lang: str) -> Kb:
+def language_menu(lang: str, *, onboarding: bool = False) -> Kb:
     rows = [[Btn(text.LANGS[code], callback_data=f"{LANG_PREFIX}{code}")] for code in text.LANG_ORDER]
-    rows.append([
-        _btn(lang, "btn_back", M_SETTINGS),
-        _btn(lang, "btn_close", M_CLOSE),
-    ])
+    if not onboarding:
+        rows.append([
+            _btn(lang, "btn_back", M_SETTINGS),
+            _btn(lang, "btn_close", M_CLOSE),
+        ])
     return Kb(rows)
 
 
-def user_settings_menu(lang: str) -> Kb:
-    """تنظیمات کاربر: زبان و بستن کیبورد (بدون شلوغی)."""
+def user_settings_menu(
+    lang: str,
+    default_mode: str = "video",
+    default_destination: str = "telegram",
+) -> Kb:
+    """User settings: persistent default format and delivery destination."""
+    mode_key = "delivery_mode_video" if default_mode == "video" else "delivery_mode_file"
+    destination_key = (
+        "delivery_destination_telegram" if default_destination == "telegram"
+        else "delivery_destination_link"
+    )
+    mode = text.t(lang, mode_key)
+    destination = text.t(lang, destination_key)
     return Kb([
+        [Btn(text.t(lang, "settings_default_mode_btn", value=mode), callback_data=M_PREF_MODE)],
+        [Btn(text.t(lang, "settings_default_destination_btn", value=destination), callback_data=M_PREF_DEST)],
         [_btn(lang, "btn_lang", M_LANG)],
-        [_btn(lang, "btn_kb_close", M_KB_CLOSE)],
-        [
-            _btn(lang, "btn_back", M_HOME),
-            _btn(lang, "btn_close", M_CLOSE),
-        ],
+        [_btn(lang, "btn_back", M_HOME)],
     ])
 
 
@@ -121,7 +178,10 @@ def quality_menu(lang: str, draft: Draft) -> Kb:
     rows: list[list] = []
     pair: list = []
     for opt in videos:
-        pair.append(Btn(text.t(lang, "video_btn", label=opt.label), callback_data=f"q|{draft.id}|{opt.code}|v"))
+        pair.append(_delivery_btn(
+            text.t(lang, "video_btn", label=opt.label),
+            f"q|{draft.id}|{opt.code}|v",
+        ))
         if len(pair) == 2:
             rows.append(pair)
             pair = []
@@ -129,13 +189,13 @@ def quality_menu(lang: str, draft: Draft) -> Kb:
         rows.append(pair)
 
     audio_row = [
-        Btn(text.t(lang, "audio_btn", label=opt.label), callback_data=f"q|{draft.id}|{opt.code}|a")
+        _delivery_btn(text.t(lang, "audio_btn", label=opt.label), f"q|{draft.id}|{opt.code}|a")
         for opt in audios
     ]
     if audio_row:
         rows.append(audio_row)
 
-    rows.append([Btn(text.t(lang, "btn_close"), callback_data=f"d|{draft.id}")])
+    rows.append([_delivery_btn(text.t(lang, "btn_close"), f"d|{draft.id}")])
     return Kb(rows)
 
 
@@ -149,7 +209,6 @@ def persistent_admin_labels(lang: str) -> dict[str, str]:
         "deploy": text.t(lang, "sec_deploy"),
         "debug": text.t(lang, "sec_debug"),
         "cookies": text.t(lang, "sec_cookies"),
-        "cancel": text.t(lang, "sec_cancel"),
     }
 
 
@@ -160,7 +219,7 @@ def admin_persistent_menu(lang: str) -> ReplyKeyboardMarkup:
         [
             [labels["stats"], labels["users"], labels["settings"]],
             [labels["groups"], labels["deploy"], labels["debug"]],
-            [labels["cookies"], labels["cancel"]],
+            [labels["cookies"]],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -171,17 +230,43 @@ def cancel_job(lang: str, job_id: str) -> Kb:
     return Kb([[Btn(text.t(lang, "cancel_btn"), callback_data=f"x|{job_id}")]])
 
 
+def delivery_start_key(draft: Draft) -> str:
+    """Localized label for the final action, based on this link's current choices."""
+    if draft.destination == "link":
+        return "deliver_start_link_btn"
+    return "deliver_start_video_btn" if draft.send_as == "video" else "deliver_start_file_btn"
+
+
 def delivery_menu(lang: str, draft: Draft) -> Kb:
-    """کیبورد انتخاب نحوهٔ تحویل + تغییر نام."""
+    """Sectioned per-link choices, optional edits, and a distinct final action."""
+    check = "✅ "
+    empty = "▫️ "
     rows = [
-        [Btn(text.t(lang, "deliver_video_btn"), callback_data=f"o|{draft.id}|v")],
-        [Btn(text.t(lang, "deliver_doc_btn"), callback_data=f"o|{draft.id}|d")],
-        [Btn(text.t(lang, "deliver_link_btn"), callback_data=f"o|{draft.id}|l")],
-        [Btn(text.t(lang, "deliver_rename_btn"), callback_data=f"o|{draft.id}|r")],
+        [_delivery_btn(text.t(lang, "delivery_tab_format"), f"o|{draft.id}|tab|format", style="primary")],
+        [
+            _delivery_btn((check if draft.send_as == "video" else empty) + text.t(lang, "deliver_video_btn"),
+                          f"o|{draft.id}|format|video"),
+            _delivery_btn((check if draft.send_as == "document" else empty) + text.t(lang, "deliver_doc_btn"),
+                          f"o|{draft.id}|format|document"),
+        ],
+        [_delivery_btn(text.t(lang, "delivery_tab_destination"), f"o|{draft.id}|tab|destination", style="primary")],
+        [
+            _delivery_btn((check if draft.destination == "telegram" else empty) + text.t(lang, "deliver_telegram_btn"),
+                          f"o|{draft.id}|destination|telegram"),
+            _delivery_btn((check if draft.destination == "link" else empty) + text.t(lang, "deliver_link_btn"),
+                          f"o|{draft.id}|destination|link"),
+        ],
+        [_delivery_btn(text.t(lang, "delivery_tab_edits"), f"o|{draft.id}|tab|edits", style="primary")],
     ]
     if draft.kind != "direct" and not draft.auto_quality:
-        rows.append([Btn(text.t(lang, "deliver_back_btn"), callback_data=f"o|{draft.id}|q")])
-    rows.append([Btn(text.t(lang, "btn_close"), callback_data=f"d|{draft.id}")])
+        rows.append([_delivery_btn(text.t(lang, "deliver_back_btn"), f"o|{draft.id}|q")])
+    rows.append([
+        _delivery_btn(text.t(lang, "deliver_thumbnail_btn"), f"o|{draft.id}|thumbnail"),
+        _delivery_btn(text.t(lang, "deliver_rename_btn"), f"o|{draft.id}|r"),
+    ])
+    rows.append([
+        _delivery_btn(text.t(lang, delivery_start_key(draft)), f"o|{draft.id}|start", style="success")
+    ])
     return Kb(rows)
 
 
@@ -213,6 +298,7 @@ def admin_section_menu(lang: str, section: str, *, debug_enabled: bool = False) 
     if section == SEC_STATS:
         rows = [
             [_btn(lang, "btn_admin_stats", A_STATS), _btn(lang, "btn_admin_jobs", A_JOBS)],
+            [_btn(lang, "btn_admin_traffic", A_TRAFFIC)],
             [_btn(lang, "btn_admin_reports", A_REPORTS), _btn(lang, "btn_admin_logs", A_LOGS)],
             [_btn(lang, "btn_admin_cleanup", A_CLEAN)],
         ]
@@ -233,8 +319,7 @@ def admin_section_menu(lang: str, section: str, *, debug_enabled: bool = False) 
         return deploy_menu(lang)
     elif section == SEC_DEBUG:
         rows = [
-            [_debug_toggle_btn(lang, debug_enabled)],
-            [_btn(lang, "btn_admin_debug", "a|debug"), _btn(lang, "btn_admin_preview", "a|preview")],
+            [_debug_toggle_btn(lang, debug_enabled), _btn(lang, "btn_admin_debug", "a|debug")],
         ]
     elif section == SEC_COOKIES:
         rows = [
@@ -359,28 +444,74 @@ def join_gate(lang: str, targets: list) -> Kb:
 
 
 # ── عیب‌یابی ───────────────────────────────────────────────
-def debug_menu(lang: str, tokens: list, enabled: bool, max_hours: int) -> Kb:
+DEBUG_TTLS = (1, 6, 24)
+
+
+def debug_scope_key(scopes: str) -> str:
+    """کلید متن سطح دسترسی: بالاترین سطح موجود در رشتهٔ scope."""
+    parts = {p.strip() for p in (scopes or "").split(",")}
+    if "restart" in parts:
+        return "debug_scope_restart"
+    if "write" in parts:
+        return "debug_scope_write"
+    return "debug_scope_read"
+
+
+def next_debug_ttl(current: int, max_hours: int) -> int:
+    allowed = [hours for hours in DEBUG_TTLS if hours <= max_hours] or [max_hours]
+    later = [hours for hours in allowed if hours > current]
+    return later[0] if later else allowed[0]
+
+
+def debug_menu(lang: str, tokens: list, enabled: bool, max_hours: int, ttl: int = 6) -> Kb:
+    """یک دکمه برای هر کار؛ مدت اعتبار با یک دکمهٔ چرخشی انتخاب می‌شود."""
+    ttl = max(1, min(int(ttl or 6), max_hours))
     rows: list[list] = [
-        [_debug_toggle_btn(lang, enabled)],
-        [_btn(lang, "btn_debug_health", "a|dbhealth")],
-        [_btn(lang, "btn_admin_preview", "a|preview")],
+        [_debug_toggle_btn(lang, enabled), _btn(lang, "btn_debug_health", "a|dbhealth")],
     ]
     if enabled:
         rows += [
-            [_btn(lang, "btn_debug_make_read", "a|dbmake|read|6"),
-             _btn(lang, "btn_debug_make_write", "a|dbmake|write|6")],
-            [_btn(lang, "btn_debug_make_restart", "a|dbmake|restart|6")],
-            [_btn(lang, "btn_debug_make_read", "a|dbmake|read|24"),
-             _btn(lang, "btn_debug_make_write", "a|dbmake|write|24")],
+            [_btn(lang, "btn_debug_ttl", "a|dbttl", hours=ttl)],
+            [_btn(lang, "btn_debug_make_read", f"a|dbmake|read|{ttl}"),
+             _btn(lang, "btn_debug_make_write", f"a|dbmake|write|{ttl}")],
+            [_btn(lang, "btn_debug_make_restart", f"a|dbmake|restart|{ttl}")],
         ]
-        for row in tokens[:10]:
-            rows.append([Btn(
-                text.t(lang, "debug_token_button", id=row.id, scopes=row.scopes),
-                callback_data=f"a|dbrevoke|{row.id}",
-            )])
-        if tokens:
-            rows.append([_btn(lang, "btn_debug_revoke_all", "a|dbrevokeall")])
+    # توکن‌ها حتی وقتی دسترسی خاموش است دیده و حذف می‌شوند.
+    for row in tokens[:10]:
+        expires = time.strftime("%H:%M", time.localtime(row.expires_at))
+        rows.append([
+            Btn(
+                text.t(
+                    lang,
+                    "debug_token_button",
+                    id=row.id,
+                    scopes=text.t(lang, debug_scope_key(row.scopes)),
+                    expires=expires,
+                ),
+                callback_data=f"a|dbinfo|{row.id}",
+            ),
+            Btn("🗑", callback_data=f"a|dbrevoke|{row.id}"),
+        ])
+    if len(tokens) > 1:
+        rows.append([_btn(lang, "btn_debug_revoke_all", "a|dbrevokeall")])
+    rows.append([_btn(lang, "btn_admin_preview", "a|preview")])
     return Kb(rows)
+
+
+def debug_token_menu(lang: str, url: str, token_id: int) -> Kb:
+    """زیر پیام توکن تازه: کپی کل آدرس با یک ضربه، حذف همین توکن، بازگشت به پنل."""
+    rows: list[list] = []
+    if len(url) <= 256:  # سقف CopyTextButton
+        rows.append([Btn(text.t(lang, "btn_debug_copy"), copy_text=CopyTextButton(url))])
+    rows.append([
+        _btn(lang, "btn_debug_revoke_this", f"a|dbrevoke|{token_id}"),
+        _btn(lang, "btn_admin_debug", "a|debug"),
+    ])
+    return Kb(rows)
+
+
+def debug_back_menu(lang: str) -> Kb:
+    return Kb([[_btn(lang, "btn_admin_debug", "a|debug")]])
 
 
 def preview_menu(lang: str, active: bool) -> Kb:

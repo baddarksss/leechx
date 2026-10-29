@@ -9,9 +9,9 @@ import time
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from app.bot.common import lang_of, reply, services
+from app.bot.common import drop_user_input, lang_of, panel, reply, services
 from app.bot.guards import require_admin
-from app.bot.states import ST_COOKIE_ADD, ST_DEPLOY_ZIP, clear_state, get_state
+from app.bot.states import ST_COOKIE_ADD, ST_DEPLOY_ZIP, ST_THUMBNAIL, clear_state, get_state
 from app.core import human, text
 from app.services.cookies import MAX_COOKIE_BYTES, CookieError
 
@@ -130,8 +130,10 @@ async def _handle_cookie_upload(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     clear_state(context)
-    await reply(
+    await drop_user_input(update)  # فایل کوکی محرمانه است؛ در چت نماند
+    await panel(
         update,
+        context,
         text.t(
             lang,
             "cookie_saved",
@@ -150,6 +152,11 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     state = get_state(context)
+    if state == ST_THUMBNAIL:
+        from app.bot.flows import link as link_flow
+
+        await link_flow.handle_thumbnail(update, context)
+        return
     if state == ST_COOKIE_ADD:
         await _handle_cookie_upload(update, context)
         return

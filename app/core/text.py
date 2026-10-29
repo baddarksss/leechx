@@ -57,6 +57,7 @@ FA: dict[str, str] = {
         "• فایل بعد از آپلود از سرور پاک می‌شود\n"
         "• لینک مستقیم به‌طور پیش‌فرض <b>{ttl} ساعت</b> معتبر است"
     ),
+    "startup_ready": "✅ <b>ربات پس از راه‌اندازی مجدد آماده است.</b>\n🤖 نسخهٔ فعال: <b>v{version}</b>",
     "help": (
         "<b>📖 راهنما</b>\n\n"
         "<b>۱) دانلود از لینک</b>\n"
@@ -67,9 +68,9 @@ FA: dict[str, str] = {
         "• لینک مستقیم (مثل <code>.mp4</code>) بدون انتخاب کیفیت دانلود می‌شود.\n"
         "• حداکثر حجم: {max_mb} مگابایت.\n"
         "• فایل‌های ساخته‌شده بعد از انقضا خودکار پاک می‌شوند.\n\n"
-        "<b>دستورها</b>\n"
-        "/start شروع • /help راهنما • /sites لیست سایت‌ها • "
-        "/me وضعیت من • /links لینک‌های من • /cancel لغو"
+        "<b>دکمه‌ها</b>\n"
+        "برای راهنما، آمار، تنظیمات و لینک‌ها از دکمه‌های منو استفاده کن. "
+        "برای بازکردن دوبارهٔ منو، <code>/start</code> را بفرست."
     ),
     "send_link_or_file": "🔗 یک لینک یا فایل بفرست.",
     "probing": "🔍 در حال بررسی لینک…",
@@ -135,42 +136,46 @@ FA: dict[str, str] = {
 
     # ── انتخاب نحوهٔ تحویل ──
     "delivery_panel": (
-        "<b>📥 فایل پیدا شد</b>\n"
-        "<b>{title}</b>\n\n"
-        "🎞 کیفیت: <b>{quality}</b>\n"
-        "📦 حجم: {size}\n"
-        "🏷 نام فایل: <code>{name}</code>\n\n"
-        "<b>چطور می‌خواهی فایل را دریافت کنی؟</b>\n\n"
-        "🎬 <b>ارسال به‌صورت ویدیو</b>\n"
-        "ویدیو همین‌جا در تلگرام ارسال می‌شود و می‌توانی پخشش کنی. "
-        "اگر فرمت قابل‌پخش نباشد، به‌صورت فایل فرستاده می‌شود.\n\n"
-        "📁 <b>ارسال به‌صورت فایل</b>\n"
-        "فایل در همین چت به شکل سند (Document) ارسال می‌شود؛ "
-        "بدون فشرده‌سازی دوباره توسط تلگرام.\n\n"
-        "🔗 <b>ساخت لینک دانلود</b>\n"
-        "فایل روی سرور ذخیره می‌شود و یک لینک قابل کپی و اشتراک‌گذاری "
-        "با اعتبار <b>{ttl} ساعت</b> می‌گیری.\n\n"
-        "✏️ برای عوض‌کردن نام فایل، «تغییر نام» را بزن.\n"
-        "👇 با لمس هر یک از سه گزینهٔ اول، عملیات شروع می‌شود."
+        "<b>📥 {title}</b>\n"
+        "🎞 {quality} · 📦 {size}\n"
+        "📤 {send_as} → {destination}{ttl_line}"
     ),
     "quality_auto": "بهترین کیفیت موجود (خودکار)",
     "quality_original": "همان کیفیت فایل اصلی",
-    "size_unknown": "فعلاً نامشخص؛ بعد از دانلود معلوم می‌شود",
-    "deliver_video_btn": "🎬 ارسال ویدیو در تلگرام",
-    "deliver_doc_btn": "📁 ارسال فایل در تلگرام",
-    "deliver_link_btn": "🔗 ساخت لینک دانلود مستقیم",
-    "deliver_rename_btn": "✏️ تغییر نام فایل",
+    "size_unknown": "نامشخص",
+    "delivery_hint": "گزینه‌ها را انتخاب کن، بعد «شروع / آپلود» را بزن.",
+    "delivery_ttl_short": "⏳ اعتبار لینک: {ttl} ساعت",
+    "delivery_thumbnail_custom_short": "🖼 تصویر سفارشی",
+    "deliver_video_btn": "🎞 ویدیو",
+    "deliver_doc_btn": "📄 فایل",
+    "deliver_telegram_btn": "📤 تلگرام",
+    "deliver_link_btn": "🔗 لینک مستقیم",
+    "deliver_rename_btn": "✏️ تغییر نام",
+    "deliver_thumbnail_btn": "🖼 تامبنیل",
+    "deliver_start_btn": "🚀 شروع / آپلود",
+    "deliver_start_video_btn": "🚀 شروع و ارسال ویدیو",
+    "deliver_start_file_btn": "🚀 شروع و ارسال فایل",
+    "deliver_start_link_btn": "🔗 ساخت لینک مستقیم",
     "deliver_back_btn": "↩️ تغییر کیفیت",
+    "delivery_tab_format": "📤 آپلود به‌صورت ⬇️",
+    "delivery_tab_destination": "🎯 آپلود به ⬇️",
+    "delivery_tab_edits": "🛠 تنظیمات فایل ⬇️",
+    "delivery_section_hint": "⬇️ یکی از گزینه‌های ردیف بعد را انتخاب کن.",
+    "delivery_choice_saved": "✅ انتخاب ذخیره شد",
+    "video_mode_unavailable": "این فایل ویدیوی قابل‌پخش نیست؛ حالت فایل انتخاب شد.",
     "rename_prompt": "✏️ نام جدید فایل را بفرست (پسوند لازم نیست):\nنام فعلی: <code>{name}</code>",
     "rename_done": "✅ نام ذخیره شد: <b>{name}</b>",
     "rename_bad": "❌ نام معتبر نیست؛ یک نام کوتاه بفرست.",
+    "thumbnail_prompt": "🖼 یک عکس را به‌صورت Photo بفرست؛ تصویر بندانگشتی باید JPEG و حداکثر ۳۲۰×۳۲۰ و ۲۰۰KB باشد.",
+    "thumbnail_saved": "✅ تصویر بندانگشتی سفارشی ذخیره شد.",
+    "thumbnail_bad": "⚠️ یک عکس کوچک را به‌صورت Photo بفرست (حداکثر ۳۲۰×۳۲۰ و ۲۰۰KB).",
 
     # ── دکمه‌های منو ──
-    "btn_help": "📖 راهنما",
-    "btn_status": "📊 وضعیت من",
+    "btn_help": "📚 راهنما",
+    "btn_status": "📈 آمار من",
     "btn_sites": "🌐 سایت‌های پشتیبانی",
     "btn_settings": "⚙️ تنظیمات",
-    "btn_contact": "✉️ ارتباط با ادمین",
+    "btn_contact": "💬 پشتیبانی / ارتباط با ادمین",
     "btn_admin": "👑 پنل ادمین",
     "sec_stats": "📊 آمار",
     "sec_users": "👥 کاربران",
@@ -182,9 +187,10 @@ FA: dict[str, str] = {
     "sec_cancel": "✖️ لغو کارها",
     "btn_back": "↩️ بازگشت",
     "btn_close": "✖️ بستن",
-    "btn_lang": "🌍 زبان",
+    "btn_lang": "🌐 تغییر زبان",
     "btn_admin_stats": "📈 آمار",
     "btn_admin_jobs": "🧾 کارهای اخیر",
+    "btn_admin_traffic": "🌐 ترافیک مصرفی",
     "btn_admin_admins": "👥 ادمین‌ها",
     "btn_admin_settings": "⚙️ تنظیمات ربات",
     "btn_admin_broadcast": "📢 پیام همگانی",
@@ -239,9 +245,9 @@ FA: dict[str, str] = {
     "status": (
         "<b>📊 وضعیت شما</b>\n\n"
         "🆔 شناسه: <code>{uid}</code>\n"
-        "⬇️ دانلودها: <b>{downloads}</b>\n"
+        "⬇️ دانلودهای موفق: <b>{downloads}</b>\n"
+        "📤 فایل‌های تحویل‌شده/آپلودها: <b>{uploads}</b>\n"
         "📅 عضو از: {joined}\n"
-        "👑 ادمین: {admin}\n"
         "🤖 نسخه: <b>v{version}</b>"
     ),
     "yes": "بله",
@@ -276,6 +282,10 @@ FA: dict[str, str] = {
         "🤖 نسخه: <b>v{version}</b>"
     ),
     "admin_jobs": "<b>🧾 کارهای اخیر</b>\n\n{list}",
+    "admin_traffic": (
+        "<b>🌐 ترافیک تجمعی ربات</b>\n\n⬇️ دانلود/دریافت کل: <b>{downloaded}</b>\n  • از سایت‌ها: {source_downloaded}\n  • فایل از تلگرام: {telegram_received}\n\n⬆️ آپلود/ارسال کل: <b>{uploaded}</b>\n  • به تلگرام: {telegram_uploaded}\n  • تحویل لینک مستقیم: {link_served}\n\n🔁 مجموع دوطرفه: <b>{total}</b>\n\n{note}"
+    ),
+    "traffic_note": "از زمان فعال‌شدن شمارنده‌ها؛ بایت فایل/رسانه شمرده می‌شود، نه پروب متادیتا، هدرها یا سربار شبکه.",
     "admin_admins": (
         "<b>👥 ادمین‌ها</b>\n\n"
         "👑 مالک: {owners}\n"
@@ -287,6 +297,7 @@ FA: dict[str, str] = {
     "admin_remove_ok": "🗑 ادمین حذف شد: <code>{uid}</code>",
     "admin_remove_fail": "❌ این کاربر ادمین نیست.",
     "admin_owner_immutable": "⛔️ مالک را نمی‌توان حذف کرد.",
+    "admin_ban_staff": "⛔️ ادمین یا مالک را نمی‌توان بن کرد.",
     "admin_settings": (
         "<b>⚙️ تنظیمات ربات</b>\n\n"
         "⏳ اعتبار لینک: <b>{ttl} ساعت</b>\n"
@@ -392,17 +403,32 @@ FA: dict[str, str] = {
     "btn_kb_close": "⌨️ بستن کیبورد",
     "kb_closed": "⌨️ کیبورد بسته شد. هر وقت خواستی با /start دوباره بازش کن.",
     "settings_panel": (
-        "<b>⚙️ تنظیمات</b>\n\n"
-        "🌍 زبان: <b>{lang}</b>\n"
+        "<b>⚙️ تنظیمات شما</b>\n\n"
+        "🌍 زبان: <b>{language}</b>\n"
+        "📦 نوع ارسال پیش‌فرض: <b>{send_as}</b>\n"
+        "📍 مقصد پیش‌فرض: <b>{destination}</b>\n"
         "🤖 نسخه: <b>{version}</b>\n\n"
-        "از دکمه‌های زیر استفاده کن:"
+        "پیش‌فرض‌ها را با دکمه‌های زیر عوض کن؛ در پنل هر لینک هم می‌توانی جداگانه انتخاب کنی."
+    ),
+    "delivery_mode_video": "🎞 ویدیو",
+    "delivery_mode_file": "📄 فایل",
+    "delivery_destination_telegram": "📤 تلگرام",
+    "delivery_destination_link": "🔗 لینک مستقیم",
+    "delivery_thumbnail_original": "خودکار/اصلی",
+    "delivery_thumbnail_custom": "سفارشی",
+    "settings_default_mode_btn": "📦 نوع ارسال پیش‌فرض: {value}",
+    "settings_default_destination_btn": "📍 مقصد پیش‌فرض: {value}",
+    "lang_start_prompt": (
+        "<b>🌍 زبانت را انتخاب کن</b>\n\n"
+        "بعد از انتخاب زبان، اگر قفل عضویت فعال باشد، کانال‌های لازم نمایش داده می‌شوند."
     ),
     "lang_title": (
         "<b>🌍 انتخاب زبان</b>\n\n"
         "زبان فعلی: <b>{current}</b>\n\n"
         "Language · Язык · زبان"
     ),
-    "lang_saved": "✅ زبان به <b>{lang}</b> تغییر کرد.",
+    "lang_saved": "✅ زبان به <b>{language}</b> تغییر کرد.",
+    "menu_updated": "✅ منو به‌روزرسانی شد.",
     "admin_lang_fixed": (
         "🔒 پنل مدیریت همیشه فارسی است؛ تغییر زبان فقط برای کاربران عادی است."
     ),
@@ -556,21 +582,17 @@ FA: dict[str, str] = {
     "deploy_ytdlp_working": "⏳ در حال بروزرسانی yt-dlp…",
     "btn_deploy_version": "🔢 جزئیات نسخه",
     "deploy_update_note": (
-        "ℹ️ اعمال سورس فقط فایل‌های برنامه را عوض می‌کند؛ <code>.env</code>، "
-        "دیتابیس و فایل‌های <code>data</code> دست‌نخورده می‌مانند."
+        "ℹ️ ZIP کامل بفرست؛ فایل‌های حذف‌شده خودکار پاک نمی‌شوند. <code>.env</code>/دیتابیس/داده‌ها "
+        "حفظ می‌شوند؛ وابستگی‌های جدید نصب و GitHub به‌روزرسانی نمی‌شود."
     ),
 
     # ── عیب‌یابی / توکن موقت ──
     "btn_admin_debug": "🩺 عیب‌یابی",
     "debug_panel": (
         "<b>🩺 عیب‌یابی</b>\n\n"
-        "وضعیت توکن دسترسی: <b>{state}</b>\n"
-        "توکن‌های فعال: <b>{active}</b>\n\n"
-        "با «توکن جدید» می‌توانی یک توکن <b>محدود و زمان‌دار</b> بسازی و به هوش "
-        "مصنوعی بدهی تا سورس و وضعیت زنده را ببیند، مشکل را پیدا کند، کد را "
-        "اصلاح و دیپلوی کند. توکن فقط تا پایان عمرش کار می‌کند و هر لحظه "
-        "قابل ابطال است.\n\n"
-        "🔒 توکن کامل فقط یک‌بار نمایش داده می‌شود؛ در دیتابیس هش ذخیره می‌شود."
+        "دسترسی: <b>{state}</b> · توکن فعال: <b>{active}</b>\n\n"
+        "مدت را انتخاب کن و یکی از دکمه‌های توکن را بزن؛ یک آدرس کامل می‌گیری "
+        "که فقط همان را به هوش مصنوعی می‌دهی. 🗑 کنار هر توکن آن را فوراً باطل می‌کند."
     ),
     "debug_disabled": (
         "⚠️ دسترسی عیب‌یابی خاموش است. با دکمهٔ «🔴 دسترسی عیب‌یابی» در همین "
@@ -587,18 +609,13 @@ FA: dict[str, str] = {
     "debug_scope_write": "خواندن + نوشتن",
     "debug_scope_restart": "کامل",
     "debug_token_created": (
-        "<b>🔑 توکن عیب‌یابی ساخته شد</b>\n\n"
-        "🌐 آدرس: <code>{base}</code>\n"
-        "🔑 توکن:\n<code>{token}</code>\n\n"
-        "🎚 سطح دسترسی: <b>{scopes}</b>\n"
-        "⏳ انقضا: <b>{expires}</b> ({hours} ساعت)\n\n"
-        "<b>به هوش مصنوعی این را بده:</b>\n"
-        "1) آدرس بالا و توکن\n"
-        "2) فایل <code>docs/DEBUG_API_FA.md</code>\n\n"
-        "نمونه:\n"
-        "<code>curl -H \"Authorization: Bearer {token}\" {base}/debug/health</code>\n\n"
-        "⚠️ این پیام را برای کسی نفرست. بعد از کار، توکن را ببند."
+        "<b>🔑 توکن ساخته شد</b> · {scopes} · تا {expires}\n\n"
+        "<code>{url}</code>\n\n"
+        "همین یک آدرس را به هوش مصنوعی بده. بعد از کار 🗑 را بزن؛ فقط توکن بسته می‌شود و عیب‌یابی روشن می‌ماند."
     ),
+    "btn_debug_copy": "📋 کپی آدرس",
+    "btn_debug_revoke_this": "🗑 حذف این توکن",
+    "debug_token_info": "🔑 #{id} · {scopes}\n⏳ تا {expires} · استفاده {uses}",
     "debug_no_public_url": (
         "⚠️ <b>PUBLIC_BASE_URL</b> روی <code>{base}</code> است و از اینترنت در "
         "دسترس نیست. توکن فقط از داخل سرور/شبکه کار می‌کند. برای دسترسی "
@@ -625,14 +642,6 @@ FA: dict[str, str] = {
     ),
     "debug_health_problem": "⚠️ مشکلات:\n{list}",
     "debug_health_ok": "✅ مشکل مشخصی پیدا نشد.",
-    "debug_handoff": (
-        "🤝 <b>تحویل به هوش مصنوعی</b>\n\n"
-        "این متن را همراه توکن بفرست:\n"
-        "<code>You have a time-limited LeechX debug token. API base: {base}. "
-        "Docs: docs/DEBUG_API_FA.md. Read /debug/health, /debug/logs and "
-        "/debug/source first, fix the code, then POST /debug/source and "
-        "POST /debug/restart. Never print the token.</code>"
-    ),
     "btn_debug_revoke_all": "🗑 بستن همهٔ توکن‌ها",
     "btn_admin_preview": "👁 پیش‌نمایش حالت کاربر",
     "btn_preview": "👁 حالت کاربر",
@@ -678,7 +687,7 @@ FA: dict[str, str] = {
     "btn_reports_persistent": "📨 گزارش‌ها",
     "btn_cancel_tasks": "✖️ لغو عملیات",
     "btn_home_persistent": "🏠 شروع",
-    "debug_token_button": "🔑 توکن #{id} · {scopes}",
+    "debug_token_button": "🔑 #{id} · {scopes} · ⏳ {expires}",
 }
 
 
@@ -691,6 +700,7 @@ EN: dict[str, str] = {
         "• Files are deleted from the server after upload\n"
         "• Direct links live for <b>{ttl} hours</b> by default"
     ),
+    "startup_ready": "✅ <b>The bot is ready after restart.</b>\n🤖 Running version: <b>v{version}</b>",
     "help": (
         "<b>📖 Help</b>\n\n"
         "<b>1) Download from a link</b>\n"
@@ -701,8 +711,9 @@ EN: dict[str, str] = {
         "• Direct media links (e.g. <code>.mp4</code>) download without asking.\n"
         "• Max size: {max_mb} MB.\n"
         "• Shared files are removed automatically after expiry.\n\n"
-        "<b>Commands</b>\n"
-        "/start /help /sites /me /links /cancel"
+        "<b>Buttons</b>\n"
+        "Use the menu buttons for Help, My stats, Settings, and My links. "
+        "Send <code>/start</code> to reopen the menu."
     ),
     "send_link_or_file": "🔗 Send a link or a file.",
     "probing": "🔍 Inspecting link…",
@@ -764,39 +775,44 @@ EN: dict[str, str] = {
     "copy_hint": "⬆️ Tap the link above to copy.",
     "file_too_big_link": "📦 File is larger than the direct-link limit ({size} > {max}).",
     "delivery_panel": (
-        "<b>📥 Media found</b>\n"
-        "<b>{title}</b>\n\n"
-        "🎞 Quality: <b>{quality}</b>\n"
-        "📦 Size: {size}\n"
-        "🏷 Filename: <code>{name}</code>\n\n"
-        "<b>How would you like to receive this file?</b>\n\n"
-        "🎬 <b>Send as playable media</b>\n"
-        "Send it to this Telegram chat for playback. If Telegram cannot "
-        "play its format, it will arrive as a document instead.\n\n"
-        "📁 <b>Send as a file</b>\n"
-        "Send it as a Telegram document without extra Telegram compression.\n\n"
-        "🔗 <b>Create a download link</b>\n"
-        "Store the file on the server and receive a shareable link valid for "
-        "<b>{ttl} hours</b>.\n\n"
-        "✏️ Use Rename to change the output filename.\n"
-        "👇 Tapping one of the three delivery buttons starts the transfer."
+        "<b>📥 {title}</b>\n"
+        "🎞 {quality} · 📦 {size}\n"
+        "📤 {send_as} → {destination}{ttl_line}"
     ),
     "quality_auto": "Best available (automatic)",
     "quality_original": "As provided by the source",
-    "size_unknown": "Unknown until the download finishes",
-    "deliver_video_btn": "🎬 Send media in Telegram",
-    "deliver_doc_btn": "📁 Send file in Telegram",
-    "deliver_link_btn": "🔗 Create direct download link",
-    "deliver_rename_btn": "✏️ Rename file",
+    "size_unknown": "Unknown",
+    "delivery_hint": "Choose options, then tap the action below.",
+    "delivery_ttl_short": "⏳ Link expires in {ttl}h",
+    "delivery_thumbnail_custom_short": "🖼 Custom thumbnail",
+    "deliver_video_btn": "🎞 Video",
+    "deliver_doc_btn": "📄 File",
+    "deliver_telegram_btn": "📤 Telegram",
+    "deliver_link_btn": "🔗 Direct link",
+    "deliver_rename_btn": "✏️ Rename",
+    "deliver_thumbnail_btn": "🖼 Thumbnail",
+    "deliver_start_btn": "🚀 Start / Upload",
+    "deliver_start_video_btn": "🚀 Start video upload",
+    "deliver_start_file_btn": "🚀 Send as file",
+    "deliver_start_link_btn": "🔗 Create direct link",
     "deliver_back_btn": "↩️ Change quality",
+    "delivery_tab_format": "📤 Upload as ⬇️",
+    "delivery_tab_destination": "🎯 Upload to ⬇️",
+    "delivery_tab_edits": "🛠 File settings ⬇️",
+    "delivery_section_hint": "⬇️ Choose an option in the row below.",
+    "delivery_choice_saved": "✅ Choice saved",
+    "video_mode_unavailable": "This is not a Telegram-playable video; File was selected.",
     "rename_prompt": "✏️ Send the new file name (extension not required):\nCurrent name: <code>{name}</code>",
     "rename_done": "✅ Name saved: <b>{name}</b>",
     "rename_bad": "❌ Invalid name; send a short name.",
-    "btn_help": "📖 Help",
-    "btn_status": "📊 My status",
+    "thumbnail_prompt": "🖼 Send a picture as a Telegram Photo. The thumbnail must be JPEG, at most 320×320 and 200 KB.",
+    "thumbnail_saved": "✅ Custom thumbnail saved.",
+    "thumbnail_bad": "⚠️ Send a small picture as a Telegram Photo (max 320×320 and 200 KB).",
+    "btn_help": "📚 Help",
+    "btn_status": "📈 My stats",
     "btn_sites": "🌐 Supported sites",
     "btn_settings": "⚙️ Settings",
-    "btn_contact": "✉️ Contact admin",
+    "btn_contact": "💬 Contact support",
     "btn_admin": "👑 Admin panel",
     "sec_stats": "📊 Stats",
     "sec_users": "👥 Users",
@@ -808,9 +824,10 @@ EN: dict[str, str] = {
     "sec_cancel": "✖️ Cancel tasks",
     "btn_back": "↩️ Back",
     "btn_close": "✖️ Close",
-    "btn_lang": "🌍 Language",
+    "btn_lang": "🌐 Change language",
     "btn_admin_stats": "📈 Stats",
     "btn_admin_jobs": "🧾 Recent jobs",
+    "btn_admin_traffic": "🌐 Traffic usage",
     "btn_admin_admins": "👥 Admins",
     "btn_admin_settings": "⚙️ Bot settings",
     "btn_admin_broadcast": "📢 Broadcast",
@@ -862,8 +879,11 @@ EN: dict[str, str] = {
     "admin_env_admin": "This user is listed in ADMIN_IDS; remove them from env.",
     "status": (
         "<b>📊 Your status</b>\n\n"
-        "🆔 <code>{uid}</code>\n⬇️ Downloads: <b>{downloads}</b>\n"
-        "📅 Joined: {joined}\n👑 Admin: {admin}\n🤖 Version: <b>v{version}</b>"
+        "🆔 ID: <code>{uid}</code>\n"
+        "⬇️ Completed downloads: <b>{downloads}</b>\n"
+        "📤 Files uploaded/delivered: <b>{uploads}</b>\n"
+        "📅 Joined: {joined}\n"
+        "🤖 Version: <b>v{version}</b>"
     ),
     "yes": "yes",
     "no": "no",
@@ -892,6 +912,10 @@ EN: dict[str, str] = {
         "🤖 Version: <b>v{version}</b>"
     ),
     "admin_jobs": "<b>🧾 Recent jobs</b>\n\n{list}",
+    "admin_traffic": (
+        "<b>🌐 Cumulative bot traffic</b>\n\n⬇️ Downloaded/received: <b>{downloaded}</b>\n  • From websites: {source_downloaded}\n  • Files from Telegram: {telegram_received}\n\n⬆️ Uploaded/sent: <b>{uploaded}</b>\n  • To Telegram: {telegram_uploaded}\n  • Direct-link data served: {link_served}\n\n🔁 Combined total: <b>{total}</b>\n\n{note}"
+    ),
+    "traffic_note": "Since tracking was enabled; file/media bytes are counted, not metadata probes, headers, or protocol overhead.",
     "admin_admins": "<b>👥 Admins</b>\n\n👑 Owner: {owners}\n🛡 Extra admins:\n{admins}",
     "admin_add_prompt": "Send the user's numeric ID or @username:",
     "admin_add_ok": "✅ Admin added: <code>{uid}</code>",
@@ -899,6 +923,7 @@ EN: dict[str, str] = {
     "admin_remove_ok": "🗑 Admin removed: <code>{uid}</code>",
     "admin_remove_fail": "❌ Not an admin.",
     "admin_owner_immutable": "⛔️ The owner cannot be removed.",
+    "admin_ban_staff": "⛔️ Admins and the owner cannot be banned.",
     "admin_settings": (
         "<b>⚙️ Bot settings</b>\n\n⏳ Link TTL: <b>{ttl}h</b>\n📦 Max upload: <b>{max_upload}MB</b>\n"
         "🔗 Max link file: <b>{max_link}MB</b>\n🐢 Rate limit: <b>{rate}s</b>\n"
@@ -998,17 +1023,32 @@ EN: dict[str, str] = {
     "btn_kb_close": "⌨️ Close keyboard",
     "kb_closed": "⌨️ Keyboard closed. Send /start whenever you want it back.",
     "settings_panel": (
-        "<b>⚙️ Settings</b>\n\n"
-        "🌍 Language: <b>{lang}</b>\n"
+        "<b>⚙️ Your settings</b>\n\n"
+        "🌍 Language: <b>{language}</b>\n"
+        "📦 Default format: <b>{send_as}</b>\n"
+        "📍 Default destination: <b>{destination}</b>\n"
         "🤖 Version: <b>{version}</b>\n\n"
-        "Use the buttons below:"
+        "Change defaults with the buttons below; you can still override them for each link."
+    ),
+    "delivery_mode_video": "🎞 Video",
+    "delivery_mode_file": "📄 File",
+    "delivery_destination_telegram": "📤 Telegram",
+    "delivery_destination_link": "🔗 Direct link",
+    "delivery_thumbnail_original": "Automatic/source",
+    "delivery_thumbnail_custom": "Custom",
+    "settings_default_mode_btn": "📦 Default format: {value}",
+    "settings_default_destination_btn": "📍 Default destination: {value}",
+    "lang_start_prompt": (
+        "<b>🌍 Choose your language</b>\n\n"
+        "After you choose, any required channel membership will be checked."
     ),
     "lang_title": (
         "<b>🌍 Choose your language</b>\n\n"
         "Current: <b>{current}</b>\n\n"
         "Language · Язык · زبان"
     ),
-    "lang_saved": "✅ Language changed to <b>{lang}</b>.",
+    "lang_saved": "✅ Language changed to <b>{language}</b>.",
+    "menu_updated": "✅ Menu updated.",
     "admin_lang_fixed": (
         "🔒 The admin panel is always in Persian; language switching is for regular users only."
     ),
@@ -1163,20 +1203,17 @@ EN: dict[str, str] = {
     "deploy_ytdlp_working": "⏳ Updating yt-dlp…",
     "btn_deploy_version": "🔢 Version details",
     "deploy_update_note": (
-        "ℹ️ Applying a source only replaces program files; <code>.env</code>, the "
-        "database and <code>data</code> files stay untouched."
+        "ℹ️ Upload the full source ZIP; removed old files are not deleted. <code>.env</code>, "
+        "database and data stay safe; dependencies are not installed and GitHub is not updated."
     ),
 
     # ── Diagnostics / temporary token ──
     "btn_admin_debug": "🩺 Diagnostics",
     "debug_panel": (
         "<b>🩺 Diagnostics</b>\n\n"
-        "Token access: <b>{state}</b>\n"
-        "Active tokens: <b>{active}</b>\n\n"
-        "Create a <b>scoped, time-limited</b> token and give it to an AI so it can "
-        "read the live source and state, find the bug, fix the code and deploy. "
-        "The token dies at expiry and can be revoked at any moment.\n\n"
-        "🔒 The full token is shown once; only its hash is stored."
+        "Access: <b>{state}</b> · Active tokens: <b>{active}</b>\n\n"
+        "Pick a duration and tap a token button; you get one full URL to give the AI. "
+        "🗑 next to a token revokes it instantly."
     ),
     "debug_disabled": (
         "⚠️ Debug access is off. Turn it on with the «🔴 Debug access» button in "
@@ -1193,18 +1230,13 @@ EN: dict[str, str] = {
     "debug_scope_write": "read + write",
     "debug_scope_restart": "full",
     "debug_token_created": (
-        "<b>🔑 Debug token created</b>\n\n"
-        "🌐 Base URL: <code>{base}</code>\n"
-        "🔑 Token:\n<code>{token}</code>\n\n"
-        "🎚 Scopes: <b>{scopes}</b>\n"
-        "⏳ Expires: <b>{expires}</b> ({hours}h)\n\n"
-        "<b>Give the AI:</b>\n"
-        "1) The base URL and token\n"
-        "2) <code>docs/DEBUG_API_FA.md</code>\n\n"
-        "Example:\n"
-        "<code>curl -H \"Authorization: Bearer {token}\" {base}/debug/health</code>\n\n"
-        "⚠️ Do not forward this message. Revoke the token when done."
+        "<b>🔑 Token created</b> · {scopes} · until {expires}\n\n"
+        "<code>{url}</code>\n\n"
+        "Give this single URL to the AI. Tap 🗑 when done; this revokes only the token and keeps Debug on."
     ),
+    "btn_debug_copy": "📋 Copy URL",
+    "btn_debug_revoke_this": "🗑 Delete this token",
+    "debug_token_info": "🔑 #{id} · {scopes}\n⏳ until {expires} · used {uses}×",
     "debug_no_public_url": (
         "⚠️ <b>PUBLIC_BASE_URL</b> is <code>{base}</code>, which is not reachable "
         "from the internet. The token only works from inside the server/LAN. Set "
@@ -1231,14 +1263,6 @@ EN: dict[str, str] = {
     ),
     "debug_health_problem": "⚠️ Problems:\n{list}",
     "debug_health_ok": "✅ No obvious problem found.",
-    "debug_handoff": (
-        "🤝 <b>AI hand-off</b>\n\n"
-        "Send this text together with the token:\n"
-        "<code>You have a time-limited LeechX debug token. API base: {base}. "
-        "Docs: docs/DEBUG_API_FA.md. Read /debug/health, /debug/logs and "
-        "/debug/source first, fix the code, then POST /debug/source and "
-        "POST /debug/restart. Never print the token.</code>"
-    ),
     "btn_debug_revoke_all": "🗑 Revoke all tokens",
     "btn_admin_preview": "👁 Preview member view",
     "btn_preview": "👁 Member view",
@@ -1284,7 +1308,7 @@ EN: dict[str, str] = {
     "btn_reports_persistent": "📨 Reports",
     "btn_cancel_tasks": "✖️ Cancel tasks",
     "btn_home_persistent": "🏠 Home",
-    "debug_token_button": "🔑 Token #{id} · {scopes}",
+    "debug_token_button": "🔑 #{id} · {scopes} · ⏳ {expires}",
 }
 
 RU: dict[str, str] = {
@@ -1297,6 +1321,7 @@ RU: dict[str, str] = {
         "• Файлы удаляются с сервера после загрузки\n"
         "• Прямые ссылки живут <b>{ttl} ч.</b> по умолчанию"
     ),
+    "startup_ready": "✅ <b>Бот перезапущен и готов к работе.</b>\n🤖 Текущая версия: <b>v{version}</b>",
     "help": (
         "<b>📖 Помощь</b>\n\n"
         "<b>1) Скачивание по ссылке</b>\n"
@@ -1307,8 +1332,9 @@ RU: dict[str, str] = {
         "• Прямые медиа-ссылки (например, <code>.mp4</code>) скачиваются без вопросов.\n"
         "• Максимальный размер: {max_mb} МБ.\n"
         "• Общие файлы удаляются автоматически после истечения срока.\n\n"
-        "<b>Команды</b>\n"
-        "/start /help /sites /me /links /cancel"
+        "<b>Кнопки</b>\n"
+        "Используй кнопки меню для справки, статистики, настроек и ссылок. "
+        "Отправь <code>/start</code>, чтобы снова открыть меню."
     ),
     "send_link_or_file": "🔗 Отправь ссылку или файл.",
     "probing": "🔍 Проверяю ссылку…",
@@ -1359,38 +1385,46 @@ RU: dict[str, str] = {
     "copy_hint": "⬆️ Нажми на ссылку выше, чтобы скопировать.",
     "file_too_big_link": "📦 Файл больше лимита прямой ссылки ({size} > {max}).",
     "delivery_panel": (
-        "<b>📥 Медиа найдено</b>\n<b>{title}</b>\n\n"
-        "🎞 Качество: <b>{quality}</b>\n📦 Размер: {size}\n"
-        "🏷 Имя файла: <code>{name}</code>\n\n"
-        "<b>Как получить файл?</b>\n\n"
-        "🎬 <b>Отправить как воспроизводимое медиа</b>\n"
-        "Файл придёт в этот чат и его можно будет воспроизвести. Если формат "
-        "не поддерживается, он придёт документом.\n\n"
-        "📁 <b>Отправить как файл</b>\n"
-        "Придёт документом без дополнительного сжатия Telegram.\n\n"
-        "🔗 <b>Создать ссылку для скачивания</b>\n"
-        "Файл сохранится на сервере, и ты получишь ссылку на <b>{ttl} ч.</b>\n\n"
-        "✏️ Через «Переименовать» можно изменить имя файла.\n"
-        "👇 Нажатие любой из трёх кнопок запускает передачу."
+        "<b>📥 {title}</b>\n"
+        "🎞 {quality} · 📦 {size}\n"
+        "📤 {send_as} → {destination}{ttl_line}"
     ),
     "quality_auto": "Лучшее доступное (авто)",
     "quality_original": "Как в источнике",
-    "size_unknown": "Неизвестно до окончания загрузки",
-    "deliver_video_btn": "🎬 Отправить медиа в Telegram",
-    "deliver_doc_btn": "📁 Отправить файл в Telegram",
-    "deliver_link_btn": "🔗 Создать прямую ссылку",
-    "deliver_rename_btn": "✏️ Переименовать файл",
+    "size_unknown": "Неизвестно",
+    "delivery_hint": "Выбери настройки и нажми кнопку ниже.",
+    "delivery_ttl_short": "⏳ Ссылка действует {ttl} ч.",
+    "delivery_thumbnail_custom_short": "🖼 Своя миниатюра",
+    "deliver_video_btn": "🎞 Видео",
+    "deliver_doc_btn": "📄 Файл",
+    "deliver_telegram_btn": "📤 Telegram",
+    "deliver_link_btn": "🔗 Прямая ссылка",
+    "deliver_rename_btn": "✏️ Переименовать",
+    "deliver_thumbnail_btn": "🖼 Миниатюра",
+    "deliver_start_btn": "🚀 Начать / отправить",
+    "deliver_start_video_btn": "🚀 Отправить видео",
+    "deliver_start_file_btn": "🚀 Отправить файлом",
+    "deliver_start_link_btn": "🔗 Создать прямую ссылку",
     "deliver_back_btn": "↩️ Изменить качество",
+    "delivery_tab_format": "📤 Формат отправки ⬇️",
+    "delivery_tab_destination": "🎯 Куда отправить ⬇️",
+    "delivery_tab_edits": "🛠 Настройки файла ⬇️",
+    "delivery_section_hint": "⬇️ Выберите вариант в строке ниже.",
+    "delivery_choice_saved": "✅ Выбор сохранён",
+    "video_mode_unavailable": "Это нельзя отправить как видео; выбран режим «Файл».",
     "rename_prompt": "✏️ Отправь новое имя файла (расширение не нужно):\nТекущее имя: <code>{name}</code>",
     "rename_done": "✅ Имя сохранено: <b>{name}</b>",
     "rename_bad": "❌ Некорректное имя; отправь короткое имя.",
+    "thumbnail_prompt": "🖼 Отправь изображение как Фото в Telegram. Миниатюра: JPEG, не более 320×320 и 200 КБ.",
+    "thumbnail_saved": "✅ Своя миниатюра сохранена.",
+    "thumbnail_bad": "⚠️ Отправь небольшое изображение как Фото (макс. 320×320 и 200 КБ).",
 
     # ── Кнопки меню ──
-    "btn_help": "📖 Помощь",
-    "btn_status": "📊 Мой статус",
+    "btn_help": "📚 Помощь",
+    "btn_status": "📈 Моя статистика",
     "btn_sites": "🌐 Поддерживаемые сайты",
     "btn_settings": "⚙️ Настройки",
-    "btn_contact": "✉️ Связаться с админом",
+    "btn_contact": "💬 Поддержка",
     "btn_admin": "👑 Панель администратора",
     "sec_stats": "📊 Статистика",
     "sec_users": "👥 Пользователи",
@@ -1402,9 +1436,10 @@ RU: dict[str, str] = {
     "sec_cancel": "✖️ Отменить задачи",
     "btn_back": "↩️ Назад",
     "btn_close": "✖️ Закрыть",
-    "btn_lang": "🌍 Язык",
+    "btn_lang": "🌐 Сменить язык",
     "btn_admin_stats": "📈 Статистика",
     "btn_admin_jobs": "🧾 Последние задачи",
+    "btn_admin_traffic": "🌐 Использование трафика",
     "btn_admin_admins": "👥 Администраторы",
     "btn_admin_settings": "⚙️ Настройки бота",
     "btn_admin_broadcast": "📢 Рассылка",
@@ -1452,9 +1487,9 @@ RU: dict[str, str] = {
     "status": (
         "<b>📊 Ваш статус</b>\n\n"
         "🆔 ID: <code>{uid}</code>\n"
-        "⬇️ Загрузок: <b>{downloads}</b>\n"
+        "⬇️ Успешных загрузок: <b>{downloads}</b>\n"
+        "📤 Файлов отправлено/передано: <b>{uploads}</b>\n"
         "📅 С нами с: {joined}\n"
-        "👑 Админ: {admin}\n"
         "🤖 Версия: <b>v{version}</b>"
     ),
     "yes": "да",
@@ -1489,6 +1524,10 @@ RU: dict[str, str] = {
         "🤖 Версия: <b>v{version}</b>"
     ),
     "admin_jobs": "<b>🧾 Последние задачи</b>\n\n{list}",
+    "admin_traffic": (
+        "<b>🌐 Суммарный трафик бота</b>\n\n⬇️ Скачано/получено: <b>{downloaded}</b>\n  • С веб-сайтов: {source_downloaded}\n  • Файлы из Telegram: {telegram_received}\n\n⬆️ Загружено/отправлено: <b>{uploaded}</b>\n  • В Telegram: {telegram_uploaded}\n  • Выдано по прямым ссылкам: {link_served}\n\n🔁 Общий объём в обе стороны: <b>{total}</b>\n\n{note}"
+    ),
+    "traffic_note": "С момента включения счётчиков; учитываются байты файлов, без метаданных, заголовков и сетевых накладных расходов.",
     "admin_admins": "<b>👥 Администраторы</b>\n\n👑 Владелец: {owners}\n🛡 Дополнительные админы:\n{admins}",
     "admin_add_prompt": "Отправь числовой ID или @username пользователя:",
     "admin_add_ok": "✅ Админ добавлен: <code>{uid}</code>",
@@ -1496,6 +1535,7 @@ RU: dict[str, str] = {
     "admin_remove_ok": "🗑 Админ удалён: <code>{uid}</code>",
     "admin_remove_fail": "❌ Это не администратор.",
     "admin_owner_immutable": "⛔️ Владельца нельзя удалить.",
+    "admin_ban_staff": "⛔️ Админа или владельца нельзя заблокировать.",
     "admin_settings": (
         "<b>⚙️ Настройки бота</b>\n\n"
         "⏳ Срок ссылки: <b>{ttl} ч.</b>\n"
@@ -1561,9 +1601,26 @@ RU: dict[str, str] = {
     # ── Новый интерфейс ──
     "btn_kb_close": "⌨️ Закрыть клавиатуру",
     "kb_closed": "⌨️ Клавиатура закрыта. Отправь /start, чтобы вернуть её.",
-    "settings_panel": "<b>⚙️ Настройки</b>\n\n🌍 Язык: <b>{lang}</b>\n🤖 Версия: <b>{version}</b>\n\nИспользуй кнопки ниже:",
+    "settings_panel": (
+        "<b>⚙️ Ваши настройки</b>\n\n"
+        "🌍 Язык: <b>{language}</b>\n"
+        "📦 Формат по умолчанию: <b>{send_as}</b>\n"
+        "📍 Получение по умолчанию: <b>{destination}</b>\n"
+        "🤖 Версия: <b>{version}</b>\n\n"
+        "Измени параметры кнопками ниже; для каждой ссылки их можно переопределить."
+    ),
+    "delivery_mode_video": "🎞 Видео",
+    "delivery_mode_file": "📄 Файл",
+    "delivery_destination_telegram": "📤 Telegram",
+    "delivery_destination_link": "🔗 Прямая ссылка",
+    "delivery_thumbnail_original": "Авто/исходная",
+    "delivery_thumbnail_custom": "Своя",
+    "settings_default_mode_btn": "📦 Формат по умолчанию: {value}",
+    "settings_default_destination_btn": "📍 Получение по умолчанию: {value}",
+    "lang_start_prompt": "<b>🌍 Выбери язык</b>\n\nПосле выбора будет проверено, нужно ли подписаться на каналы.",
     "lang_title": "<b>🌍 Выбор языка</b>\n\nТекущий: <b>{current}</b>\n\nLanguage · Язык · زبان",
-    "lang_saved": "✅ Язык изменён на <b>{lang}</b>.",
+    "lang_saved": "✅ Язык изменён на <b>{language}</b>.",
+    "menu_updated": "✅ Меню обновлено.",
     "admin_lang_fixed": (
         "🔒 Панель администратора всегда на персидском; смена языка доступна только обычным пользователям."
     ),
@@ -1695,17 +1752,15 @@ RU: dict[str, str] = {
     "deploy_ytdlp_fail": "❌ Не удалось обновить yt-dlp: {reason}",
     "deploy_ytdlp_working": "⏳ Обновляю yt-dlp…",
     "btn_deploy_version": "🔢 Детали версии",
-    "deploy_update_note": "ℹ️ Применение исходников меняет только файлы программы; <code>.env</code>, база и <code>data</code> остаются.",
+    "deploy_update_note": "ℹ️ Отправь полный ZIP; старые удалённые файлы не очищаются. <code>.env</code>, база и данные сохраняются; зависимости не устанавливаются, GitHub не обновляется.",
 
     # ── Диагностика / временный токен ──
     "btn_admin_debug": "🩺 Диагностика",
     "debug_panel": (
         "<b>🩺 Диагностика</b>\n\n"
-        "Доступ по токену: <b>{state}</b>\nАктивных токенов: <b>{active}</b>\n\n"
-        "Создай <b>ограниченный по времени</b> токен и передай ИИ, чтобы он "
-        "увидел живые исходники и состояние, нашёл проблему, исправил код и "
-        "задеплоил. Токен умирает по истечении срока и отзывается в любой момент.\n\n"
-        "🔒 Полный токен показывается один раз; в базе хранится только хэш."
+        "Доступ: <b>{state}</b> · Активных токенов: <b>{active}</b>\n\n"
+        "Выбери срок и нажми кнопку токена — получишь один полный адрес для ИИ. "
+        "🗑 рядом с токеном сразу его отзывает."
     ),
     "debug_disabled": (
         "⚠️ Доступ для отладки выключен. Включи его кнопкой «🔴 Доступ для "
@@ -1722,13 +1777,13 @@ RU: dict[str, str] = {
     "debug_scope_write": "чтение + запись",
     "debug_scope_restart": "полный",
     "debug_token_created": (
-        "<b>🔑 Токен отладки создан</b>\n\n"
-        "🌐 Адрес: <code>{base}</code>\n🔑 Токен:\n<code>{token}</code>\n\n"
-        "🎚 Права: <b>{scopes}</b>\n⏳ Истекает: <b>{expires}</b> ({hours} ч.)\n\n"
-        "<b>Передай ИИ:</b>\n1) Адрес и токен\n2) <code>docs/DEBUG_API_FA.md</code>\n\n"
-        "Пример:\n<code>curl -H \"Authorization: Bearer {token}\" {base}/debug/health</code>\n\n"
-        "⚠️ Не пересылай это сообщение. Закрой токен после работы."
+        "<b>🔑 Токен создан</b> · {scopes} · до {expires}\n\n"
+        "<code>{url}</code>\n\n"
+        "Передай ИИ только этот адрес. После работы нажми 🗑: будет отозван только токен, а диагностика останется включённой."
     ),
+    "btn_debug_copy": "📋 Копировать адрес",
+    "btn_debug_revoke_this": "🗑 Удалить этот токен",
+    "debug_token_info": "🔑 #{id} · {scopes}\n⏳ до {expires} · использован {uses}×",
     "debug_no_public_url": "⚠️ <b>PUBLIC_BASE_URL</b> = <code>{base}</code>, недоступен из интернета. Токен работает только внутри сервера/сети. Укажи публичный домен или IP в «Переменных».",
     "debug_tokens_list": "<b>🔑 Активные токены</b>\n\n{list}",
     "debug_token_item": "• <code>{id}</code> · {scopes} · до {expires} · использован {uses}×",
@@ -1744,13 +1799,6 @@ RU: dict[str, str] = {
     ),
     "debug_health_problem": "⚠️ Проблемы:\n{list}",
     "debug_health_ok": "✅ Явных проблем не найдено.",
-    "debug_handoff": (
-        "🤝 <b>Передача ИИ</b>\n\nОтправь этот текст вместе с токеном:\n"
-        "<code>You have a time-limited LeechX debug token. API base: {base}. "
-        "Docs: docs/DEBUG_API_FA.md. Read /debug/health, /debug/logs and "
-        "/debug/source first, fix the code, then POST /debug/source and "
-        "POST /debug/restart. Never print the token.</code>"
-    ),
     "btn_debug_revoke_all": "🗑 Закрыть все токены",
     "btn_admin_preview": "👁 Просмотр глазами пользователя",
     "btn_preview": "👁 Режим пользователя",
@@ -1791,7 +1839,7 @@ RU: dict[str, str] = {
     "btn_reports_persistent": "📨 Жалобы",
     "btn_cancel_tasks": "✖️ Отменить задачи",
     "btn_home_persistent": "🏠 Домой",
-    "debug_token_button": "🔑 Токен #{id} · {scopes}",
+    "debug_token_button": "🔑 #{id} · {scopes} · ⏳ {expires}",
 }
 
 MESSAGES: dict[str, dict[str, str]] = {"fa": FA, "en": EN, "ru": RU}

@@ -198,6 +198,8 @@ class LinkServer:
 
         await response.prepare(request)
         remaining = length
+        sent_bytes = 0
+        stream_failed = False
         try:
             with resolved.open("rb") as fh:
                 fh.seek(start)
@@ -206,12 +208,22 @@ class LinkServer:
                     if not chunk:
                         break
                     await response.write(chunk)
+                    sent_bytes += len(chunk)
                     remaining -= len(chunk)
             await response.write_eof()
         except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
             pass
         except OSError:
             log.exception("failed streaming %s", resolved)
+            stream_failed = True
+
+        if sent_bytes:
+            try:
+                await repo.record_traffic(direct_link_serve_bytes=sent_bytes)
+            except Exception:  # noqa: BLE001 — stats must never break a file response
+                log.debug("direct-link traffic counter update failed", exc_info=True)
+
+        if stream_failed:
             return response
 
         try:

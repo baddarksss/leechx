@@ -10,6 +10,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from app.bot import keyboards as kb
 from app.bot.flows import user_links
+from app.core import text
 from app.db import repo
 from app.services.downloader import DownloadResult, MediaInfo
 from app.services.filestore import FileStore
@@ -68,10 +69,40 @@ def test_admin_reply_keyboard_persistent():
     assert "📊 آمار" in labels
     assert "👥 کاربران" in labels
     assert "🚀 دیپلوی" in labels
+    assert text.t("fa", "sec_cancel") not in labels
     for user_only in ("🔗 لینک‌های من", "🏠 منوی اصلی", "👑 پنل ادمین"):
         assert user_only not in labels
     # هر بخش دقیقاً یک‌بار روی کیبورد می‌آید
     assert len(labels) == len([b for row in rows for b in row])
+
+
+def test_admin_stats_section_exposes_traffic_summary():
+    menu = kb.admin_section_menu("fa", kb.SEC_STATS)
+    callbacks = [button.callback_data for row in menu.inline_keyboard for button in row]
+    assert kb.A_TRAFFIC in callbacks
+
+
+@pytest.mark.asyncio
+async def test_admin_traffic_report_shows_directional_totals_in_units(db):
+    from app.bot.flows.admin import _render_traffic
+
+    await repo.record_traffic(
+        source_download_bytes=2 * 1024 * 1024,
+        telegram_receive_bytes=512,
+        telegram_upload_bytes=1024,
+        direct_link_serve_bytes=3 * 1024,
+    )
+    body = await _render_traffic("en")
+
+    assert "Cumulative bot traffic" in body
+    assert "From websites: 2 MB" in body
+    assert "Files from Telegram: 512 B" in body
+    assert "To Telegram: 1 KB" in body
+    assert "Direct-link data served: 3 KB" in body
+    assert "Downloaded/received: <b>2 MB</b>" in body
+    assert "Uploaded/sent: <b>4 KB</b>" in body
+    assert "Combined total: <b>2 MB</b>" in body
+    assert "protocol overhead" in body
 
 
 def test_admin_sections_have_no_navigation_rows():
@@ -178,6 +209,7 @@ async def test_telegram_attachment_transfer_stream_and_create_link(db, tmp_path)
     size = source.stat().st_size
     store = FileStore(db.files_dir, db.tmp_dir)
     settings = RuntimeSettings(db)
+    await repo.upsert_user(42, "qa", "QA")
     service = SimpleNamespace(cfg=db, store=store, settings=settings, admin_group=None)
     manager = FileLinkTransfers(service)
     manager.svc = service
@@ -192,6 +224,10 @@ async def test_telegram_attachment_transfer_stream_and_create_link(db, tmp_path)
     await asyncio.wait_for(item.job, 5)
     assert not manager.tasks_for_user(42)
     assert await repo.count_user_shared(42) == 1
+    assert (await repo.get_user(42)).uploads == 1
+    traffic = await repo.traffic_totals()
+    assert traffic["telegram_receive_bytes"] == size
+    assert traffic["downloaded_bytes"] == size
     row = await repo.get_shared(item.id)
     assert Path(row.path).read_bytes() == source.read_bytes()
     assert "لینک مستقیم آماده" in msg.texts[-1]
@@ -259,6 +295,43 @@ async def test_upload_cancel_aborts_task_and_keeps_cancel_button(db):
     assert row.status == "canceled"
     assert manager.active_count == 0
     assert not (store.jobs / task.id).exists()
+
+
+@pytest.mark.asyncio
+async def test_video_request_for_non_video_result_is_uploaded_as_document(db):
+    store = FileStore(db.files_dir, db.tmp_dir)
+    settings = RuntimeSettings(db)
+    await repo.upsert_user(77, "audio_user", "Audio User")
+
+    class Downloader:
+        async def download(self, url, option, workdir, progress, cancel, info):
+            path = workdir / "track.mp3"
+            path.write_bytes(b"audio")
+            return DownloadResult(
+                path=path, title="track", mime="audio/mpeg", size=5, is_audio=True,
+            )
+
+    class Uploader:
+        kwargs = None
+        async def send(self, *args, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(message_id=99)
+
+    uploader = Uploader()
+    manager = JobManager(db, settings, store, Downloader(), uploader, RateLimiter(0))
+    manager.bot = SimpleNamespace()
+    task = JobTask(
+        id="audiojob1", user_id=77, chat_id=77,
+        url="https://cdn.example.com/track.mp3",
+        option=FormatOption(kind="audio", code="mp3", label="mp3", selector="", ext="mp3"),
+        title="track", mode="video",
+    )
+    await manager._run(task)
+
+    assert uploader.kwargs["as_document"] is True
+    user = await repo.get_user(77)
+    assert user.downloads == 1
+    assert user.uploads == 1
 
 
 @pytest.mark.asyncio

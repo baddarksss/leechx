@@ -1,13 +1,17 @@
-"""دستورهای عمومی، منو و وضعیت کاربر."""
+"""دستورهای عمومی، منو و وضعیت کاربر.
+
+هر صفحه در «پیام پنل» کاربر نمایش داده می‌شود (ویرایش به‌جای پیام تازه)؛
+فقط پیام خوش‌آمد که کیبورد ثابت را می‌آورد پیام جدید است.
+"""
 from __future__ import annotations
 
 import logging
 
-from telegram import ReplyKeyboardRemove, Update
+from telegram import InlineKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import ContextTypes
 
 from app.bot import keyboards as kb
-from app.bot.common import edit, fmt_ts, lang_of, reply, safe_answer, services
+from app.bot.common import edit, fmt_ts, lang_of, panel, reply, safe_answer, send_home, services
 from app.bot.guards import in_preview, is_admin
 from app.bot.states import ST_CONTACT, clear_state, get_state, set_state
 from app.core import human, text
@@ -17,12 +21,142 @@ from app.version import __version__, version_badge
 log = logging.getLogger("leechx.start")
 
 
+def _is_private(update: Update) -> bool:
+    chat = update.effective_chat
+    return chat is not None and chat.type == "private"
+
+
 def _menu_markup(update: Update, lang: str, admin: bool, preview: bool):
     """ادمین (بدون پیش‌نمایش، در چت خصوصی) فقط کیبورد ثابت می‌بیند؛ بقیه منوی شیشه‌ای."""
-    chat = update.effective_chat
-    if admin and not preview and chat is not None and chat.type == "private":
+    if admin and not preview and _is_private(update):
         return kb.admin_persistent_menu(lang)
     return kb.main_menu(lang, admin and not preview, preview=preview)
+
+
+def _inline_menu(update: Update, lang: str, admin: bool, preview: bool):
+    """منوی شیشه‌ای برای صفحه‌های پنل؛ در چت خصوصی کیبورد ثابت کافی است."""
+    if _is_private(update):
+        return None
+    return kb.main_menu(lang, admin and not preview, preview=preview)
+
+
+def _reply_menu_markup(update: Update, lang: str, admin: bool, preview: bool):
+    """Persistent reply keyboard for private chats; inline menus remain in groups."""
+    if admin and not preview:
+        if _is_private(update):
+            return kb.admin_persistent_menu(lang)
+        return kb.main_menu(lang, True)
+    if not _is_private(update):
+        return kb.main_menu(lang, False, preview=preview)
+    return kb.user_persistent_menu(lang, preview=preview)
+
+
+def _stale_keyboard_tap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """ضربه روی کیبوردِ زبانِ قبلی؛ باید کیبورد ثابت تازه فرستاده شود."""
+    if update.callback_query is not None or not _is_private(update):
+        return False
+    message = update.effective_message
+    label = getattr(message, "text", None) or ""
+    if not label or label.startswith("/"):
+        return False
+    current = kb.user_persistent_labels(lang_of(context), preview=in_preview(context))
+    return label not in current.values()
+
+
+async def _show(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    body: str,
+    *,
+    admin: bool,
+    markup=None,
+) -> None:
+    """صفحهٔ کاربر را در پنل نشان می‌دهد؛ برای کیبورد کهنه، کیبورد تازه هم می‌فرستد."""
+    lang = lang_of(context)
+    preview = in_preview(context)
+    if markup is None and _stale_keyboard_tap(update, context):
+        await send_home(update, context, body, _reply_menu_markup(update, lang, admin, preview))
+        return
+    if markup is None:
+        markup = _inline_menu(update, lang, admin, preview)
+    await panel(update, context, body, reply_markup=markup)
+
+
+def _user_defaults(row) -> tuple[str, str]:
+    mode = getattr(row, "default_mode", "video") if row is not None else "video"
+    destination = getattr(row, "default_destination", "telegram") if row is not None else "telegram"
+    if mode not in {"video", "document"}:
+        mode = "video"
+    if destination not in {"telegram", "link"}:
+        destination = "telegram"
+    return mode, destination
+
+
+def _user_settings_body(lang: str, row) -> tuple[str, str, str]:
+    mode, destination = _user_defaults(row)
+    mode_key = "delivery_mode_video" if mode == "video" else "delivery_mode_file"
+    destination_key = (
+        "delivery_destination_telegram" if destination == "telegram"
+        else "delivery_destination_link"
+    )
+    body = text.t(
+        lang,
+        "settings_panel",
+        language=text.LANGS.get(lang, text.LANGS[text.DEFAULT_LANG]),
+        send_as=text.t(lang, mode_key),
+        destination=text.t(lang, destination_key),
+        version=__version__,
+    )
+    return body, mode, destination
+
+
+def _welcome(lang: str, ttl_hours: float) -> str:
+    return text.t(lang, "start", ttl=_fmt_hours(ttl_hours)) + "\n\n" + version_badge()
+
+
+def _help_body(svc, lang: str) -> str:
+    return text.t(
+        lang,
+        "help",
+        ttl=_fmt_hours(svc.settings.ttl_hours),
+        max_mb=svc.settings.max_upload_bytes // (1024 * 1024),
+    )
+
+
+def _status_body(lang: str, user, row) -> str:
+    return text.t(
+        lang,
+        "status",
+        uid=user.id,
+        downloads=row.downloads if row else 0,
+        uploads=row.uploads if row else 0,
+        joined=fmt_ts(row.created_at if row else None),
+        version=__version__,
+    )
+
+
+def _sites_body(svc, lang: str, query: str = "") -> str:
+    include_nsfw = svc.settings.nsfw_enabled
+    if not query:
+        return text.t(
+            lang,
+            "sites_title",
+            count=svc.sites.count,
+            popular=svc.sites.popular(include_nsfw) or "—",
+        )
+    results = svc.sites.search(query, limit=30, include_nsfw=include_nsfw)
+    lines = []
+    for entry in results:
+        desc = f" — {human.esc(entry.description)}" if entry.description else ""
+        icon = "🔞 " if entry.nsfw else ""
+        lines.append(f"{icon}<code>{human.esc(entry.name)}</code>{desc}")
+    return text.t(
+        lang,
+        "sites_search",
+        q=human.esc(query),
+        count=len(results),
+        list="\n".join(lines) or text.t(lang, "sites_none"),
+    )
 
 
 # ── دستورها ────────────────────────────────────────────────
@@ -45,23 +179,33 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     admin = await is_admin(svc.cfg, user.id)
     preview = in_preview(context)
-    body = text.t(lang, "start", ttl=_fmt_hours(svc.settings.ttl_hours))
-    body += "\n\n" + version_badge()
-    # یک پیام: متن + کیبورد درست (برای ادمین فقط کیبورد ثابت، بدون منوی شیشه‌ای تکراری)
-    await reply(update, body, reply_markup=_menu_markup(update, lang, admin, preview))
+    if admin and not preview:
+        # پنل مدیریت همیشه فارسی است؛ شامل مالکی که همین /start مالک شده است.
+        lang = text.DEFAULT_LANG
+        context.user_data["lang"] = lang
+    row = await repo.get_user(user.id)
+    if not (admin and not preview) and (row is None or not row.language_selected):
+        await panel(
+            update,
+            context,
+            text.t(lang, "lang_start_prompt"),
+            reply_markup=kb.language_menu(lang, onboarding=True),
+        )
+        return
+    # یک پیام: متن + کیبورد درست؛ پیام خانه و پنل قبلی پاک می‌شوند.
+    await send_home(
+        update,
+        context,
+        _welcome(lang, svc.settings.ttl_hours),
+        _reply_menu_markup(update, lang, admin, preview),
+    )
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
     lang = lang_of(context)
     admin = await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context)
-    body = text.t(
-        lang,
-        "help",
-        ttl=_fmt_hours(svc.settings.ttl_hours),
-        max_mb=svc.settings.max_upload_bytes // (1024 * 1024),
-    )
-    await reply(update, body, reply_markup=_menu_markup(update, lang, admin, in_preview(context)))
+    await _show(update, context, _help_body(svc, lang), admin=admin)
 
 
 async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -70,47 +214,15 @@ async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     row = await repo.get_user(user.id)
     admin = await is_admin(svc.cfg, user.id) and not in_preview(context)
-    body = text.t(
-        lang,
-        "status",
-        uid=user.id,
-        downloads=row.downloads if row else 0,
-        joined=fmt_ts(row.created_at if row else None),
-        admin=text.t(lang, "yes" if admin else "no"),
-        version=__version__,
-    )
-    await reply(update, body, reply_markup=_menu_markup(update, lang, admin, in_preview(context)))
+    await _show(update, context, _status_body(lang, user, row), admin=admin)
 
 
 async def cmd_sites(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
     lang = lang_of(context)
-    query = " ".join(context.args or []).strip()
-    include_nsfw = svc.settings.nsfw_enabled
-
-    if not query:
-        body = text.t(
-            lang,
-            "sites_title",
-            count=svc.sites.count,
-            popular=svc.sites.popular(include_nsfw) or "—",
-        )
-    else:
-        results = svc.sites.search(query, limit=30, include_nsfw=include_nsfw)
-        lines = []
-        for entry in results:
-            desc = f" — {human.esc(entry.description)}" if entry.description else ""
-            icon = "🔞 " if entry.nsfw else ""
-            lines.append(f"{icon}<code>{entry.name}</code>{desc}")
-        body = text.t(
-            lang,
-            "sites_search",
-            q=human.esc(query),
-            count=len(results),
-            list="\n".join(lines) or text.t(lang, "sites_none"),
-        )
+    query = " ".join(getattr(context, "args", None) or []).strip()
     admin = await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context)
-    await reply(update, body, reply_markup=_menu_markup(update, lang, admin, in_preview(context)))
+    await _show(update, context, _sites_body(svc, lang, query), admin=admin)
 
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -129,22 +241,29 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         for transfer in transfers.tasks_for_user(user.id):
             if transfers.cancel(transfer.id, user.id):
                 canceled += 1
-    if canceled or previous_state or discarded:
-        await reply(update, text.t(lang, "canceled"))
-    else:
-        await reply(update, text.t(lang, "cancel_nothing"))
+    key = "canceled" if (canceled or previous_state or discarded) else "cancel_nothing"
+    await panel(update, context, text.t(lang, key))
 
 
 async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
     lang = lang_of(context)
-    if await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context):
+    admin = await is_admin(svc.cfg, update.effective_user.id)
+    preview = in_preview(context)
+    if admin and not preview:
         from app.bot.flows import admin as admin_flow
 
         await admin_flow.show_section(update, context, kb.SEC_SETTINGS)
         return
-    body = text.t(lang, "settings_panel", lang=text.LANGS[lang], version=__version__)
-    await reply(update, body, reply_markup=kb.user_settings_menu(lang))
+    row = await repo.get_user(update.effective_user.id)
+    body, mode, destination = _user_settings_body(lang, row)
+    await _show(
+        update,
+        context,
+        body,
+        admin=False,
+        markup=kb.user_settings_menu(lang, mode, destination),
+    )
 
 
 async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -152,16 +271,99 @@ async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang = lang_of(context)
     # زبان پنل مدیریت ثابت فارسی است؛ بخش تغییر زبان فقط برای کاربران عادی است.
     if await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context):
-        await reply(
+        await send_home(
             update,
+            context,
             text.t(text.DEFAULT_LANG, "admin_lang_fixed"),
-            reply_markup=kb.admin_persistent_menu(text.DEFAULT_LANG),
+            kb.admin_persistent_menu(text.DEFAULT_LANG),
         )
         return
-    await reply(
+    await _show(
         update,
+        context,
         text.t(lang, "lang_title", current=text.LANGS[lang]),
-        reply_markup=kb.language_menu(lang),
+        admin=False,
+        markup=kb.language_menu(lang),
+    )
+
+
+async def on_user_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str) -> None:
+    """Dispatch text taps from the persistent user keyboard."""
+    clear_state(context)
+    handlers = {
+        "help": cmd_help,
+        "status": cmd_me,
+        "sites": cmd_sites,
+        "settings": cmd_settings,
+        "lang": cmd_lang,
+    }
+    if action in handlers:
+        await handlers[action](update, context)
+        return
+    if action == "links":
+        from app.bot.flows import user_links as links_flow
+
+        await links_flow.cmd_links(update, context)
+        return
+    if action == "contact":
+        svc = services(context)
+        admin = await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context)
+        set_state(context, ST_CONTACT)
+        await _show(update, context, text.t(lang_of(context), "contact_prompt"), admin=admin)
+        return
+    if action == "kbclose":
+        await reply(
+            update,
+            text.t(lang_of(context), "kb_closed"),
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+    if action == "exitpreview":
+        await handle_preview_exit_text(update, context)
+
+
+async def handle_preview_exit_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Restore the admin keyboard after exiting preview from a text-button tap."""
+    svc = services(context)
+    user = update.effective_user
+    if not await is_admin(svc.cfg, user.id):
+        await panel(update, context, text.t(lang_of(context), "admin_only"))
+        return
+    _leave_preview(context)
+    lang = text.DEFAULT_LANG
+    await send_home(
+        update,
+        context,
+        text.t(lang, "preview_exit_done") + "\n\n" + version_badge(),
+        kb.admin_persistent_menu(lang),
+    )
+
+
+def _leave_preview(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data["preview"] = False
+    context.user_data["is_admin"] = True
+    # بعد از خروج از پیش‌نمایش، پنل ادمین فوراً فارسی می‌شود.
+    context.user_data["lang"] = text.DEFAULT_LANG
+
+
+def _enter_preview(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data["preview"] = True
+    context.user_data["is_admin"] = False
+
+
+async def start_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """ورود ادمین به حالت کاربر: پنل فعلی بنر می‌شود و کیبورد کاربر جایگزین کیبورد ادمین."""
+    svc = services(context)
+    lang = lang_of(context)
+    _enter_preview(context)
+    query = update.callback_query
+    if query is not None:
+        await edit(query.message, text.t(lang, "preview_banner"), reply_markup=InlineKeyboardMarkup([]))
+    await send_home(
+        update,
+        context,
+        _welcome(lang, svc.settings.ttl_hours),
+        kb.user_persistent_menu(lang, preview=True),
     )
 
 
@@ -174,7 +376,7 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     raw = (message.text or "").strip() if message else ""
     clear_state(context)
     if not raw:
-        await reply(update, text.t(lang, "contact_prompt"))
+        await panel(update, context, text.t(lang, "contact_prompt"))
         return
 
     try:
@@ -187,7 +389,7 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
     except Exception:  # noqa: BLE001
         log.exception("could not store contact message")
-        await reply(update, text.t(lang, "contact_failed"))
+        await panel(update, context, text.t(lang, "contact_failed"))
         return
 
     hub = getattr(svc, "admin_group", None)
@@ -196,7 +398,7 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await hub.notify_report(report)
         except Exception:  # noqa: BLE001
             log.exception("could not forward contact message")
-    await reply(update, text.t(lang, "contact_sent"))
+    await panel(update, context, text.t(lang, "contact_sent"))
 
 
 # ── callbackهای منو ────────────────────────────────────────
@@ -207,9 +409,11 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
     preview = in_preview(context)
     admin = await is_admin(svc.cfg, update.effective_user.id) and not preview
     clear_state(context)
-    await safe_answer(query)
+    # ویرایش پیام فقط کیبورد شیشه‌ای می‌پذیرد؛ کیبورد ثابت ادمین اینجا کاربرد ندارد.
+    inline_menu = kb.main_menu(lang, admin, preview=preview)
 
     if action == "close":
+        await safe_answer(query)
         try:
             await query.message.delete()
         except Exception:  # noqa: BLE001
@@ -217,94 +421,86 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
         return
 
     if action == "home":
-        await edit(
-            query.message,
-            text.t(lang, "start", ttl=_fmt_hours(svc.settings.ttl_hours)) + "\n\n" + version_badge(),
-            reply_markup=_menu_markup(update, lang, admin, preview),
-        )
+        await safe_answer(query)
+        await panel(update, context, _welcome(lang, svc.settings.ttl_hours), inline_menu)
         return
 
     if action == "help":
-        await edit(
-            query.message,
-            text.t(
-                lang,
-                "help",
-                ttl=_fmt_hours(svc.settings.ttl_hours),
-                max_mb=svc.settings.max_upload_bytes // (1024 * 1024),
-            ),
-            reply_markup=_menu_markup(update, lang, admin, preview),
-        )
+        await safe_answer(query)
+        await panel(update, context, _help_body(svc, lang), inline_menu)
         return
 
     if action == "status":
+        await safe_answer(query)
         user = update.effective_user
         row = await repo.get_user(user.id)
-        await edit(
-            query.message,
-            text.t(
-                lang,
-                "status",
-                uid=user.id,
-                downloads=row.downloads if row else 0,
-                joined=fmt_ts(row.created_at if row else None),
-                admin=text.t(lang, "yes" if admin else "no"),
-                version=__version__,
-            ),
-            reply_markup=_menu_markup(update, lang, admin, preview),
-        )
+        await panel(update, context, _status_body(lang, user, row), inline_menu)
         return
 
     if action == "sites":
-        include_nsfw = svc.settings.nsfw_enabled
-        await edit(
-            query.message,
-            text.t(
-                lang,
-                "sites_title",
-                count=svc.sites.count,
-                popular=svc.sites.popular(include_nsfw) or "—",
-            ),
-            reply_markup=kb.main_menu(lang, admin, preview=preview),
-        )
+        await safe_answer(query)
+        await panel(update, context, _sites_body(svc, lang), inline_menu)
         return
 
     if action == "settings":
         if admin:
             from app.bot.flows import admin as admin_flow
 
+            await safe_answer(query)
             await admin_flow.show_section(update, context, kb.SEC_SETTINGS)
             return
-        await edit(
-            query.message,
-            text.t(lang, "settings_panel", lang=text.LANGS[lang], version=__version__),
-            reply_markup=kb.user_settings_menu(lang),
+        await safe_answer(query)
+        row = await repo.get_user(update.effective_user.id)
+        body, mode, destination = _user_settings_body(lang, row)
+        await panel(update, context, body, kb.user_settings_menu(lang, mode, destination))
+        return
+
+    if action in {"prefmode", "prefdest"}:
+        if admin:
+            await safe_answer(query, text.t(lang, "admin_only"), alert=True)
+            return
+        user_id = update.effective_user.id
+        row = await repo.get_user(user_id)
+        mode, destination = _user_defaults(row)
+        if action == "prefmode":
+            mode = "document" if mode == "video" else "video"
+        else:
+            destination = "link" if destination == "telegram" else "telegram"
+        await repo.set_user_preferences(
+            user_id,
+            default_mode=mode,
+            default_destination=destination,
         )
+        await safe_answer(query, text.t(lang, "delivery_choice_saved"))
+        row = await repo.get_user(user_id)
+        body, mode, destination = _user_settings_body(lang, row)
+        await panel(update, context, body, kb.user_settings_menu(lang, mode, destination))
         return
 
     if action == "lang":
         if admin:
             await safe_answer(query, text.t(text.DEFAULT_LANG, "admin_lang_fixed"), alert=True)
             return
-        await edit(
-            query.message,
+        await safe_answer(query)
+        await panel(
+            update,
+            context,
             text.t(lang, "lang_title", current=text.LANGS[lang]),
-            reply_markup=kb.language_menu(lang),
+            kb.language_menu(lang),
         )
         return
 
     if action == "kbclose":
-        # مثل تلگرام بومی: ReplyKeyboardRemove روی همان پیام اعمال می‌شود.
-        await edit(query.message, text.t(lang, "kb_closed"), reply_markup=ReplyKeyboardRemove())
+        await safe_answer(query)
+        # ReplyKeyboardRemove فقط روی یک پیام تازه اثر می‌گذارد، نه پیام ویرایشی.
+        await edit(query.message, "⌨️", reply_markup=InlineKeyboardMarkup([]))
+        await reply(update, text.t(lang, "kb_closed"), reply_markup=ReplyKeyboardRemove())
         return
 
     if action == "contact":
+        await safe_answer(query)
         set_state(context, ST_CONTACT)
-        await edit(
-            query.message,
-            text.t(lang, "contact_prompt"),
-            reply_markup=kb.back_home(lang),
-        )
+        await panel(update, context, text.t(lang, "contact_prompt"), kb.back_home(lang))
         return
 
     if action == "admin":
@@ -313,6 +509,7 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
             return
         from app.bot.flows import admin as admin_flow
 
+        await safe_answer(query)
         await admin_flow.show_panel(update, context)
         return
 
@@ -320,36 +517,31 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
         if not await is_admin(svc.cfg, update.effective_user.id):
             await safe_answer(query, text.t(lang, "admin_only"), alert=True)
             return
-        context.user_data["preview"] = True
-        context.user_data["is_admin"] = False
-        # اول کیبورد ثابت برداشته می‌شود، بعد دقیقاً منوی یک کاربر عادی می‌آید.
-        await edit(query.message, text.t(lang, "preview_banner"), reply_markup=ReplyKeyboardRemove())
-        await reply(
-            update,
-            text.t(lang, "start", ttl=_fmt_hours(svc.settings.ttl_hours)) + "\n\n" + version_badge(),
-            reply_markup=kb.main_menu(lang, False, preview=True),
-        )
+        await safe_answer(query)
+        await start_preview(update, context)
         return
 
     if action == "exitpreview":
         if not await is_admin(svc.cfg, update.effective_user.id):
             await safe_answer(query, text.t(lang, "admin_only"), alert=True)
             return
-        context.user_data["preview"] = False
-        context.user_data["is_admin"] = True
-        # بعد از خروج از پیش‌نمایش، پنل ادمین فوراً فارسی می‌شود.
-        context.user_data["lang"] = text.DEFAULT_LANG
+        await safe_answer(query)
+        _leave_preview(context)
         lang = text.DEFAULT_LANG
-        await reply(
+        await edit(query.message, text.t(lang, "preview_exit_done"), reply_markup=InlineKeyboardMarkup([]))
+        await send_home(
             update,
+            context,
             text.t(lang, "preview_exit_done") + "\n\n" + version_badge(),
-            reply_markup=kb.admin_persistent_menu(lang),
+            kb.admin_persistent_menu(lang),
         )
         return
 
     if action == "joincheck":
         await _verify_join(update, context, edit_message=True)
         return
+
+    await safe_answer(query)
 
 
 async def _verify_join(update: Update, context: ContextTypes.DEFAULT_TYPE, *, edit_message: bool) -> None:
@@ -361,11 +553,16 @@ async def _verify_join(update: Update, context: ContextTypes.DEFAULT_TYPE, *, ed
     query = update.callback_query
     if not missing:
         await safe_answer(query, text.t(lang, "join_gate_ok"))
-        body = text.t(lang, "start", ttl=_fmt_hours(svc.settings.ttl_hours)) + "\n\n" + version_badge()
         if edit_message and query is not None:
-            await edit(query.message, body, reply_markup=kb.main_menu(lang, False))
-        else:
-            await reply(update, body, reply_markup=kb.main_menu(lang, False))
+            await edit(query.message, text.t(lang, "join_gate_ok"), reply_markup=InlineKeyboardMarkup([]))
+        admin = await is_admin(svc.cfg, user.id)
+        preview = in_preview(context)
+        await send_home(
+            update,
+            context,
+            _welcome(lang, svc.settings.ttl_hours),
+            _reply_menu_markup(update, lang, admin, preview),
+        )
         return
     if not complete:
         await safe_answer(query, text.t(lang, "join_gate_error"), alert=True)
@@ -376,7 +573,7 @@ async def _verify_join(update: Update, context: ContextTypes.DEFAULT_TYPE, *, ed
     if edit_message and query is not None:
         await edit(query.message, body, reply_markup=markup)
     else:
-        await reply(update, body, reply_markup=markup)
+        await panel(update, context, body, markup)
 
 
 def _join_list(targets) -> str:
@@ -388,25 +585,62 @@ def _join_list(targets) -> str:
 
 async def on_lang(update: Update, context: ContextTypes.DEFAULT_TYPE, code: str) -> None:
     svc = services(context)
+    user = update.effective_user
+    query = update.callback_query
+    preview = in_preview(context)
+    admin = await is_admin(svc.cfg, user.id)
     # ادمین در حالت کاری همیشه فارسی می‌ماند؛ تغییر زبان فقط برای کاربر عادی است.
-    if await is_admin(svc.cfg, update.effective_user.id) and not in_preview(context):
+    if admin and not preview:
         await safe_answer(
-            update.callback_query,
+            query,
             text.t(text.DEFAULT_LANG, "admin_lang_fixed"),
             alert=True,
         )
         return
     if code not in text.LANGS:
+        await safe_answer(query)
         return
-    query = update.callback_query
+
+    row = await repo.get_user(user.id)
+    onboarding = row is None or not row.language_selected
     clear_state(context)
-    await repo.set_lang(update.effective_user.id, code)
+    await repo.set_lang(user.id, code, selected=True)
     context.user_data["lang"] = code
-    await safe_answer(query, text.t(code, "lang_saved", lang=text.LANGS[code]))
-    await edit(
-        query.message,
-        text.t(code, "settings_panel", lang=text.LANGS[code], version=__version__),
-        reply_markup=kb.user_settings_menu(code),
+    await safe_answer(query, text.t(code, "lang_saved", language=text.LANGS[code]))
+
+    if onboarding:
+        # انتخاب زبان کامل شد؛ حالا قفل عضویت اجرا می‌شود و در صورت عضویت منوی شروع می‌آید.
+        svc.force_join.clear_cache(user.id)
+        missing, _complete = await svc.force_join.missing(
+            context.bot, user.id, use_cache=False
+        )
+        if missing:
+            body = text.t(code, "join_gate_title", list=_join_list(missing))
+            await edit(query.message, body, reply_markup=kb.join_gate(code, missing))
+            return
+        await edit(
+            query.message,
+            text.t(code, "lang_saved", language=text.LANGS[code]),
+            reply_markup=InlineKeyboardMarkup([]),
+        )
+        await send_home(
+            update,
+            context,
+            _welcome(code, svc.settings.ttl_hours),
+            _reply_menu_markup(update, code, admin, preview),
+        )
+        return
+
+    row = await repo.get_user(user.id)
+    body, mode, destination = _user_settings_body(code, row)
+    await panel(update, context, body, kb.user_settings_menu(code, mode, destination))
+    # Telegram keeps the old persistent reply keyboard until a new message sends
+    # the localized one; the settings message itself uses an inline keyboard.
+    await send_home(
+        update,
+        context,
+        text.t(code, "menu_updated"),
+        _reply_menu_markup(update, code, admin, preview),
     )
 
 

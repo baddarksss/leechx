@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import event, text
+from sqlalchemy import event, inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import Config, get_config
@@ -59,6 +59,27 @@ def session() -> AsyncSession:
     return session_factory()()
 
 
+def _migrate_user_language_selected(sync_conn) -> None:
+    """Add onboarding and per-user delivery settings to older databases safely."""
+    inspector = inspect(sync_conn)
+    if "users" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("users")}
+    boolean_default = "0" if sync_conn.dialect.name == "sqlite" else "FALSE"
+    additions = {
+        "language_selected": ("BOOLEAN", boolean_default),
+        "uploads": ("INTEGER", "0"),
+        "default_mode": ("VARCHAR(16)", "'video'"),
+        "default_destination": ("VARCHAR(16)", "'telegram'"),
+    }
+    for name, (column_type, default) in additions.items():
+        if name in columns:
+            continue
+        sync_conn.execute(text(
+            f"ALTER TABLE users ADD COLUMN {name} {column_type} NOT NULL DEFAULT {default}"
+        ))
+
+
 async def init_db(cfg: Config | None = None) -> None:
     global _engine, _factory
     cfg = cfg or get_config()
@@ -68,6 +89,11 @@ async def init_db(cfg: Config | None = None) -> None:
     _factory = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_migrate_user_language_selected)
+        # SQLite and PostgreSQL both support this atomic singleton bootstrap.
+        await conn.execute(text(
+            "INSERT INTO traffic_counters (id) VALUES (1) ON CONFLICT (id) DO NOTHING"
+        ))
 
 
 async def dispose_db() -> None:

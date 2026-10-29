@@ -52,6 +52,19 @@ class FileLinkTransfers:
     def tasks_for_user(self, user_id: int) -> list[FileLinkTask]:
         return [t for t in self._tasks.values() if t.user_id == user_id]
 
+    async def _record_received_file_bytes(self, path: Path, already_recorded: int = 0) -> int:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return already_recorded
+        delta = max(0, size - already_recorded)
+        if delta:
+            try:
+                await repo.record_traffic(telegram_receive_bytes=delta)
+            except Exception:  # noqa: BLE001 — statistics must not break file delivery
+                log.warning("Telegram receive traffic could not be recorded", exc_info=True)
+        return max(already_recorded, size)
+
     async def start(self, update, lang: str, attachment, name: str, size: int) -> FileLinkTask | None:
         user = update.effective_user
         mime = getattr(attachment, "mime_type", None) or mimetypes.guess_type(name)[0] or "application/octet-stream"
@@ -161,10 +174,12 @@ class FileLinkTransfers:
         svc = self.svc
         dest = svc.store.link_path(task.id, task.name)
         registered = False
+        received_traffic_recorded = 0
         try:
             tg_file = await task.attachment.get_file()
             await self._download(task, tg_file.file_path, dest)
             size = dest.stat().st_size
+            received_traffic_recorded = await self._record_received_file_bytes(dest)
             if size > svc.settings.max_link_bytes:
                 raise RuntimeError("File exceeds maximum link size")
             if task.cancel_event.is_set():
@@ -180,6 +195,8 @@ class FileLinkTransfers:
                     f"{task.id} | {size} bytes",
                 )
             try:
+                await repo.bump_uploads(task.user_id)
+                await repo.log_event(task.user_id, "upload_done")
                 await repo.log_event(task.user_id, "link_created", size)
             except Exception:
                 log.warning("file link statistics could not be recorded", exc_info=True)
@@ -199,6 +216,9 @@ class FileLinkTransfers:
                 except Exception:
                     log.warning("admin upload notification failed", exc_info=True)
         except asyncio.CancelledError:
+            received_traffic_recorded = await self._record_received_file_bytes(
+                dest, received_traffic_recorded
+            )
             if not registered:
                 svc.store.drop_link_dir(task.id)
             if svc.admin_group is not None:
@@ -207,6 +227,9 @@ class FileLinkTransfers:
             await edit(task.status, text.t(task.lang, "canceled"))
         except Exception as exc:
             log.warning("Telegram file-to-link transfer failed: %s", type(exc).__name__, exc_info=True)
+            received_traffic_recorded = await self._record_received_file_bytes(
+                dest, received_traffic_recorded
+            )
             if svc.admin_group is not None:
                 await svc.admin_group.audit("file", "transfer_failed", task.user_id,
                                             f"{task.id}, {type(exc).__name__}", severity="ERROR")
