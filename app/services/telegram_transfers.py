@@ -184,6 +184,12 @@ class FileLinkTransfers:
                 raise RuntimeError("File exceeds maximum link size")
             if task.cancel_event.is_set():
                 raise asyncio.CancelledError()
+            limit = svc.settings.max_links_per_user
+            if limit > 0 and await repo.count_user_shared(task.user_id) >= limit:
+                # سقف لینک همزمان بین شروع آپلود و پایانش پر شده است.
+                await edit(task.status, text.t(task.lang, "link_quota_full", limit=limit))
+                svc.store.drop_link_dir(task.id)
+                return
             task.finalizing = True
             await edit(task.status, text.t(task.lang, "upload_wait"))
             ttl = svc.settings.ttl_seconds

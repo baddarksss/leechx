@@ -57,9 +57,22 @@ async def test_snapshot(db):
         "max_link_mb",
         "rate_limit_seconds",
         "daily_quota",
+        "max_links_per_user",
         "maintenance",
         "nsfw_enabled",
     }
+
+
+@pytest.mark.asyncio
+async def test_concurrent_link_cap_defaults_off_and_is_settable(db):
+    settings = RuntimeSettings(db)
+    await settings.load()
+    assert settings.max_links_per_user == 0  # پیش‌فرض خاموش
+    await settings.set("max_links_per_user", 3)
+    assert settings.max_links_per_user == 3
+    assert settings.snapshot()["max_links_per_user"] == 3
+    await settings.set("max_links_per_user", -5)
+    assert settings.max_links_per_user == 0
 
 
 @pytest.mark.asyncio

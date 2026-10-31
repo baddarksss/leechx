@@ -194,6 +194,16 @@ async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
         await safe_answer(query, text.t(user_lang, "too_many_active"), alert=True)
         return
 
+    # سقف لینک مستقیم همزمان: Draft دست‌نخورده می‌ماند تا کاربر یکی را حذف
+    # کند و همان دکمه را دوباره بزند (بدون نیاز به فرستادن دوبارهٔ لینک).
+    if mode == "link":
+        limit, used = await link_flow.link_quota_used(context, draft.user_id)
+        if limit and used >= limit:
+            await safe_answer(
+                query, text.t(user_lang, "link_quota_full", limit=limit), alert=True
+            )
+            return
+
     svc.drafts.pop(draft_id, draft.user_id)
     if mode == "link":
         label = text.t(user_lang, "deliver_link_btn")

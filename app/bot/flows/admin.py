@@ -813,6 +813,7 @@ def _render_settings(context: ContextTypes.DEFAULT_TYPE) -> str:
         max_upload=snap["max_upload_mb"],
         max_link=snap["max_link_mb"],
         rate=f"{snap['rate_limit_seconds']:g}",
+        links=snap["max_links_per_user"],
         maintenance=text.t(lang, "yes" if snap["maintenance"] else "no"),
         nsfw=text.t(lang, "yes" if snap["nsfw_enabled"] else "no"),
     )

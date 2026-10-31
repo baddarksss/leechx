@@ -83,7 +83,12 @@ def make_context(info: MediaInfo):
     jobs = FakeJobs()
     services = SimpleNamespace(
         cfg=SimpleNamespace(per_user_concurrency=1, max_height=0),
-        settings=SimpleNamespace(daily_quota=0, nsfw_enabled=True, ttl_hours=6.0),
+        settings=SimpleNamespace(
+            daily_quota=0,
+            nsfw_enabled=True,
+            ttl_hours=6.0,
+            max_links_per_user=0,
+        ),
         limiter=RateLimiter(0),
         sites=SimpleNamespace(is_nsfw_url=lambda url: False),
         downloader=FakeDownloader(info),

@@ -582,6 +582,11 @@ class JobManager:
 
     async def _deliver_link(self, task: JobTask, result) -> None:
         """فایل دانلودشده را به پوشهٔ لینک مستقیم منتقل و لینک امضاشده می‌سازد."""
+        limit = self.settings.max_links_per_user
+        if limit > 0 and await repo.count_user_shared(task.user_id) >= limit:
+            # سقف لینک همزمان پر شده است؛ فایل هنوز جابه‌جا نشده تا پوشهٔ کار
+            # در finally پاک شود و فایل یتیم نماند.
+            raise errors.LinkQuota(limit=limit)
         parts = getattr(result, "parts", None) or []
         if len(parts) > 1:
             # لینک مستقیم فقط یک فایل است؛ آلبوم را به ZIP تبدیل می‌کنیم.

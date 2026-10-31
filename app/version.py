@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.6.8"
-CODENAME = "Site Rescue"
+__version__ = "5.7.0"
+CODENAME = "Link Guard"
 RELEASE_DATE = "2026-10-31"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.

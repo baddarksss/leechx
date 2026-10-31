@@ -17,8 +17,9 @@ SCHEMA: dict[str, tuple[str, str]] = {
     "link_ttl_hours": ("float", "اعتبار لینک (ساعت)"),
     "max_upload_mb": ("int", "حداکثر حجم آپلود (MB)"),
     "max_link_mb": ("int", "حداکثر حجم فایل لینک (MB)"),
-    "rate_limit_seconds": ("float", "فاصلهٔ بین درخواست‌ها (ثانیه)"),
+    "rate_limit_seconds": ("float", "فاصلهٔ بین پردازش لینک/فایل (ثانیه)"),
     "daily_quota": ("int", "سهمیهٔ روزانه (0=بی‌نهایت)"),
+    "max_links_per_user": ("int", "حداکثر لینک همزمان هر کاربر (0=خاموش)"),
     "maintenance": ("bool", "حالت تعمیر"),
     "nsfw_enabled": ("bool", "سایت‌های بزرگسال"),
     # ── مقادیر متنی که ادمین از خود ربات وارد می‌کند ──
@@ -81,6 +82,7 @@ class RuntimeSettings:
             "max_link_mb": self.cfg.max_link_file_mb,
             "rate_limit_seconds": self.cfg.rate_limit_seconds,
             "daily_quota": self.cfg.daily_quota,
+            "max_links_per_user": self.cfg.max_links_per_user,
             "maintenance": False,
             "nsfw_enabled": self.cfg.nsfw_enabled,
             "public_base_url": self.cfg.public_base_url,
@@ -180,6 +182,11 @@ class RuntimeSettings:
         return max(0, self.get_int("daily_quota"))
 
     @property
+    def max_links_per_user(self) -> int:
+        """سقف لینک‌های فعال همزمان هر کاربر؛ ۰ = خاموش."""
+        return max(0, self.get_int("max_links_per_user"))
+
+    @property
     def maintenance(self) -> bool:
         return self.get_bool("maintenance")
 
@@ -236,6 +243,7 @@ class RuntimeSettings:
             "max_link_mb": self.max_link_bytes // (1024 * 1024),
             "rate_limit_seconds": self.rate_limit_seconds,
             "daily_quota": self.daily_quota,
+            "max_links_per_user": self.max_links_per_user,
             "maintenance": self.maintenance,
             "nsfw_enabled": self.nsfw_enabled,
         }

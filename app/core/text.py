@@ -102,7 +102,8 @@ FA: dict[str, str] = {
     "failed": "❌ خطا: {reason}",
     "expired_draft": "⌛ این انتخاب منقضی شده. لینک را دوباره بفرست.",
     "too_many_active": "⏳ یک کار دیگرت هنوز تمام نشده. کمی صبر کن.",
-    "rate_limited": "🐢 کمی آهسته‌تر! {seconds} ثانیه صبر کن.",
+    "rate_limited": "🐢 کمی آهسته‌تر! برای پردازش لینک/فایل بعدی {seconds} ثانیه صبر کن.",
+    "link_quota_full": "🔗 سقف لینک‌های همزمان تو {limit} عدد است. اول یکی را از «لینک‌های من» حذف کن و دوباره امتحان کن.",
     "banned": "🚫 دسترسی شما به ربات بسته شده است.",
     "maintenance": "🛠 ربات موقتاً در حال تعمیر است. بعداً سراغت می‌آییم.",
     "issue_reported": "📨 این مورد برای بررسی به ادمین ارسال شد؛ در اولین فرصت بررسی می‌شود.",
@@ -245,8 +246,9 @@ FA: dict[str, str] = {
     "set_ttl": "⏳ اعتبار لینک: {v} ساعت",
     "set_upload": "📦 سقف آپلود: {v}MB",
     "set_link": "🔗 سقف فایل لینک: {v}MB",
-    "set_rate": "🐢 فاصلهٔ درخواست: {v}s",
+    "set_rate": "🐢 فاصلهٔ لینک/فایل: {v}s",
     "set_quota": "📉 سهمیهٔ روزانه: {v}",
+    "set_links": "🔗 لینک‌های همزمان: {v}",
     "set_maintenance": "🛠 حالت تعمیر {flag}",
     "set_nsfw": "🔞 سایت‌های بزرگسال {flag}",
     "admin_limit_reached": "⛔️ سقف ادمین‌ها ({max}) پر است.",
@@ -314,7 +316,8 @@ FA: dict[str, str] = {
         "⏳ اعتبار لینک: <b>{ttl} ساعت</b>\n"
         "📦 حداکثر آپلود: <b>{max_upload}MB</b>\n"
         "🔗 حداکثر فایل لینک: <b>{max_link}MB</b>\n"
-        "🐢 فاصلهٔ درخواست: <b>{rate}s</b>\n"
+        "🐢 فاصلهٔ لینک/فایل: <b>{rate}s</b>\n"
+        "🔗 لینک‌های همزمان: <b>{links}</b>\n"
         "⛔️ حالت تعمیر: <b>{maintenance}</b>\n"
         "🔞 سایت‌های بزرگسال: <b>{nsfw}</b>"
     ),
@@ -676,8 +679,9 @@ FA: dict[str, str] = {
     "run_link_ttl_hours": "اعتبار لینک (ساعت)",
     "run_max_upload_mb": "حداکثر حجم آپلود (MB)",
     "run_max_link_mb": "حداکثر حجم فایل لینک (MB)",
-    "run_rate_limit_seconds": "فاصلهٔ بین درخواست‌ها (ثانیه)",
+    "run_rate_limit_seconds": "فاصلهٔ بین پردازش لینک/فایل (ثانیه)",
     "run_daily_quota": "سهمیهٔ روزانه (0=بی‌نهایت)",
+    "run_max_links_per_user": "حداکثر لینک همزمان هر کاربر (0=خاموش)",
     "run_maintenance": "حالت تعمیر",
     "run_nsfw_enabled": "سایت‌های بزرگسال",
     "run_public_base_url": "آدرس عمومی لینک‌ها",
@@ -761,7 +765,8 @@ EN: dict[str, str] = {
     "failed": "❌ Error: {reason}",
     "expired_draft": "⌛ This selection expired. Send the link again.",
     "too_many_active": "⏳ Your other job is still running. Please wait.",
-    "rate_limited": "🐢 Slow down! Wait {seconds}s.",
+    "rate_limited": "🐢 Slow down! Wait {seconds}s before the next link/file.",
+    "link_quota_full": "🔗 You already have {limit} active links. Delete one from “My links” and try again.",
     "banned": "🚫 You are blocked.",
     "maintenance": "🛠 Maintenance mode. Try again later.",
     "issue_reported": "📨 This issue was sent to the admin and will be checked as soon as possible.",
@@ -898,8 +903,9 @@ EN: dict[str, str] = {
     "set_ttl": "⏳ Link TTL: {v}h",
     "set_upload": "📦 Max upload: {v}MB",
     "set_link": "🔗 Max link file: {v}MB",
-    "set_rate": "🐢 Rate limit: {v}s",
+    "set_rate": "🐢 Link/file interval: {v}s",
     "set_quota": "📉 Daily quota: {v}",
+    "set_links": "🔗 Concurrent links: {v}",
     "set_maintenance": "🛠 Maintenance {flag}",
     "set_nsfw": "🔞 NSFW sites {flag}",
     "admin_limit_reached": "⛔️ Admin limit reached ({max}).",
@@ -953,7 +959,8 @@ EN: dict[str, str] = {
     "admin_ban_staff": "⛔️ Admins and the owner cannot be banned.",
     "admin_settings": (
         "<b>⚙️ Bot settings</b>\n\n⏳ Link TTL: <b>{ttl}h</b>\n📦 Max upload: <b>{max_upload}MB</b>\n"
-        "🔗 Max link file: <b>{max_link}MB</b>\n🐢 Rate limit: <b>{rate}s</b>\n"
+        "🔗 Max link file: <b>{max_link}MB</b>\n🐢 Link/file interval: <b>{rate}s</b>\n"
+        "🔗 Concurrent links: <b>{links}</b>\n"
         "⛔️ Maintenance: <b>{maintenance}</b>\n🔞 NSFW sites: <b>{nsfw}</b>"
     ),
     "admin_set_value": "Send a new value for <b>{label}</b>:",
@@ -1313,8 +1320,9 @@ EN: dict[str, str] = {
     "run_link_ttl_hours": "Link TTL (hours)",
     "run_max_upload_mb": "Max upload (MB)",
     "run_max_link_mb": "Max link file (MB)",
-    "run_rate_limit_seconds": "Request interval (seconds)",
+    "run_rate_limit_seconds": "Interval between link/file jobs (seconds)",
     "run_daily_quota": "Daily quota (0 = unlimited)",
+    "run_max_links_per_user": "Max concurrent links per user (0 = off)",
     "run_maintenance": "Maintenance mode",
     "run_nsfw_enabled": "Adult sites",
     "run_public_base_url": "Public link base URL",
@@ -1398,7 +1406,8 @@ RU: dict[str, str] = {
     "failed": "❌ Ошибка: {reason}",
     "expired_draft": "⌛ Выбор устарел. Отправь ссылку снова.",
     "too_many_active": "⏳ Другая задача ещё выполняется. Подожди.",
-    "rate_limited": "🐢 Помедленнее! Подожди {seconds} с.",
+    "rate_limited": "🐢 Помедленнее! Подожди {seconds} с. до следующей ссылки/файла.",
+    "link_quota_full": "🔗 У тебя уже {limit} активных ссылок. Удали одну в «Мои ссылки» и попробуй снова.",
     "banned": "🚫 Вы заблокированы.",
     "maintenance": "🛠 Режим обслуживания. Попробуй позже.",
     "issue_reported": "📨 Проблема отправлена администратору и будет проверена.",
@@ -1519,8 +1528,9 @@ RU: dict[str, str] = {
     "set_ttl": "⏳ Срок ссылки: {v} ч.",
     "set_upload": "📦 Макс. загрузка: {v} МБ",
     "set_link": "🔗 Макс. файл ссылки: {v} МБ",
-    "set_rate": "🐢 Интервал запросов: {v} с.",
+    "set_rate": "🐢 Интервал ссылка/файл: {v} с.",
     "set_quota": "📉 Дневная квота: {v}",
+    "set_links": "🔗 Одновременные ссылки: {v}",
     "set_maintenance": "🛠 Обслуживание {flag}",
     "set_nsfw": "🔞 Взрослые сайты {flag}",
     "admin_limit_reached": "⛔️ Достигнут лимит админов ({max}).",
@@ -1584,7 +1594,8 @@ RU: dict[str, str] = {
         "⏳ Срок ссылки: <b>{ttl} ч.</b>\n"
         "📦 Макс. загрузка: <b>{max_upload} МБ</b>\n"
         "🔗 Макс. файл ссылки: <b>{max_link} МБ</b>\n"
-        "🐢 Интервал запросов: <b>{rate} с.</b>\n"
+        "🐢 Интервал ссылка/файл: <b>{rate} с.</b>\n"
+        "🔗 Одновременные ссылки: <b>{links}</b>\n"
         "⛔️ Обслуживание: <b>{maintenance}</b>\n"
         "🔞 Взрослые сайты: <b>{nsfw}</b>"
     ),
@@ -1858,6 +1869,7 @@ RU: dict[str, str] = {
     "run_max_link_mb": "Макс. файл ссылки (МБ)",
     "run_rate_limit_seconds": "Интервал запросов (секунды)",
     "run_daily_quota": "Дневная квота (0 = без лимита)",
+    "run_max_links_per_user": "Макс. одновременных ссылок (0 = выкл.)",
     "run_maintenance": "Режим обслуживания",
     "run_nsfw_enabled": "Взрослые сайты",
     "run_public_base_url": "Публичный адрес ссылок",

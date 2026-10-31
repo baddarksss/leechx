@@ -7,6 +7,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.7.0] - 2026-10-31 · "Link Guard"
+
+### Added
+- **Concurrent direct-link cap** (`max_links_per_user`, default `0` = off).
+  When an admin sets it to N, a user can keep at most N *active* signed links
+  (unexpired, shared files). Asking for the next one is refused with a clear
+  message and the draft stays alive, so the user only has to delete one old
+  link from **My links** and tap the button again. Enforced at queue time, at
+  delivery time (race-safe) and for file→link uploads.
+- The cap is editable from **Admin → Settings → 🔗 Concurrent links** (three
+  languages), and is also readable from `MAX_LINKS_PER_USER` in `.env`.
+
+### Changed
+- The request interval is now explicitly **processing-only** (download a link
+  or upload a file). Menus, quality buttons, cancel and link management never
+  consume it, and rejected attempts (quota/NSFW/concurrency) no longer start
+  the timer. Labels renamed to «فاصلهٔ بین پردازش لینک/فایل».
+
 ## [5.6.8] - 2026-10-31 · "Site Rescue"
 
 ### Added

@@ -71,6 +71,12 @@ class CaptchaWall(LeechError):
     key = "captcha_wall"
 
 
+class LinkQuota(LeechError):
+    """سقف لینک‌های فعال همزمان کاربر پر شده است."""
+
+    key = "link_quota_full"
+
+
 class JobCancelled(Exception):
     """کاربر کار را لغو کرد (کنترل‌شده، خطا نیست)."""
 

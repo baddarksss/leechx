@@ -225,15 +225,22 @@ def quality_text(lang: str, draft: Draft, note: str = "") -> str:
     return "\n".join(lines)
 
 
+async def link_quota_used(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> tuple[int, int]:
+    """سقف لینک همزمان و تعداد لینک فعال کاربر را برمی‌گرداند.
+
+    ``limit == 0`` یعنی ادمین این محدودیت را خاموش کرده است.
+    """
+    svc = services(context)
+    limit = max(0, svc.settings.max_links_per_user)
+    if limit <= 0:
+        return 0, 0
+    return limit, await repo.count_user_shared(user_id)
+
+
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str) -> None:
     svc = services(context)
     lang = lang_of(context)
     user = update.effective_user
-
-    wait = svc.limiter.hit(user.id)
-    if wait > 0:
-        await reply(update, text.t(lang, "rate_limited", seconds=f"{wait:g}"))
-        return
 
     if not svc.limiter.has_slot(user.id, svc.cfg.per_user_concurrency):
         await reply(update, text.t(lang, "too_many_active"))
@@ -245,6 +252,13 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
 
     if svc.sites.is_nsfw_url(url) and not svc.settings.nsfw_enabled:
         await reply(update, text.t(lang, "nsfw_blocked"))
+        return
+
+    # فاصلهٔ بین درخواست‌ها فقط به پردازش لینک/فایل مربوط است؛ دکمه‌ها و
+    # منوها هرگز این تایمر را مصرف نمی‌کنند.
+    wait = svc.limiter.hit(user.id)
+    if wait > 0:
+        await reply(update, text.t(lang, "rate_limited", seconds=f"{wait:g}"))
         return
 
     status = await reply(update, text.t(lang, "probing"))

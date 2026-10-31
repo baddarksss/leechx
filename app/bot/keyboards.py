@@ -392,6 +392,7 @@ def settings_menu(lang: str, snap: dict) -> Kb:
          Btn(text.t(lang, "set_link", v=snap["max_link_mb"]), callback_data="a|edit|max_link_mb")],
         [Btn(text.t(lang, "set_rate", v=f"{snap['rate_limit_seconds']:g}"), callback_data="a|edit|rate_limit_seconds"),
          Btn(text.t(lang, "set_quota", v=snap["daily_quota"]), callback_data="a|edit|daily_quota")],
+        [Btn(text.t(lang, "set_links", v=snap["max_links_per_user"]), callback_data="a|edit|max_links_per_user")],
         [Btn(text.t(lang, "set_maintenance", flag=flag(snap["maintenance"])), callback_data="a|toggle|maintenance"),
          Btn(text.t(lang, "set_nsfw", flag=flag(snap["nsfw_enabled"])), callback_data="a|toggle|nsfw_enabled")],
         [_btn(lang, "btn_admin_runtime", A_RUNTIME)],

@@ -59,6 +59,7 @@ class Config(BaseSettings):
     workers: int = 2
     rate_limit_seconds: float = 3.0
     daily_quota: int = 0
+    max_links_per_user: int = 0
     max_height: int = 0
 
     # ── دانلود ──────────────────────────────────────────────

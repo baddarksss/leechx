@@ -26,6 +26,15 @@ def test_unsupported_message_is_generic_in_every_language():
         assert text.t(lang, "nsfw_blocked").strip()
 
 
+def test_link_quota_error_is_localized():
+    exc = errors.LinkQuota(limit=3)
+    assert exc.key == "link_quota_full"
+    for lang in text.LANGS:
+        msg = text.t(lang, exc.key, limit=3)
+        assert "3" in msg
+        assert "{limit}" not in msg
+
+
 def test_eporner_video_url_uses_embed_endpoint():
     url = "https://www.eporner.com/video-09fBSkYy45O/woman-anal-foot-fucking/"
     assert extractor_url(url) == "https://www.eporner.com/embed/09fBSkYy45O/"
