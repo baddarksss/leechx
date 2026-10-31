@@ -29,6 +29,8 @@ class Draft:
     thumbnail: str | None = None
     uploader: str | None = None
     extractor: str = ""
+    # صفحهٔ امبد برای سایت‌های HLS (Cloudflare) — تا زمان دانلود نگه داشته می‌شود.
+    embed_url: str = ""
     kind: str = "link"
     lang: str = "fa"
     option: FormatOption | None = None

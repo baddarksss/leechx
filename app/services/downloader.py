@@ -14,6 +14,7 @@ import logging
 import mimetypes
 import os
 import re
+import shutil
 import subprocess
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -249,6 +250,186 @@ def _kvs_pick(formats: list[dict], option: FormatOption) -> dict | None:
             return same[-1]
     return max(usable, key=lambda f: int(f.get("height") or 0))
 
+
+# ─── HLS (صفحهٔ کلادفلری + امبد pack‌شده) ─────────────────────
+# بعضی سایت‌های تیوب پشت «چالش مدیریت‌شدهٔ Cloudflare» هستند و ویدیو داخل
+# iframe امبدی با جاوااسکریپت فشرده‌شده (Dean Edwards packer) قرار دارد.
+# اینجا صفحه را با byparr باز می‌کنیم، پک را خودمان باز می‌کنیم و HLS را
+# بومی دانلود می‌کنیم؛ چون پلی‌لیست‌ها/سگمنت‌ها پسوندهای غیررسمی دارند
+# (مثل ``.txt`` و ``.woff2``) و yt-dlp آن‌ها را نمی‌فهمد.
+
+_PACKED_JS = re.compile(
+    r"eval\(function\(p,a,c,k,e,d\)\{.*?\}\('(.*?)',(\d+),(\d+),'(.*?)'\.split\('\|'\)",
+    re.S,
+)
+_HLS_LINK = re.compile(r'"(hls\d*)"\s*:\s*"([^"]+)"')
+_IFRAME_SRC = re.compile(r"<iframe[^>]+src=[\"']([^\"']+)[\"']", re.I)
+_PACK_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_CF_MARKERS = ("cloudflare", "challenge", "just a moment", "cf-mitigated", "http error 403")
+# CDN این سایت‌ها هر اتصال را throttle می‌کنند؛ چند اتصال موازی سرعت را
+# چند برابر می‌کند (اندازه‌گیری: ۰.۶MB/s تک‌اتصال ← ~۲۰MB/s با ۶ اتصال).
+HLS_CONCURRENCY = 6
+
+
+def looks_like_cf_block(exc: BaseException) -> bool:
+    """آیا این خطا بوی چالش Cloudflare می‌دهد؟ (۴۰۳ یا صفحهٔ challenge)"""
+    if getattr(exc, "key", "") == "access_denied":
+        return True
+    text = f"{getattr(exc, 'reason', '')} {exc}".casefold()
+    return any(marker in text for marker in _CF_MARKERS)
+
+
+def _unbase(text: str, base: int) -> int | None:
+    value = 0
+    for char in text:
+        try:
+            digit = _PACK_ALPHABET.index(char)
+        except ValueError:
+            return None
+        if digit >= base:
+            return None
+        value = value * base + digit
+    return value
+
+
+def unpack_packed_js(html: str) -> str | None:
+    """بدنهٔ ``eval(function(p,a,c,k,e,d)…`` را باز می‌کند (بدون اجرای JS)."""
+    match = _PACKED_JS.search(html or "")
+    if not match:
+        return None
+    payload = match.group(1).replace("\\'", "'")
+    base = int(match.group(2))
+    words = [word.replace("\\'", "'") for word in match.group(4).split("|")]
+
+    def replace(token: re.Match) -> str:
+        index = _unbase(token.group(0), base)
+        if index is None or index >= len(words) or not words[index]:
+            return token.group(0)
+        return words[index]
+
+    return re.sub(r"\b[0-9a-zA-Z]+\b", replace, payload)
+
+
+def hls_links(html: str, base_url: str = "") -> dict[str, str]:
+    """دیکشنری ``{"hls3": "https://…"}`` را از صفحهٔ امبد بیرون می‌کشد."""
+    text = unpack_packed_js(html) or html or ""
+    return {
+        key: (value if value.startswith(("http://", "https://")) else urljoin(base_url, value))
+        for key, value in _HLS_LINK.findall(text)
+    }
+
+
+def iframe_sources(html: str) -> list[str]:
+    """آدرس‌های قابل‌دریافت iframeها؛ ad/recaptcha/data کنار گذاشته می‌شوند."""
+    out: list[str] = []
+    for raw in _IFRAME_SRC.findall(html or ""):
+        src = raw.replace("&amp;", "&").replace("&#038;", "&").strip()
+        low = src.casefold()
+        if not src or src in out:
+            continue
+        if low.startswith(("javascript:", "data:", "about:")) or "recaptcha" in low:
+            continue
+        if not low.startswith(("http://", "https://", "//")):
+            continue
+        out.append(src)
+    return out
+
+
+def hls_master_variants(text: str, base_url: str = "") -> list[dict]:
+    """واریانت‌های پلی‌لیست مادر HLS (ارتفاع/عرض/نرخ بیت/کدک)."""
+    lines = (text or "").splitlines()
+    out: list[dict] = []
+    for index, line in enumerate(lines):
+        if not line.startswith("#EXT-X-STREAM-INF:"):
+            continue
+        attrs = {
+            key.upper(): value.strip().strip('"')
+            for key, value in re.findall(r"([A-Za-z0-9-]+)=(\"[^\"]*\"|[^,]*)", line[len("#EXT-X-STREAM-INF:"):])
+        }
+        uri = next(
+            (item.strip() for item in lines[index + 1:] if item.strip() and not item.startswith("#")),
+            "",
+        )
+        if not uri:
+            continue
+        width = height = 0
+        resolution = attrs.get("RESOLUTION", "")
+        if "x" in resolution:
+            raw_width, _, raw_height = resolution.partition("x")
+            width = int(raw_width) if raw_width.isdigit() else 0
+            height = int(raw_height) if raw_height.isdigit() else 0
+        bandwidth = attrs.get("BANDWIDTH", "")
+        try:
+            fps = int(float(attrs.get("FRAME-RATE") or 0))
+        except (TypeError, ValueError):
+            fps = 0
+        out.append(
+            {
+                "url": urljoin(base_url, uri) if base_url else uri,
+                "height": height,
+                "width": width,
+                "fps": fps,
+                "bandwidth": int(bandwidth) if bandwidth.isdigit() else 0,
+                "codecs": attrs.get("CODECS", ""),
+            }
+        )
+    return out
+
+
+def hls_segments(text: str, base_url: str = "") -> list[str]:
+    """آدرس مطلق همهٔ سگمنت‌های یک پلی‌لیست رسانه."""
+    return [
+        urljoin(base_url, line.strip()) if base_url else line.strip()
+        for line in (text or "").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+
+
+def pick_hls_variant(variants: list[dict], height: int = 0) -> dict | None:
+    """واریانت متناظر ارتفاع انتخاب‌شده (یا بهترین موجود)."""
+    usable = [item for item in (variants or []) if item.get("url")]
+    if not usable:
+        return None
+    if height:
+        exact = [item for item in usable if int(item.get("height") or 0) == height]
+        if exact:
+            return exact[0]
+        lower = [item for item in usable if 0 < int(item.get("height") or 0) <= height]
+        if lower:
+            return max(lower, key=lambda item: int(item.get("height") or 0))
+    return max(usable, key=lambda item: (int(item.get("height") or 0), int(item.get("bandwidth") or 0)))
+
+
+def _hls_formats(variants: list[dict]) -> list[dict]:
+    """واریانت‌های HLS را به فرمت‌های سازگار با منوی کیفیت تبدیل می‌کند."""
+    formats: list[dict] = []
+    for variant in variants:
+        height = int(variant.get("height") or 0)
+        codecs = str(variant.get("codecs") or "")
+        vcodec = next(
+            (codec.strip() for codec in codecs.split(",")
+             if codec.strip().lower().startswith(("avc", "hvc", "hev", "av01", "vp0", "vp9"))),
+            "",
+        )
+        bandwidth = int(variant.get("bandwidth") or 0)
+        formats.append(
+            {
+                "format_id": f"hls-{height or bandwidth}",
+                "url": variant["url"],
+                "ext": "mp4",
+                "height": height,
+                "width": int(variant.get("width") or 0),
+                "fps": int(variant.get("fps") or 0),
+                "tbr": round(bandwidth / 1000) if bandwidth else None,
+                "vcodec": vcodec or None,
+                "acodec": "mp4a.40.2" if "mp4a" in codecs.lower() else None,
+                "hls": True,
+            }
+        )
+    formats.sort(key=lambda fmt: int(fmt.get("height") or 0))
+    return formats
+
+
 MEDIA_MIME_PREFIXES = ("video/", "audio/", "image/")
 DIRECT_MIME_TYPES = {
     "application/octet-stream",
@@ -325,6 +506,8 @@ class MediaInfo:
     playlist: bool = False
     # لینک‌هایی که yt-dlp نمی‌فهمد و با gallery-dl (عکس/آلبوم) دانلود می‌شوند
     gallery: bool = False
+    # صفحهٔ امبد (iframe) برای سایت‌های پشت Cloudflare با HLS فشرده‌شده
+    embed_url: str = ""
 
 
 @dataclass
@@ -531,12 +714,18 @@ class Downloader:
             kvs = await self._kvs_fallback(url, exc)
             if kvs is not None:
                 return kvs
+            cf = await self._cf_fallback(url, exc)
+            if cf is not None:
+                return cf
             raise
         except (DownloadError, ExtractorError) as exc:
             mapped = map_error(exc)
             kvs = await self._kvs_fallback(url, mapped)
             if kvs is not None:
                 return kvs
+            cf = await self._cf_fallback(url, mapped)
+            if cf is not None:
+                return cf
             raise mapped from exc
         except Exception as exc:  # noqa: BLE001 — هر خطای دیگری هم باید به کاربر برسد
             log.exception("probe failed for %s", url)
@@ -630,6 +819,112 @@ class Downloader:
                 except (errors.LeechError, aiohttp.ClientError, TimeoutError, OSError):
                     continue
         return info
+
+    async def _cf_fallback(self, url: str, exc: errors.LeechError):
+        """اگر سایت پشت چالش Cloudflare بود، صفحه را با byparr باز می‌کنیم."""
+        if not (self.cfg.byparr_url or "").strip() or not looks_like_cf_block(exc):
+            return None
+        try:
+            solved = await self._cf_solve(url)
+            if solved is None:
+                return None
+            info = await self._parse_solved_page(url, *solved)
+        except errors.LeechError:
+            raise
+        except Exception:  # noqa: BLE001 — خطای اصلی باید به کاربر برسد
+            log.warning("Cloudflare fallback failed for %s", url, exc_info=True)
+            return None
+        if info is not None:
+            log.info("resolved Cloudflare page for %s (%d formats)", url, len(info.formats))
+        return info
+
+    async def _cf_solve(self, url: str) -> tuple[str, str] | None:
+        """حل چالش Cloudflare با byparr؛ خروجی ``(html, user_agent)``."""
+        base = (self.cfg.byparr_url or "").strip().rstrip("/")
+        if not base:
+            return None
+        payload = {"cmd": "request.get", "url": url, "maxTimeout": 120000}
+        timeout = aiohttp.ClientTimeout(total=170, connect=10)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as sess:
+                async with sess.post(f"{base}/v1", json=payload) as resp:
+                    data = await resp.json(content_type=None)
+        except (aiohttp.ClientError, TimeoutError, OSError, ValueError):
+            log.warning("byparr request failed for %s", url, exc_info=True)
+            return None
+        if not isinstance(data, dict) or str(data.get("status") or "").casefold() != "ok":
+            return None
+        solution = data.get("solution") or {}
+        html = str(solution.get("response") or "")
+        if len(html) < 200:
+            return None
+        return html, str(solution.get("userAgent") or USER_AGENT)
+
+    async def _parse_solved_page(
+        self, page_url: str, html: str, user_agent: str
+    ) -> MediaInfo | None:
+        """صفحهٔ حل‌شده را به MediaInfo تبدیل می‌کند (KVS یا iframe با HLS)."""
+        parsed = parse_kvs(html, page_url)
+        if parsed is not None:
+            return parsed
+
+        title = _html_title(html)
+        title = re.sub(r"\s*[-–|]\s*[^-–|]+\.(?:com|net|org|xxx|tv)\s*$", "", title, flags=re.I)
+        og_image = re.search(
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html
+        )
+        thumbnail = urljoin(page_url, og_image.group(1)) if og_image else None
+
+        candidates = list(iframe_sources(html))[:5]
+        if not candidates and not hls_links(html, page_url):
+            return None
+
+        headers = {
+            "User-Agent": user_agent,
+            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        timeout = aiohttp.ClientTimeout(total=45, connect=10)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
+            for raw in candidates:
+                embed_url = raw if raw.startswith(("http://", "https://")) else f"https:{raw}"
+                try:
+                    async with safe_http_request(
+                        sess, "GET", embed_url, headers={"Referer": page_url}
+                    ) as resp:
+                        if resp.status >= 400:
+                            continue
+                        embed_html = await resp.text(errors="replace")
+                except (errors.LeechError, aiohttp.ClientError, TimeoutError, OSError):
+                    continue
+                links = hls_links(embed_html, embed_url)
+                if not links:
+                    continue
+                master_url = links.get("hls3") or links.get("hls2") or next(iter(links.values()))
+                variants = await self._hls_variants(sess, master_url, embed_url)
+                if not variants:
+                    continue
+                return MediaInfo(
+                    url=page_url,
+                    title=human.safe_filename(title or "media", 150),
+                    thumbnail=thumbnail,
+                    extractor="HLS",
+                    formats=_hls_formats(variants),
+                    ext="mp4",
+                    embed_url=embed_url,
+                )
+        return None
+
+    async def _hls_variants(self, sess, master_url: str, referer: str) -> list[dict]:
+        """پلی‌لیست مادر را می‌خواند و واریانت‌ها را برمی‌گرداند."""
+        try:
+            async with safe_http_request(sess, "GET", master_url, headers={"Referer": referer}) as resp:
+                if resp.status >= 400:
+                    return []
+                text = await resp.text(errors="replace")
+        except (errors.LeechError, aiohttp.ClientError, TimeoutError, OSError):
+            return []
+        return hls_master_variants(text, master_url)
 
     def _probe_gallery(self, url: str) -> MediaInfo:
         """بررسی سبک لینک گالری؛ بدون درخواست شبکه تا لینک سریع پاسخ بگیرد."""
@@ -757,6 +1052,13 @@ class Downloader:
             # KVS: هر بار آدرس امضاشده را تازه می‌سازیم (کوتاه‌عمر است).
             return await self._download_kvs(
                 url, option, workdir, progress, cancel,
+                info or MediaInfo(url=url, title=""),
+            )
+
+        if option.hls or (info is not None and info.extractor == "HLS" and option.kind == "audio"):
+            # HLS: هر بار پلی‌لیست را از صفحهٔ امبد تازه می‌خوانیم (هاست می‌چرخد).
+            return await self._download_hls(
+                option, workdir, progress, cancel,
                 info or MediaInfo(url=url, title=""),
             )
 
@@ -1029,7 +1331,8 @@ class Downloader:
                 raise errors.UnsupportedUrl("KVS format missing")
 
             name = _variant_filename(fresh.title or info.title, option)
-            dest = workdir / human.safe_filename(name, 150)
+            # فایل میانی همیشه MP4 است؛ استخراج صدا از همین فایل انجام می‌شود.
+            dest = workdir / human.safe_filename(f"{Path(name).stem}.mp4", 150)
             try:
                 async with safe_http_request(
                     sess, "GET", str(fmt["url"]), headers={"Referer": page_url},
@@ -1083,6 +1386,207 @@ class Downloader:
             size=size,
             is_audio=option.kind == "audio" or mime.startswith("audio/"),
         )
+
+    async def _download_hls(
+        self,
+        option: FormatOption,
+        workdir: Path,
+        progress: Progress,
+        cancel: asyncio.Event,
+        info: MediaInfo,
+    ) -> DownloadResult:
+        """صفحهٔ امبد را تازه می‌خواند و استریم HLS را بومی دانلود می‌کند.
+
+        پلی‌لیست‌ها/سگمنت‌ها پسوندهای غیررسمی دارند (``.txt`` / ``.woff2``)
+        و yt-dlp آن‌ها را نمی‌شناسد؛ پس خودمان سگمنت‌ها را می‌گیریم، به هم
+        می‌چسبانیم و با ffmpeg بدون رمزگذاری مجدد به MP4 تبدیل می‌کنیم.
+        """
+        progress.reset_download()
+        embed_url = info.embed_url
+        timeout = aiohttp.ClientTimeout(total=None, sock_read=120, connect=30)
+        headers = {"User-Agent": USER_AGENT, "Accept": "*/*", "Accept-Encoding": "identity"}
+        variant: dict = {}
+
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
+            if not embed_url:
+                # کارهای قدیمی ممکن است آدرس امبد را نداشته باشند؛ دوباره حل کن.
+                solved = await self._cf_solve(info.url)
+                if solved is None:
+                    raise errors.AccessDenied("403")
+                fresh = await self._parse_solved_page(info.url, *solved)
+                if fresh is None or not fresh.embed_url:
+                    raise errors.UnsupportedUrl("HLS source missing")
+                embed_url = fresh.embed_url
+                info = MediaInfo(
+                    url=info.url or fresh.url,
+                    title=info.title or fresh.title,
+                    duration=info.duration or fresh.duration,
+                    thumbnail=info.thumbnail or fresh.thumbnail,
+                    extractor="HLS",
+                    formats=fresh.formats,
+                    ext="mp4",
+                    embed_url=embed_url,
+                )
+
+            async with safe_http_request(
+                sess, "GET", embed_url, headers={"Referer": info.url}
+            ) as resp:
+                if resp.status in (401, 403):
+                    raise errors.AccessDenied(str(resp.status))
+                if resp.status >= 400:
+                    raise errors.UnsupportedUrl(f"HTTP {resp.status}")
+                embed_html = await resp.text(errors="replace")
+
+            links = hls_links(embed_html, embed_url)
+            if not links:
+                raise errors.UnsupportedUrl("HLS links missing")
+            master_url = links.get("hls3") or links.get("hls2") or next(iter(links.values()))
+            variants = await self._hls_variants(sess, master_url, embed_url)
+            picked = pick_hls_variant(variants, option.height)
+            if picked is None:
+                raise errors.UnsupportedUrl("HLS variant missing")
+            variant = picked
+
+            async with safe_http_request(
+                sess, "GET", str(variant["url"]), headers={"Referer": embed_url}
+            ) as resp:
+                if resp.status in (401, 403):
+                    raise errors.AccessDenied(str(resp.status))
+                if resp.status >= 400:
+                    raise errors.UnsupportedUrl(f"HTTP {resp.status}")
+                playlist = await resp.text(errors="replace")
+
+            segments = hls_segments(playlist, str(variant["url"]))
+            if not segments:
+                raise errors.UnsupportedUrl("HLS playlist empty")
+
+            name = _variant_filename(info.title or "media", option)
+            stem = Path(name).stem
+            part = workdir / human.safe_filename(f"{stem}.ts", 150)
+            parts_dir = workdir / (f".parts-{part.stem}"[:80])
+            try:
+                parts_dir.mkdir(parents=True, exist_ok=True)
+                semaphore = asyncio.Semaphore(HLS_CONCURRENCY)
+                finished = 0
+
+                async def fetch(index: int, segment: str) -> None:
+                    nonlocal finished
+                    async with semaphore:
+                        if cancel.is_set():
+                            raise errors.JobCancelled()
+                        target = parts_dir / f"{index:05d}.part"
+                        async with safe_http_request(
+                            sess, "GET", segment, headers={"Referer": embed_url}
+                        ) as media:
+                            if media.status in (401, 403):
+                                raise errors.AccessDenied(str(media.status))
+                            if media.status >= 400:
+                                raise errors.UnsupportedUrl(f"HTTP {media.status}")
+                            with target.open("wb") as handle:
+                                async for chunk in media.content.iter_chunked(1024 * 512):
+                                    if cancel.is_set():
+                                        raise errors.JobCancelled()
+                                    handle.write(chunk)
+                                    progress.downloaded += len(chunk)
+                                    progress.downloaded_bytes_total += len(chunk)
+                        finished += 1
+                        progress.stage = "downloading"
+                        progress.pct = min(99.0, finished * 100.0 / len(segments))
+
+                tasks = [
+                    asyncio.create_task(fetch(index, segment))
+                    for index, segment in enumerate(segments)
+                ]
+                try:
+                    for task in asyncio.as_completed(tasks):
+                        await task
+                except BaseException:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    raise
+
+                if progress.downloaded <= 0:
+                    raise errors.IncompleteDownload("empty HLS download")
+                with part.open("wb") as handle:
+                    for index in range(len(segments)):
+                        with (parts_dir / f"{index:05d}.part").open("rb") as source:
+                            shutil.copyfileobj(source, handle, 1024 * 1024)
+            except (errors.JobCancelled, errors.LeechError):
+                try:
+                    part.unlink()
+                except OSError:
+                    pass
+                shutil.rmtree(parts_dir, ignore_errors=True)
+                raise
+            except (aiohttp.ClientError, TimeoutError, OSError) as exc:
+                try:
+                    part.unlink()
+                except OSError:
+                    pass
+                shutil.rmtree(parts_dir, ignore_errors=True)
+                raise map_error(exc) from exc
+            finally:
+                shutil.rmtree(parts_dir, ignore_errors=True)
+
+        if cancel.is_set():
+            raise errors.JobCancelled()
+
+        progress.stage = "postprocessing"
+        progress.pct = 99.5
+        # فایل میانی همیشه MP4 است؛ برای گزینهٔ صدا نام نهایی بعداً عوض می‌شود.
+        dest = workdir / human.safe_filename(f"{stem}.mp4", 150)
+        await self._remux_ts(part, dest)
+        try:
+            part.unlink()
+        except OSError:
+            pass
+
+        if option.kind == "audio":
+            audio = await self._extract_audio(dest, option.code, workdir)
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            dest = audio
+
+        size = dest.stat().st_size
+        mime = _mime_for(dest)
+        return DownloadResult(
+            path=dest,
+            title=human.safe_filename(info.title or dest.stem, 150),
+            duration=info.duration,
+            width=int(variant.get("width") or 0) or None,
+            height=int(variant.get("height") or 0) or None,
+            mime=mime,
+            size=size,
+            is_audio=option.kind == "audio" or mime.startswith("audio/"),
+        )
+
+    async def _remux_ts(self, source: Path, dest: Path) -> None:
+        """چسباندن سگمنت‌های MPEG-TS و تبدیل بدون رمزگذاری مجدد به MP4."""
+        base = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(source)]
+        attempts = [
+            ["-c", "copy", "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart", str(dest)],
+            ["-c", "copy", str(dest)],
+        ]
+        for extra in attempts:
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *base, *extra,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                await proc.wait()
+            except FileNotFoundError as exc:
+                raise errors.UnsupportedUrl("ffmpeg missing") from exc
+            if proc.returncode == 0 and dest.is_file() and dest.stat().st_size > 0:
+                return
+        raise errors.UnsupportedUrl("HLS remux failed")
 
     async def _extract_audio(self, source: Path, code: str, workdir: Path) -> Path:
         """استخراج صدا از فایل KVS با ffmpeg (mp3 192k یا m4a بدون تبدیل)."""

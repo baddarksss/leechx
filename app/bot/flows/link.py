@@ -356,6 +356,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
         thumbnail=info.thumbnail,
         uploader=info.uploader,
         extractor=info.extractor,
+        embed_url=info.embed_url,
         kind="link",
         lang=lang,
     )
@@ -525,6 +526,7 @@ async def enqueue(
         ext=option.ext,
         filesize=option.filesize,
         gallery=option.kind == "gallery",
+        embed_url=draft.embed_url,
     )
     task = JobTask(
         id=new_job_id(),

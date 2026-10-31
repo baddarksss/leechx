@@ -63,6 +63,10 @@ class Config(BaseSettings):
 
     # ── دانلود ──────────────────────────────────────────────
     proxy: str = ""
+    # آدرس byparr (حل‌کنندهٔ چالش Cloudflare). خالی = غیرفعال.
+    # داخل کانتینر ربات (network_mode: service:warp) میزبان با
+    # 172.18.0.1 در دسترس است؛ مقدار در .env ست می‌شود.
+    byparr_url: str = ""
     cookies_dir: Path = BASE_DIR / "data" / "cookies"
     telegram_api_url: str = ""
     telegram_api_file_url: str = ""

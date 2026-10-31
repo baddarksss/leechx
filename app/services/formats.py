@@ -32,6 +32,8 @@ class FormatOption:
     media_url: str = ""
     # KVS: آدرس امضاشده کوتاه‌عمر است؛ هنگام دانلود دوباره ساخته می‌شود.
     kvs: bool = False
+    # HLS: استریم چندتکه از صفحهٔ امبد؛ با دانلودر بومی گرفته می‌شود.
+    hls: bool = False
 
 
 AUDIO_MP3 = FormatOption(
@@ -142,6 +144,7 @@ def _alt_option(fmt: dict, used: set[str]) -> FormatOption | None:
         fps=_fps_of(fmt),
         codec=codec.lower(),
         kvs=bool(fmt.get("kvs")),
+        hls=bool(fmt.get("hls")),
         media_url=(fmt.get("url") or "") if (fmt.get("synthetic") or fmt.get("kvs")) else "",
     )
 
@@ -205,6 +208,7 @@ def build_options(
         fps = _fps_of(fmt)
         filesize = _size_of(fmt)
         kvs = bool(fmt.get("kvs"))
+        hls = bool(fmt.get("hls"))
         label = _label_of(height, fps, filesize, _codec_name(fmt))
         # اگر سایت خودش نسخه را نام‌گذاری کرده (HQ/LQ...) همان نام هم بیاید.
         tag = str(fmt.get("format_id") or "").strip().upper()
@@ -215,14 +219,15 @@ def build_options(
                 kind="video",
                 code=str(height),
                 label=label,
-                # KVS باید با همان کلید فرمت و مسیر مستقیم دانلود شود.
-                selector=str(fmt.get("format_id")) if kvs else video_selector(height),
+                # KVS/HLS با کلید فرمت خودشان دانلود می‌شوند (نه selector yt-dlp).
+                selector=str(fmt.get("format_id")) if (kvs or hls) else video_selector(height),
                 height=height,
                 ext="mp4",
                 filesize=filesize,
                 fps=fps,
                 codec=_codec_name(fmt).lower() or "mp4",
                 kvs=kvs,
+                hls=hls,
                 media_url=(fmt.get("url") or "") if (fmt.get("synthetic") or kvs) else "",
             )
         )
@@ -298,6 +303,7 @@ def _build_split_options(formats: list[dict], max_height: int) -> list[FormatOpt
                 media_url=(fmt.get("url") or "")
                 if (fmt.get("synthetic") or fmt.get("kvs")) else "",
                 kvs=bool(fmt.get("kvs")),
+                hls=bool(fmt.get("hls")),
             )
         )
     return options

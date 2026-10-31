@@ -7,6 +7,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.6.7] - 2026-10-31 · "Cloud HLS"
+
+### Added
+- Support for tube sites behind a Cloudflare managed challenge (e.g.
+  pornxday.com). When yt-dlp gets a 403, the bot asks **byparr** (Camoufox) to
+  solve the challenge, finds the embedded player iframe, and unpacks its
+  Dean-Edwards-packed JavaScript to read the real HLS links. The quality menu
+  then lists every variant (480p/720p/1080p/2160p) with codec and format.
+- Native HLS downloader: playlists and segments with unofficial extensions
+  (`.txt` playlists, `.woff2` segments) are fetched segment by segment with
+  progress and cancel support, concatenated, and remuxed to MP4 by ffmpeg
+  without re-encoding. Segments are pulled over six parallel connections
+  (the CDN throttles a single connection to ~0.6 MB/s), then joined in order.
+  Audio options (`MP3 192k` / `M4A`) download the best variant once and
+  extract the audio.
+- HLS URLs are re-resolved from the embed page at download time because the
+  CDN host rotates per request; the embed address travels with the quality
+  draft, so no second Cloudflare solve is needed.
+
+### Changed
+- byparr is optional: set `BYPARR_URL` (default empty = disabled) to the
+  byparr endpoint reachable from the bot container (host gateway
+  `http://172.18.0.1:8191` in the current deployment).
+
 ## [5.6.6] - 2026-10-31 · "Quality List"
 
 ### Fixed
