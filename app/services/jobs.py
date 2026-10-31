@@ -762,9 +762,8 @@ class JobManager:
         remaining = max(1, int(wait))
         while remaining > 0 and not task.cancel.is_set():
             try:
-                await asyncio.wait_for(
-                    asyncio.shield(task.thumb_done.wait()), timeout=1.0
-                )
+                # انتظار کوتاه تا «لغو کار» هم بلافاصله دیده شود
+                await asyncio.wait_for(task.thumb_done.wait(), timeout=1.0)
                 return
             except TimeoutError:
                 remaining -= 1
