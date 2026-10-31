@@ -811,11 +811,19 @@ def map_error(exc: BaseException) -> errors.LeechError:
 
 
 async def fetch_thumbnail(url: str | None, dest: Path, proxy: str = "") -> Path | None:
-    """دانلود کاور (اختیاری) برای آپلود قشنگ‌تر."""
+    """دانلود و آماده‌سازی کاور.
+
+    کاور خام بعضی سایت‌ها ناقص، WebP/AVIF یا بزرگ‌تر از حد تلگرام است؛ همان
+    فایل خام باعث می‌شد تلگرام تامبنیل را نصفه نشان دهد. اینجا ابتدا دانلود
+    کامل (با کنترل ``Content-Length``) انجام می‌شود، سپس با ffmpeg به یک JPEG
+    کوچک و سالم (حداکثر ۳۲۰×۳۲۰ و ۲۰۰KB) تبدیل می‌شود. اگر ffmpeg نبود، فقط
+    تصویر کامل JPEG/PNG پذیرفته می‌شود و بقیه رد می‌شوند.
+    """
     if not url:
         return None
+    raw = dest.with_name(f"{dest.stem}-raw{dest.suffix or '.img'}")
     try:
-        timeout = aiohttp.ClientTimeout(total=20)
+        timeout = aiohttp.ClientTimeout(total=25)
         async with aiohttp.ClientSession(timeout=timeout, headers={"User-Agent": USER_AGENT}) as sess:
             async with sess.get(url, proxy=proxy or None) as resp:
                 if resp.status != 200:
@@ -823,13 +831,88 @@ async def fetch_thumbnail(url: str | None, dest: Path, proxy: str = "") -> Path 
                 ctype = (resp.headers.get("Content-Type") or "").lower()
                 if "image" not in ctype:
                     return None
-                data = await resp.content.read(6 * 1024 * 1024)
-        if len(data) < 512:
+                expected = int(resp.headers.get("Content-Length") or 0)
+                if expected > MAX_THUMB_BYTES:
+                    return None
+                buffer = bytearray()
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    buffer.extend(chunk)
+                    if len(buffer) > MAX_THUMB_BYTES:
+                        return None
+        if len(buffer) < 512:
             return None
-        dest.write_bytes(data)
-        return dest
-    except (TimeoutError, aiohttp.ClientError, OSError):
+        # بدنهٔ ناقص (کمتر از Content-Length) دقیقاً همان تامبنیل «نصفه» است.
+        if expected and len(buffer) < expected:
+            return None
+        data = bytes(buffer)
+        raw.write_bytes(data)
+        if await _thumbnail_to_jpeg(raw, dest):
+            return dest
+        if _looks_complete_image(data):
+            # بدون ffmpeg هم می‌توان تصویر کامل را فرستاد.
+            dest.write_bytes(data)
+            return dest
         return None
+    except (TimeoutError, aiohttp.ClientError, OSError, ValueError):
+        return None
+    finally:
+        try:
+            raw.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+MAX_THUMB_BYTES = 10 * 1024 * 1024
+THUMB_MAX_SIDE = 320
+THUMB_MAX_BYTES = 200 * 1024
+
+
+def _looks_complete_image(data: bytes) -> bool:
+    """آیا بایت‌ها یک JPEG/PNG کامل هستند (نه فایل بریده یا WebP)؟"""
+    if data.startswith(b"\xff\xd8"):
+        return b"\xff\xd9" in data[-64:]
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return b"IEND" in data[-64:]
+    return False
+
+
+async def _thumbnail_to_jpeg(source: Path, dest: Path) -> bool:
+    """تبدیل کاور به JPEG سالم و کوچک با ffmpeg؛ در نبود ffmpeg ``False``."""
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-y",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source),
+            "-frames:v",
+            "1",
+            "-vf",
+            f"scale={THUMB_MAX_SIDE}:{THUMB_MAX_SIDE}:"
+            "force_original_aspect_ratio=decrease",
+            "-q:v",
+            "3",
+            str(dest),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(proc.wait(), timeout=20)
+    except (TimeoutError, FileNotFoundError, OSError):
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        return False
+    if proc.returncode != 0:
+        return False
+    try:
+        return 0 < dest.stat().st_size <= THUMB_MAX_BYTES
+    except OSError:
+        return False
 
 
 # ─────────────────────────────────────────────────────────────

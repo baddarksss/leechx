@@ -49,7 +49,9 @@ def progress_bar(pct: float, width: int = 10, show_pct: bool = False) -> str:
     «۱۰۰٪» فقط وقتی کار واقعاً تمام شده دیده شود).
     """
     pct = max(0.0, min(100.0, float(pct or 0)))
-    filled = int(width * pct / 100 + 0.5)
+    # کف‌گیری برای مربع‌ها و درصد، هر دو یک منبع دارند تا «۹۵٪» هرگز با نوار
+    # پرِ کامل نمایش داده نشود. ۱۰۰٪ فقط وقتی همهٔ خانه‌ها سبز می‌شوند.
+    filled = int(width * pct / 100)
     cells = ["🟩"] * filled + ["⬜"] * (width - filled)
     bar = " ".join(cells)
     if show_pct:

@@ -63,6 +63,11 @@ def test_human_helpers():
     assert bar[0].split() == ["🟩"] * 5 + ["⬜"] * 5
     assert bar[1] == "50%"
     assert progress_bar(99.9, show_pct=True).endswith("\n99%")
+    # نوار و درصد هم‌منبع‌اند: ۹۵٪ نباید نوارِ کاملاً سبز نشان دهد.
+    cells, pct = progress_bar(95, show_pct=True).split("\n")
+    assert cells.split() == ["🟩"] * 9 + ["⬜"]
+    assert pct == "95%"
+    assert progress_bar(100, show_pct=True).split("\n")[0].split() == ["🟩"] * 10
 
 
 def test_safe_filename():

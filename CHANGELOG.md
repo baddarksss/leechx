@@ -7,6 +7,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.10.2] - 2026-10-31 · "Sharp Cover"
+
+### Fixed
+- **Half-rendered video thumbnails.** Covers are now downloaded completely
+  (the body is checked against `Content-Length`, the silent 6 MB cut is gone)
+  and normalized to a real, small JPEG (≤320×320, ≤200 KB) with ffmpeg, so
+  WebP/AVIF/oversized or slightly broken covers can no longer reach Telegram
+  as a truncated image. Without ffmpeg only complete JPEG/PNG covers are used.
+- **Progress bar out of sync with the percentage.** The green cells were
+  rounded up while the percentage was floored, so 95% could show a fully green
+  bar. Both now use the same floored value; 100% is the only fully green bar.
+
 ## [5.10.1] - 2026-10-31 · "Archive Kept"
 
 ### Changed
