@@ -151,7 +151,7 @@ def build_options(
             FormatOption(
                 kind="video",
                 code=str(height),
-                label=_label_of(height, fps, filesize),
+                label=_label_of(height, fps, filesize, _codec_name(fmt)),
                 selector=video_selector(height),
                 height=height,
                 ext="mp4",

@@ -7,6 +7,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.6.4] - 2026-10-31 · "Format Labels"
+
+### Changed
+- The quality menu now shows the file format/codec for every site, not only
+  Eporner: e.g. `1080p MP4 · 78.5 MB` or `720p WEBM`. The codec comes from the
+  best-ranked format at each height, matching what the download selector picks.
+- Sizes still appear whenever yt-dlp provides them; unknown sizes simply omit
+  the size part.
+
 ## [5.6.3] - 2026-10-31 · "Codec Menu"
 
 ### Added

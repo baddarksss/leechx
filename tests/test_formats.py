@@ -33,7 +33,7 @@ def test_build_options_picks_best_per_height():
     ]
     options = build_options(formats)
     assert [o.height for o in options] == [360, 720, 1080]
-    assert options[-1].label == "1080p"
+    assert options[-1].label == "1080p MP4"
     assert "height<=1080" in options[-1].selector
 
 
@@ -65,7 +65,7 @@ def test_build_options_fallback_when_no_heights():
 
 def test_fps_suffix():
     options = build_options([fmt(1080, fps=60)])
-    assert options[0].label == "1080p60"
+    assert options[0].label == "1080p60 MP4"
 
 
 def test_all_options_includes_audio():

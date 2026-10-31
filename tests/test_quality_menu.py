@@ -100,11 +100,20 @@ def test_split_menu_order_and_audio():
 def test_size_label_only_when_known():
     options = build_options(eporner_formats())
     assert [o.label for o in options] == [
-        "240p", "360p", "480p", "720p", "1080p",
+        "240p MP4", "360p MP4", "480p MP4", "720p MP4", "1080p MP4",
     ]
     formats = eporner_formats()
     formats[0]["filesize"] = 4_887_771
-    assert build_options(formats)[0].label == "240p · 4.7 MB"
+    assert build_options(formats)[0].label == "240p MP4 · 4.7 MB"
+
+
+def test_format_label_is_shown_for_every_site():
+    formats = [
+        {"height": 720, "ext": "webm", "vcodec": "vp9", "format_id": "v720", "tbr": 1000},
+        {"height": 1080, "ext": "mp4", "vcodec": "avc1", "format_id": "v1080", "tbr": 1000},
+    ]
+    labels = [o.label for o in build_options(formats)]
+    assert labels == ["720p WEBM", "1080p MP4"]
 
 
 def test_variant_filename_keeps_title_and_codec():
