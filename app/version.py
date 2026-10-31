@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.6.5"
-CODENAME = "KVS Rescue"
+__version__ = "5.6.6"
+CODENAME = "Quality List"
 RELEASE_DATE = "2026-10-31"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.

@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from app.core import human
@@ -95,6 +96,56 @@ def _fps_of(fmt: dict) -> int:
         return 0
 
 
+# شناسه‌هایی که خود اسم فایل/کیفیت نیستند و برچسب «Best» برایشان بهتر است
+_GENERIC_IDS = re.compile(r"(?:video_url|alt_url\d*|http[_-]?\d+|hls[_-]?\d*|dash)", re.I)
+
+
+def _is_video_fmt(fmt: dict) -> bool:
+    """آیا این یک فرمت ویدیویی قابل نمایش است؟ (صدا/مانیفست نه)"""
+    if not isinstance(fmt, dict):
+        return False
+    if str(fmt.get("vcodec") or "").lower() == "none":
+        return False
+    return fmt.get("ext") not in (None, "none", "mhtml")
+
+
+def _height_of(fmt: dict) -> int:
+    try:
+        return int(fmt.get("height") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _alt_option(fmt: dict, used: set[str]) -> FormatOption | None:
+    """گزینه برای فرمتی که ارتفاع ندارد ولی کیفیتش نام‌دار است (مثل LQ/HQ)."""
+    raw = str(fmt.get("format_note") or fmt.get("format_id") or "").strip()
+    if not raw:
+        return None
+    name = "Best" if _GENERIC_IDS.fullmatch(raw) else raw
+    codec = _codec_name(fmt)
+    filesize = _size_of(fmt)
+    label = name + (f" {codec}" if codec else "")
+    if filesize:
+        label += f" · {human.human_bytes(filesize)}"
+    code = re.sub(r"[^a-z0-9]+", "", name.lower()) or "alt"
+    while code in used:
+        code += "x"
+    used.add(code)
+    return FormatOption(
+        kind="video",
+        code=code,
+        label=label,
+        selector=str(fmt.get("format_id") or "bv*+ba/b"),
+        height=_height_of(fmt),
+        ext=(fmt.get("ext") or "mp4").lower(),
+        filesize=filesize,
+        fps=_fps_of(fmt),
+        codec=codec.lower(),
+        kvs=bool(fmt.get("kvs")),
+        media_url=(fmt.get("url") or "") if (fmt.get("synthetic") or fmt.get("kvs")) else "",
+    )
+
+
 def build_options(
     formats: list[dict] | None,
     max_height: int = 0,
@@ -112,16 +163,9 @@ def build_options(
     best: dict[int, dict] = {}
 
     for fmt in formats:
-        if not isinstance(fmt, dict):
+        if not _is_video_fmt(fmt):
             continue
-        if str(fmt.get("vcodec") or "").lower() == "none":
-            continue
-        if fmt.get("ext") in ("mhtml", "none"):
-            continue
-        try:
-            height = int(fmt.get("height") or 0)
-        except (TypeError, ValueError):
-            height = 0
+        height = _height_of(fmt)
         if height <= 0:
             continue
         if max_height and height > max_height:
@@ -130,47 +174,47 @@ def build_options(
         if current is None or _rank(fmt) > _rank(current):
             best[height] = fmt
 
+    used: set[str] = set()
+    options: list[FormatOption] = []
+
     if not best:
-        # بعضی سایت‌ها ارتفاع نمی‌دهند → یک گزینهٔ «بهترین کیفیت».
-        candidates = [
-            fmt for fmt in formats
-            if isinstance(fmt, dict)
-            and fmt.get("ext") not in (None, "none", "mhtml")
-            and str(fmt.get("vcodec") or "").lower() != "none"
-        ]
-        fmt = max(candidates, key=_rank) if candidates else {}
-        codec = _codec_name(fmt) if fmt else ""
-        filesize = _size_of(fmt) if fmt else None
-        label = "Best" + (f" {codec}" if codec else "")
-        if filesize:
-            label += f" · {human.human_bytes(filesize)}"
+        # هیچ ارتفاعی نداریم: هر کیفیت نام‌دار (LQ/HQ/Best…) یک دکمه جدا شود.
+        for fmt in formats:
+            if not _is_video_fmt(fmt):
+                continue
+            option = _alt_option(fmt, used)
+            if option is not None:
+                options.append(option)
+        if options:
+            options.sort(key=lambda o: (o.height, o.filesize or 0))
+            return options[-MAX_VIDEO_OPTIONS:]
         return [
             FormatOption(
                 kind="video",
                 code="best",
-                label=label,
-                selector=str(fmt.get("format_id") or "bv*+ba/b"),
-                height=int(fmt.get("height") or 0),
-                ext=(fmt.get("ext") or "mp4").lower(),
-                filesize=filesize,
-                codec=codec.lower(),
-                kvs=bool(fmt.get("kvs")),
-                media_url=(fmt.get("url") or "") if (fmt.get("synthetic") or fmt.get("kvs")) else "",
+                label="Best",
+                selector="bv*+ba/b",
+                height=0,
+                ext="mp4",
             )
         ]
 
     heights = sorted(best)[-MAX_VIDEO_OPTIONS:]
-    options: list[FormatOption] = []
     for height in heights:
         fmt = best[height]
         fps = _fps_of(fmt)
         filesize = _size_of(fmt)
         kvs = bool(fmt.get("kvs"))
+        label = _label_of(height, fps, filesize, _codec_name(fmt))
+        # اگر سایت خودش نسخه را نام‌گذاری کرده (HQ/LQ...) همان نام هم بیاید.
+        tag = str(fmt.get("format_id") or "").strip().upper()
+        if tag in {"LQ", "HQ", "SD", "HD", "FHD", "UHD"} and tag.lower() not in label.lower():
+            label = f"{tag} {label}"
         options.append(
             FormatOption(
                 kind="video",
                 code=str(height),
-                label=_label_of(height, fps, filesize, _codec_name(fmt)),
+                label=label,
                 # KVS باید با همان کلید فرمت و مسیر مستقیم دانلود شود.
                 selector=str(fmt.get("format_id")) if kvs else video_selector(height),
                 height=height,
@@ -182,7 +226,23 @@ def build_options(
                 media_url=(fmt.get("url") or "") if (fmt.get("synthetic") or kvs) else "",
             )
         )
-    return options
+
+    # کیفیت‌های بی‌ارتفاع (مثل LQ سایت‌های KVS) نباید گم شوند.
+    used = {o.code for o in options}
+    known_urls = {str(fmt.get("url")) for fmt in best.values() if fmt.get("url")}
+    extras: list[FormatOption] = []
+    for fmt in formats:
+        if not _is_video_fmt(fmt) or _height_of(fmt) > 0:
+            continue
+        if str(fmt.get("url") or "") in known_urls:
+            continue
+        option = _alt_option(fmt, used)
+        if option is not None:
+            extras.append(option)
+    if extras:
+        extras.sort(key=lambda o: (o.height, o.filesize or 0))
+        options = extras + options
+    return options[-MAX_VIDEO_OPTIONS:]
 
 
 def _build_split_options(formats: list[dict], max_height: int) -> list[FormatOption]:

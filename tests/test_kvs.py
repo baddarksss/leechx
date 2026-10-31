@@ -70,3 +70,25 @@ def test_kvs_without_height_gets_best_label():
     assert options[0].label == "Best MP4"
     assert options[0].kvs is True
     assert options[0].selector == "video_url"
+
+
+def test_unknown_height_quality_is_not_dropped():
+    """سایتی مثل fpo.xxx کیفیت LQ را بدون ارتفاع می‌دهد؛ نباید حذف شود."""
+    formats = [
+        {"format_id": "HQ", "height": 720, "ext": "mp4", "vcodec": None, "url": "https://x/720.mp4"},
+        {"format_id": "LQ", "height": None, "ext": "mp4", "vcodec": None, "url": "https://x/lq.mp4"},
+    ]
+    options = build_options(formats)
+    assert [o.code for o in options] == ["lq", "720"]
+    assert options[0].label == "LQ MP4"
+    assert options[0].selector == "LQ"
+    assert options[1].label == "HQ 720p MP4"
+
+
+def test_two_named_formats_without_heights_get_two_buttons():
+    formats = [
+        {"format_id": "HQ", "ext": "mp4", "vcodec": None, "url": "https://x/hq.mp4", "filesize": 20_000_000},
+        {"format_id": "LQ", "ext": "mp4", "vcodec": None, "url": "https://x/lq.mp4", "filesize": 8_000_000},
+    ]
+    options = build_options(formats)
+    assert [o.label for o in options] == ["LQ MP4 · 7.6 MB", "HQ MP4 · 19.1 MB"]

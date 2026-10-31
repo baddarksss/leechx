@@ -7,6 +7,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.6.6] - 2026-10-31 · "Quality List"
+
+### Fixed
+- Sites that label their versions instead of giving a resolution (e.g. fpo.xxx
+  with `LQ` and `HQ`) no longer show a single quality. Formats without a height
+  are listed as their own buttons (`LQ MP4`, `HQ 720p MP4`) instead of being
+  dropped behind the best quality, and pages where *no* format has a height now
+  get one button per named version. The site's own version name is kept in the
+  label whenever it is one of `LQ/HQ/SD/HD/FHD/UHD`.
+
 ## [5.6.5] - 2026-10-31 · "KVS Rescue"
 
 ### Added
