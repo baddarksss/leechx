@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.10.0"
-CODENAME = "Clean Chat"
+__version__ = "5.10.1"
+CODENAME = "Archive Kept"
 RELEASE_DATE = "2026-10-31"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.

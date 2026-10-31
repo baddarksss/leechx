@@ -7,6 +7,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.10.1] - 2026-10-31 · "Archive Kept"
+
+### Changed
+- NSFW deliveries are archived in the admin group again, exactly like any other
+  media; only the copy inside the user's chat is removed on schedule.
+- Private DM copies are gone: the bot no longer sends an extra copy to the
+  user's private chat (Saved Messages is not writable by bots), and the
+  `📥 NSFW private copy` toggle was removed from Settings.
+- NSFW media is no longer sent with a spoiler and keeps the normal delivery
+  routine.
+- NSFW jobs are still excluded from cache replay, so every adult delivery gets
+  its own delete timer instead of a cached copy without one.
+
 ## [5.10.0] - 2026-10-31 · "Clean Chat"
 
 ### Added

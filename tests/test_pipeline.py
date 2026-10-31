@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from types import SimpleNamespace
 
@@ -156,6 +157,93 @@ async def test_direct_job_full_pipeline(db, file_server):
     assert not (store.jobs / "pipe1").exists()
     assert manager.active_count == 0
     assert manager.limiter.active_count(42) == 0
+
+
+class RecordingCache:
+    """کش جعلی: فقط ثبت می‌کند که آرشیو انجام شده یا نه."""
+
+    def __init__(self) -> None:
+        self.archived: list[tuple[str, int]] = []
+        self.hits = 0
+
+    async def cached_delivery(self, bot, task) -> bool:
+        self.hits += 1
+        return False
+
+    async def record_delivery(self, bot, task, result, uploaded_message) -> None:
+        self.archived.append((task.id, uploaded_message.message_id))
+
+
+class ArchivingStubUploader(StubUploader):
+    """آپلودر تست که پیام ارسال‌شده را در ``sent`` ثبت می‌کند."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[dict] = []
+
+    async def send(self, bot, chat_id, result, progress, source_url="", **kwargs):
+        self.calls.append(kwargs)
+        sent = kwargs.get("sent")
+        if isinstance(sent, list):
+            sent.append(SimpleNamespace(message_id=1))
+        return await super().send(bot, chat_id, result, progress, source_url, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_nsfw_job_is_archived_and_scheduled_for_deletion(
+    db, file_server, monkeypatch
+):
+    cfg = db
+    store = FileStore(cfg.files_dir, cfg.tmp_dir)
+    downloader = Downloader(cfg)
+    uploader = ArchivingStubUploader()
+    settings = RuntimeSettings(cfg)
+    await settings.load()
+    await settings.set("nsfw_autodelete_enabled", True)
+    await settings.set("nsfw_autodelete_seconds", 5)
+
+    monkeypatch.setattr("app.services.jobs.nsfwguard.is_nsfw", lambda *a, **k: True)
+    cleanup_calls: list[dict] = []
+
+    async def fake_cleanup(bot, **kwargs):
+        cleanup_calls.append(kwargs)
+
+    monkeypatch.setattr(
+        "app.services.jobs.nsfwguard.cleanup_messages", fake_cleanup
+    )
+
+    manager = JobManager(cfg, settings, store, downloader, uploader, RateLimiter(0))
+    manager.bot = StubBot()
+    cache = RecordingCache()
+    manager.cache = cache
+
+    info = await downloader.probe(file_server)
+    task = JobTask(
+        id="pipe-nsfw",
+        user_id=42,
+        chat_id=42,
+        url=file_server,
+        option=FormatOption(kind="direct", code="direct", label="direct", selector=""),
+        title=info.title,
+        info=info,
+        lang="fa",
+    )
+    await manager.submit(task)
+    await manager._run(task)
+    await asyncio.gather(*manager._nsfw_tasks)
+
+    # فایل بزرگسال هم مثل قبل در آرشیو گروه ادمین ذخیره می‌شود…
+    assert cache.archived == [("pipe-nsfw", 1)]
+    # …ولی از کش بازپخش نمی‌شود تا تایمر حذف همیشه اجرا شود.
+    assert cache.hits == 0
+    # تایمر حذف فقط روی پیام‌های چت کاربر تنظیم شده است.
+    assert cleanup_calls and cleanup_calls[0]["chat_id"] == 42
+    assert cleanup_calls[0]["message_ids"] == [1]
+    assert cleanup_calls[0]["seconds"] == 5
+    # بدون نسخهٔ اضافه یا اسپویلر: همان روال ثابت قبلی
+    assert "spoiler" not in uploader.calls[0]
+    job = await repo.get_job("pipe-nsfw")
+    assert job.status == "done"
 
 
 @pytest.mark.asyncio

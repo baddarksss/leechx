@@ -1,9 +1,9 @@
 """قانون «رسانهٔ بزرگسال» — تشخیص، شمارش معکوس و حذف خودکار.
 
 هدف: وقتی ربات فایلی از یک سایت بزرگسال تحویل می‌دهد، همان فایل مدت کوتاهی
-بعد از چت پاک شود تا محتوای NSFW در گروه/کانال نماند. برای اینکه کاربر فایل
-را از دست ندهد، پیش از حذف یک نسخهٔ خصوصی به چت خودش فرستاده می‌شود
-(تلگرام اجازه نمی‌دهد ربات مستقیم در «Saved Messages» کاربر پیام بگذارد).
+بعد از چتِ کاربر پاک شود تا محتوای NSFW در چت نماند. آرشیو گروه ادمین
+(تاپیک کش) دست‌نخورده می‌ماند و هیچ نسخهٔ اضافه‌ای برای کاربر فرستاده
+نمی‌شود؛ فقط همان پیام‌های تحویل‌شده حذف می‌شوند.
 
 این ماژول هیچ وابستگی به دیتابیس یا شبکه ندارد؛ فقط ``sleep`` و ``bot`` را
 می‌گیرد، بنابراین با یک bot جعلی هم کامل تست می‌شود.
@@ -26,8 +26,6 @@ log = logging.getLogger("leechx.nsfw")
 DEFAULT_SECONDS = 30
 MIN_SECONDS = 5
 MAX_SECONDS = 600
-# سقف نسخه‌های خصوصی؛ گالری‌های بزرگ نباید باعث flood شوند.
-MAX_DM_COPIES = 30
 
 
 def clamp_seconds(value: int | None) -> int:
@@ -84,11 +82,9 @@ async def cleanup_messages(
     bot,
     *,
     chat_id: int,
-    user_id: int,
     message_ids: Sequence[int],
     lang: str,
     seconds: int,
-    copy_dm: bool,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
     """اعلان زیر فایل، شمارش معکوس، و حذف فایل‌ها بعد از ``seconds`` ثانیه.
@@ -100,27 +96,12 @@ async def cleanup_messages(
         return
     seconds = clamp_seconds(seconds)
 
-    # ۱) نسخهٔ خصوصی، پیش از حذف — کاربر می‌تواند همان‌جا ذخیره/فوروارد کند.
-    dm_sent = 0
-    if copy_dm and chat_id != user_id:
-        for mid in ids[:MAX_DM_COPIES]:
-            try:
-                await bot.copy_message(
-                    chat_id=user_id, from_chat_id=chat_id, message_id=mid
-                )
-                dm_sent += 1
-            except TelegramError as exc:
-                # معمولاً یعنی کاربر ربات را بلاک کرده یا چت خصوصی ندارد.
-                log.info("private nsfw copy stopped: %s", exc)
-                break
-
-    # ۲) اعلان زیر خود فایل.
+    # ۱) اعلان زیر خود فایل.
     notice = None
-    dm_line = text.t(lang, "nsfw_autodelete_dm_line") if dm_sent else ""
     try:
         notice = await bot.send_message(
             chat_id=chat_id,
-            text=text.t(lang, "nsfw_autodelete_notice", seconds=seconds, dm_line=dm_line),
+            text=text.t(lang, "nsfw_autodelete_notice", seconds=seconds),
             parse_mode=ParseMode.HTML,
             reply_to_message_id=ids[0],
             allow_sending_without_reply=True,
@@ -128,7 +109,7 @@ async def cleanup_messages(
     except TelegramError:
         log.info("nsfw notice could not be sent", exc_info=True)
 
-    # ۳) شمارش معکوس (حداکثر هر ۱۰ ثانیه یک ویرایش تا به flood نخوریم).
+    # ۲) شمارش معکوس (حداکثر هر ۱۰ ثانیه یک ویرایش تا به flood نخوریم).
     step = max(1, min(10, seconds // 5 or 1))
     remaining = seconds
     while remaining > 0:
@@ -147,7 +128,7 @@ async def cleanup_messages(
         except TelegramError:
             notice = None  # پیام پاک شده؛ فقط حذف فایل را ادامه بده
 
-    # ۴) حذف واقعی. پارت‌های آلبوم با حذف اولین پیام هم پاک می‌شوند؛ خطای
+    # ۳) حذف واقعی. پارت‌های آلبوم با حذف اولین پیام هم پاک می‌شوند؛ خطای
     # «پیام پیدا نشد» بی‌خطر است.
     for mid in ids:
         try:

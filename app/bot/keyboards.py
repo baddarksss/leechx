@@ -409,9 +409,7 @@ def settings_menu(lang: str, snap: dict) -> Kb:
         [Btn(text.t(lang, "set_nsfw_delete", flag=flag(snap["nsfw_autodelete_enabled"])),
              callback_data="a|toggle|nsfw_autodelete_enabled")],
         [Btn(text.t(lang, "set_nsfw_seconds", v=snap["nsfw_autodelete_seconds"]),
-             callback_data="a|edit|nsfw_autodelete_seconds"),
-         Btn(text.t(lang, "set_nsfw_copy", flag=flag(snap["nsfw_autodelete_copy_dm"])),
-             callback_data="a|toggle|nsfw_autodelete_copy_dm")],
+             callback_data="a|edit|nsfw_autodelete_seconds")],
         [_btn(lang, "btn_admin_runtime", A_RUNTIME)],
     ])
 

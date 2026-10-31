@@ -286,8 +286,9 @@ class JobManager:
         workdir = self.store.job_dir(task.id)
         source_traffic_recorded = 0
         upload_traffic_recorded = 0
-        # محتوای بزرگسال: هرگز در کش گروه ادمین نگه داشته نمی‌شود و در صورت
-        # فعال‌بودن تنظیم، بعد از چند ثانیه از چت حذف می‌شود.
+        # محتوای بزرگسال: مثل بقیهٔ فایل‌ها در آرشیو گروه ادمین ذخیره می‌شود،
+        # ولی از کش بازپخش نمی‌شود تا هر درخواست تایمر حذف خودش را داشته باشد.
+        # در صورت فعال‌بودن تنظیم، نسخهٔ چت بعد از چند ثانیه پاک می‌شود.
         nsfw = nsfwguard.is_nsfw(
             task.url, task.info.extractor if task.info is not None else ""
         )
@@ -435,7 +436,6 @@ class JobManager:
                             custom_thumbnail=task.custom_thumbnail,
                             cancel=task.cancel,
                             sent=task.sent_messages,
-                            spoiler=nsfw and task.chat_id != task.user_id,
                         )
                     else:
                         send_coro = self.uploader.send(
@@ -458,7 +458,6 @@ class JobManager:
                             custom_thumbnail=task.custom_thumbnail,
                             cancel=task.cancel,
                             sent=task.sent_messages,
-                            spoiler=nsfw and task.chat_id != task.user_id,
                         )
                     task.upload_task = asyncio.create_task(send_coro)
                     try:
@@ -513,7 +512,9 @@ class JobManager:
                         except TelegramError:
                             pass
                         raise errors.JobCancelled()
-                    if self.cache is not None and not nsfw:
+                    # آرشیو گروه ادمین برای محتوای بزرگسال هم مثل بقیه است؛
+                    # فقط نسخهٔ چت کاربر بعد از تایمر پاک می‌شود.
+                    if self.cache is not None:
                         await self.cache.record_delivery(self.bot, task, result, uploaded_message)
 
             await repo.update_job(
@@ -530,9 +531,7 @@ class JobManager:
             await repo.log_event(task.user_id, "bytes", float(result.size))
             if task.mode != "link" and nsfw and self.settings.nsfw_autodelete:
                 seconds = self.settings.nsfw_autodelete_seconds
-                if self._schedule_nsfw_cleanup(
-                    task, seconds, self.settings.nsfw_autodelete_copy_dm
-                ):
+                if self._schedule_nsfw_cleanup(task, seconds):
                     nsfw_delete_seconds = seconds
             if task.mode != "link":
                 body = text.t(task.lang, "done") + f"\n<b>{human.esc(result.title)}</b>"
@@ -617,9 +616,7 @@ class JobManager:
             self._tasks.pop(task.id, None)
             self._wake.set()
 
-    def _schedule_nsfw_cleanup(
-        self, task: JobTask, seconds: int, copy_dm: bool
-    ) -> bool:
+    def _schedule_nsfw_cleanup(self, task: JobTask, seconds: int) -> bool:
         """تایمر حذف را جدا از worker اجرا می‌کند تا صف معطل نماند."""
         ids = [m.message_id for m in task.sent_messages if m is not None]
         if not ids or self.bot is None:
@@ -628,11 +625,9 @@ class JobManager:
             nsfwguard.cleanup_messages(
                 self.bot,
                 chat_id=task.chat_id,
-                user_id=task.user_id,
                 message_ids=ids,
                 lang=task.lang,
                 seconds=seconds,
-                copy_dm=copy_dm,
             ),
             name=f"nsfw-{task.id}",
         )
@@ -704,7 +699,6 @@ class JobManager:
                     cancel=task.cancel,
                     reset_progress=False,
                     sent=task.sent_messages,
-                    spoiler=task.nsfw and task.chat_id != task.user_id,
                 )
                 task.upload_task = asyncio.create_task(send_coro)
                 try:

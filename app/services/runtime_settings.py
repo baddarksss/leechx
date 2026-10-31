@@ -25,7 +25,6 @@ SCHEMA: dict[str, tuple[str, str]] = {
     # ── محافظت از ربات در برابر محتوای بزرگسال ──
     "nsfw_autodelete_enabled": ("bool", "حذف خودکار فایل بزرگسال"),
     "nsfw_autodelete_seconds": ("int", "زمان حذف فایل بزرگسال (ثانیه)"),
-    "nsfw_autodelete_copy_dm": ("bool", "ارسال نسخهٔ خصوصی فایل بزرگسال"),
     # ── مقادیر متنی که ادمین از خود ربات وارد می‌کند ──
     "public_base_url": ("text", "آدرس عمومی لینک‌ها"),
     "proxy": ("text", "پروکسی دانلود"),
@@ -92,7 +91,6 @@ class RuntimeSettings:
             # پیش‌فرض خاموش است تا رفتار فعلی ربات تغییر نکند؛ ادمین روشنش می‌کند.
             "nsfw_autodelete_enabled": False,
             "nsfw_autodelete_seconds": 30,
-            "nsfw_autodelete_copy_dm": True,
             "public_base_url": self.cfg.public_base_url,
             "proxy": self.cfg.proxy,
             "telegram_api_url": self.cfg.telegram_api_url,
@@ -213,11 +211,6 @@ class RuntimeSettings:
         return max(5, min(600, self.get_int("nsfw_autodelete_seconds") or 30))
 
     @property
-    def nsfw_autodelete_copy_dm(self) -> bool:
-        """ارسال نسخهٔ خصوصی به کاربر، قبل از حذف فایل از گروه/کانال."""
-        return self.get_bool("nsfw_autodelete_copy_dm")
-
-    @property
     def force_join_enabled(self) -> bool:
         return self.get_bool("force_join_enabled")
 
@@ -271,5 +264,4 @@ class RuntimeSettings:
             "nsfw_enabled": self.nsfw_enabled,
             "nsfw_autodelete_enabled": self.nsfw_autodelete,
             "nsfw_autodelete_seconds": self.nsfw_autodelete_seconds,
-            "nsfw_autodelete_copy_dm": self.nsfw_autodelete_copy_dm,
         }

@@ -1,4 +1,4 @@
-"""حذف خودکار محتوای بزرگسال: تشخیص، تایمر و نسخهٔ خصوصی.
+"""حذف خودکار محتوای بزرگسال: تشخیص، تایمر و اتصال به صف کار.
 
 این تست‌ها هیچ شبکه‌ای لمس نمی‌کنند: bot جعلی است و ``sleep`` تزریق می‌شود.
 """
@@ -9,13 +9,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from telegram.error import TelegramError
 
 from app.services import nsfwguard
 from app.services.downloader import DownloadResult, Progress
 from app.services.jobs import JobManager, JobTask
 from app.services.nsfwguard import (
-    MAX_DM_COPIES,
     clamp_seconds,
     is_nsfw,
     is_nsfw_extractor,
@@ -83,14 +81,11 @@ async def test_nsfw_autodelete_is_off_by_default(db):
     await settings.load()
     assert settings.nsfw_autodelete is False
     assert settings.nsfw_autodelete_seconds == 30
-    assert settings.nsfw_autodelete_copy_dm is True
 
     await settings.set("nsfw_autodelete_enabled", True)
     await settings.set("nsfw_autodelete_seconds", 1)
-    await settings.set("nsfw_autodelete_copy_dm", False)
     assert settings.nsfw_autodelete is True
     assert settings.nsfw_autodelete_seconds == 5  # حداقل امن
-    assert settings.nsfw_autodelete_copy_dm is False
 
     snap = settings.snapshot()
     assert snap["nsfw_autodelete_enabled"] is True
@@ -99,20 +94,11 @@ async def test_nsfw_autodelete_is_off_by_default(db):
 
 # ── تایمر حذف ───────────────────────────────────────────────
 class FakeBot:
-    def __init__(self, *, fail_copy: bool = False) -> None:
-        self.copied: list[tuple[int, int, int]] = []
+    def __init__(self) -> None:
         self.sent: list[dict] = []
         self.edits: list[tuple[int, str]] = []
         self.deleted: list[tuple[int, int]] = []
-        self.fail_copy = fail_copy
         self._next_id = 900
-
-    async def copy_message(self, chat_id, from_chat_id, message_id):
-        if self.fail_copy:
-            raise TelegramError("Forbidden: bot was blocked by the user")
-        self.copied.append((chat_id, from_chat_id, message_id))
-        self._next_id += 1
-        return SimpleNamespace(message_id=self._next_id)
 
     async def send_message(self, chat_id, text, **kwargs):
         self._next_id += 1
@@ -137,15 +123,12 @@ async def test_private_chat_deletes_every_part_after_countdown():
     await nsfwguard.cleanup_messages(
         bot,
         chat_id=7,
-        user_id=7,  # همان چت خصوصی؛ نسخهٔ دوم لازم نیست
         message_ids=[11, 12],
         lang="fa",
         seconds=10,
-        copy_dm=True,
         sleep=fake_sleep,
     )
 
-    assert bot.copied == []
     assert len(bot.sent) == 1
     notice = bot.sent[0]
     assert notice["reply_to_message_id"] == 11
@@ -159,7 +142,7 @@ async def test_private_chat_deletes_every_part_after_countdown():
 
 
 @pytest.mark.asyncio
-async def test_group_delivery_copies_to_user_dm_first():
+async def test_group_chat_deletes_without_extra_copy():
     bot = FakeBot()
 
     async def fake_sleep(_seconds: float) -> None:
@@ -168,63 +151,14 @@ async def test_group_delivery_copies_to_user_dm_first():
     await nsfwguard.cleanup_messages(
         bot,
         chat_id=-100123,
-        user_id=7,
         message_ids=[31],
         lang="en",
         seconds=5,
-        copy_dm=True,
         sleep=fake_sleep,
     )
 
-    assert bot.copied == [(7, -100123, 31)]
-    assert "private copy" in bot.sent[0]["text"]
+    assert "private copy" not in bot.sent[0]["text"]
     assert bot.deleted == [(-100123, 31)]
-
-
-@pytest.mark.asyncio
-async def test_dm_copy_failure_does_not_block_deletion():
-    bot = FakeBot(fail_copy=True)
-
-    async def fake_sleep(_seconds: float) -> None:
-        return None
-
-    await nsfwguard.cleanup_messages(
-        bot,
-        chat_id=-100123,
-        user_id=7,
-        message_ids=[41],
-        lang="fa",
-        seconds=5,
-        copy_dm=True,
-        sleep=fake_sleep,
-    )
-
-    assert bot.copied == []
-    assert "نسخهٔ خصوصی" not in bot.sent[0]["text"]
-    assert bot.deleted == [(-100123, 41)]  # حذف حتی وقتی کاربر ربات را بلاک کرده است
-
-
-@pytest.mark.asyncio
-async def test_gallery_copies_are_capped():
-    bot = FakeBot()
-
-    async def fake_sleep(_seconds: float) -> None:
-        return None
-
-    ids = list(range(1, MAX_DM_COPIES + 6))
-    await nsfwguard.cleanup_messages(
-        bot,
-        chat_id=-100123,
-        user_id=7,
-        message_ids=ids,
-        lang="fa",
-        seconds=5,
-        copy_dm=True,
-        sleep=fake_sleep,
-    )
-
-    assert len(bot.copied) == MAX_DM_COPIES
-    assert len(bot.deleted) == len(ids)
 
 
 # ── اتصال به صف کار ─────────────────────────────────────────
@@ -255,13 +189,13 @@ async def test_job_schedules_cleanup_for_sent_parts(monkeypatch):
     )
     task.sent_messages = [SimpleNamespace(message_id=5), SimpleNamespace(message_id=6)]
 
-    assert manager._schedule_nsfw_cleanup(task, 30, True) is True
+    assert manager._schedule_nsfw_cleanup(task, 30) is True
     await asyncio.gather(*manager._nsfw_tasks)
 
     assert seen and seen[0]["message_ids"] == [5, 6]
     assert seen[0]["chat_id"] == -100123
-    assert seen[0]["user_id"] == 7
-    assert seen[0]["copy_dm"] is True
+    assert "copy_dm" not in seen[0]
+    assert "user_id" not in seen[0]
 
 
 # ── آپلودر همهٔ پیام‌ها را گزارش می‌کند ─────────────────────
