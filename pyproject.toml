@@ -1,6 +1,6 @@
 [project]
 name = "leechx"
-version = "5.5.0"
+version = "5.6.0"
 description = "Telegram leecher bot: download from any site, upload to Telegram, or share files as direct links."
 requires-python = ">=3.11"
 license = { text = "MIT" }

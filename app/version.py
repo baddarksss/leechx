@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.5.0"
-CODENAME = "Durable Deploy"
+__version__ = "5.6.0"
+CODENAME = "Gallery Engine"
 RELEASE_DATE = "2026-10-31"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.

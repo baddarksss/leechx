@@ -24,6 +24,7 @@ from yt_dlp.utils import DownloadError, ExtractorError
 
 from app.config import Config
 from app.core import errors, human, urlcheck
+from app.services import gallery
 from app.services.cookies import CookieStore
 from app.services.formats import FormatOption
 
@@ -97,6 +98,8 @@ class MediaInfo:
     mime: str = ""
     filesize: int | None = None
     playlist: bool = False
+    # لینک‌هایی که yt-dlp نمی‌فهمد و با gallery-dl (عکس/آلبوم) دانلود می‌شوند
+    gallery: bool = False
 
 
 @dataclass
@@ -110,10 +113,17 @@ class DownloadResult:
     size: int = 0
     thumbnail: Path | None = None
     is_audio: bool = False
+    # آلبوم/گالری: همهٔ فایل‌های دانلودشده؛ ``path`` اولین فایل است.
+    parts: list[Path] = field(default_factory=list)
+    gallery: bool = False
 
     @property
     def suffix(self) -> str:
         return self.path.suffix.lower()
+
+    @property
+    def count(self) -> int:
+        return len(self.parts) if self.parts else 1
 
 
 @dataclass
@@ -288,13 +298,29 @@ class Downloader:
 
         try:
             return await asyncio.to_thread(self._probe_blocking, url)
-        except errors.LeechError:
+        except errors.LeechError as exc:
+            # yt-dlp ویدیو-محور است؛ اگر سایت عکس/آلبوم باشد gallery-dl را امتحان کن.
+            if gallery.available() and gallery.supports(url):
+                log.info("yt-dlp probe failed (%s) for %s; trying gallery-dl", exc.key, url)
+                return await asyncio.to_thread(self._probe_gallery, url)
             raise
         except (DownloadError, ExtractorError) as exc:
             raise map_error(exc) from exc
         except Exception as exc:  # noqa: BLE001 — هر خطای دیگری هم باید به کاربر برسد
             log.exception("probe failed for %s", url)
             raise map_error(exc) from exc
+
+    def _probe_gallery(self, url: str) -> MediaInfo:
+        """بررسی سبک لینک گالری؛ بدون درخواست شبکه تا لینک سریع پاسخ بگیرد."""
+        name = gallery.extractor_name(url)
+        if not name:
+            raise errors.UnsupportedUrl("Unsupported URL")
+        return MediaInfo(
+            url=url,
+            title=gallery.display_title(url),
+            extractor=f"gallery-dl:{name}",
+            gallery=True,
+        )
 
     def _probe_blocking(self, url: str) -> MediaInfo:
         opts = _base_opts(self.cfg, url, self.cookie_for(url))
@@ -389,11 +415,54 @@ class Downloader:
     ) -> DownloadResult:
         workdir.mkdir(parents=True, exist_ok=True)
 
+        if info is not None and info.gallery:
+            return await self._download_gallery(url, workdir, progress, cancel, info)
+
         if info is not None and info.direct:
             return await self._download_direct(url, workdir, progress, cancel, info)
 
-        return await asyncio.to_thread(
-            self._download_blocking, url, option, workdir, progress, cancel
+        try:
+            return await asyncio.to_thread(
+                self._download_blocking, url, option, workdir, progress, cancel
+            )
+        except errors.LeechError as exc:
+            # بعضی لینک‌های عکس/آلبوم در مرحلهٔ دانلود هم «unsupported» می‌دهند.
+            if exc.key == "unsupported" and gallery.available() and gallery.supports(url):
+                log.info("yt-dlp download unsupported for %s; falling back to gallery-dl", url)
+                return await self._download_gallery(
+                    url, workdir, progress, cancel, info or MediaInfo(url=url, title="")
+                )
+            raise
+
+    async def _download_gallery(
+        self,
+        url: str,
+        workdir: Path,
+        progress: Progress,
+        cancel: asyncio.Event,
+        info: MediaInfo,
+    ) -> DownloadResult:
+        result = await gallery.download(
+            url,
+            workdir,
+            progress,
+            cancel,
+            title=info.title,
+            cookie=self.cookie_for(url),
+            proxy=self.cfg.proxy,
+        )
+        if not result.paths:
+            raise errors.UnsupportedUrl("Gallery download produced no file")
+        first = result.paths[0]
+        size = result.size
+        return DownloadResult(
+            path=first,
+            title=human.safe_filename(result.title or info.title or first.stem, 150),
+            mime=_mime_for(first),
+            size=size,
+            is_audio=_mime_for(first).startswith("audio/"),
+            parts=list(result.paths),
+            gallery=True,
         )
 
     def _download_blocking(

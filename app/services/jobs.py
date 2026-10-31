@@ -11,6 +11,7 @@ import asyncio
 import logging
 import shutil
 import time
+import zipfile
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,6 +41,11 @@ DELIVERY_MODES = ("video", "document", "link")
 
 def apply_custom_name(result, custom: str):
     """نام دلخواه کاربر را روی فایل دانلودشده اعمال می‌کند."""
+    parts = getattr(result, "parts", None) or []
+    if len(parts) > 1:
+        # آلبوم‌ها نام‌های اصلی خودشان را نگه می‌دارند؛ تغییر نام همهٔ فایل‌ها
+        # به یک نام باعث از دست رفتن ترتیب/تشخیص می‌شود.
+        return result
     name = human.safe_filename(custom, 150)
     if not name or name == "file":
         return result
@@ -356,8 +362,22 @@ class JobManager:
 
                 if task.cancel.is_set():
                     raise errors.JobCancelled()
-                task.upload_task = asyncio.create_task(
-                    self.uploader.send(
+                if getattr(result, "gallery", False):
+                    # گالری/آلبوم: عکس‌ها گروهی و بقیه تک‌تک می‌روند. حالت
+                    # «ویدیو» برای گالری یعنی ارسال به‌صورت مدیا، «فایل» یعنی خام.
+                    send_coro = self.uploader.send_gallery(
+                        self.bot,
+                        task.chat_id,
+                        result,
+                        task.progress,
+                        task.url,
+                        as_document=task.mode == "document",
+                        caption_title=result.title,
+                        custom_thumbnail=task.custom_thumbnail,
+                        cancel=task.cancel,
+                    )
+                else:
+                    send_coro = self.uploader.send(
                         self.bot,
                         task.chat_id,
                         result,
@@ -377,7 +397,7 @@ class JobManager:
                         custom_thumbnail=task.custom_thumbnail,
                         cancel=task.cancel,
                     )
-                )
+                task.upload_task = asyncio.create_task(send_coro)
                 try:
                     uploaded_message = await task.upload_task
                     uploaded_bytes = int(
@@ -528,8 +548,40 @@ class JobManager:
         kwargs.setdefault("reason", human.esc(exc.reason or "?"))
         return text.t(lang, exc.key, **kwargs)
 
+    @staticmethod
+    def _zip_parts(result):
+        """آلبوم چندانتخابی را برای لینک مستقیم به یک ZIP تبدیل می‌کند."""
+        parts = [p for p in (result.parts or []) if p.exists()]
+        if len(parts) <= 1:
+            return result
+        base = human.safe_filename(result.title or "gallery", 80) or "gallery"
+        archive = result.path.parent / f"{base}.zip"
+        index = 2
+        while archive.exists():
+            archive = result.path.parent / f"{base} ({index}).zip"
+            index += 1
+        seen: set[str] = set()
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as zf:
+            for path in parts:
+                arcname = human.safe_filename(path.name, 120) or "file"
+                if arcname in seen:
+                    stem, dot, ext = arcname.rpartition(".")
+                    arcname = f"{stem} ({index}){dot}{ext}" if dot else f"{arcname} ({index})"
+                    index += 1
+                seen.add(arcname)
+                zf.write(path, arcname=arcname)
+        result.path = archive
+        result.size = archive.stat().st_size
+        result.mime = "application/zip"
+        result.parts = [archive]
+        return result
+
     async def _deliver_link(self, task: JobTask, result) -> None:
         """فایل دانلودشده را به پوشهٔ لینک مستقیم منتقل و لینک امضاشده می‌سازد."""
+        parts = getattr(result, "parts", None) or []
+        if len(parts) > 1:
+            # لینک مستقیم فقط یک فایل است؛ آلبوم را به ZIP تبدیل می‌کنیم.
+            result = self._zip_parts(result)
         if result.size > self.settings.max_link_bytes:
             raise errors.FileTooLargeForLink(
                 size=human.human_bytes(result.size),

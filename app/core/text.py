@@ -144,6 +144,11 @@ FA: dict[str, str] = {
         "📤 {send_as} → {destination}{ttl_line}"
     ),
     "quality_auto": "بهترین کیفیت موجود (خودکار)",
+    "quality_gallery": "🖼 گالری/آلبوم (همهٔ فایل‌ها)",
+    "gallery_note": (
+        "🖼 این لینک گالری/آلبوم است: همهٔ عکس‌ها تا سقف مجاز دانلود و "
+        "به‌صورت آلبوم تلگرام ارسال می‌شوند."
+    ),
     "quality_original": "همان کیفیت فایل اصلی",
     "size_unknown": "نامشخص",
     "delivery_hint": "گزینه‌ها را انتخاب کن، بعد «شروع / آپلود» را بزن.",
@@ -791,6 +796,11 @@ EN: dict[str, str] = {
         "📤 {send_as} → {destination}{ttl_line}"
     ),
     "quality_auto": "Best available (automatic)",
+    "quality_gallery": "🖼 Gallery / album (all files)",
+    "gallery_note": (
+        "🖼 This is a gallery/album link: every image (up to the limit) is "
+        "downloaded and delivered as Telegram albums."
+    ),
     "quality_original": "As provided by the source",
     "size_unknown": "Unknown",
     "delivery_hint": "Choose options, then tap the action below.",
@@ -1409,6 +1419,11 @@ RU: dict[str, str] = {
         "📤 {send_as} → {destination}{ttl_line}"
     ),
     "quality_auto": "Лучшее доступное (авто)",
+    "quality_gallery": "🖼 Галерея / альбом (все файлы)",
+    "gallery_note": (
+        "🖼 Это галерея/альбом: все изображения (в пределах лимита) "
+        "скачиваются и отправляются альбомами Telegram."
+    ),
     "quality_original": "Как в источнике",
     "size_unknown": "Неизвестно",
     "delivery_hint": "Выбери настройки и нажми кнопку ниже.",

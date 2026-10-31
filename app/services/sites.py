@@ -44,6 +44,17 @@ NSFW_EXTRACTORS: set[str] = {
 
 NSFW_HOST_WORDS = ("porn", "xxx", "sex", "nude", "hentai", "adult", "cam4", "onlyfans", "erotic")
 
+# دسته‌های gallery-dl که فقط محتوای بزرگسال دارند (برای فیلتر اختیاری NSFW).
+# pixiv/artstation و مشابه‌ها عمداً نیستند چون محتوای سالم هم دارند.
+GALLERY_NSFW: set[str] = {
+    "e621", "danbooru", "gelbooru", "realbooru", "rule34us", "rule34vault",
+    "rule34xyz", "sankaku", "sankakucomplex", "exhentai", "nhentai",
+    "hentaihere", "imhentai", "myhentaigallery", "hentaicosplays",
+    "fapello", "fapachi", "erome", "thefap", "nudostar", "fitnakedgirls",
+    "girlsreleased", "poringa", "pornpics", "motherless", "nsfwalbum",
+    "imagefap", "sexcom", "xasiat", "vipergirls",
+}
+
 
 @dataclass(frozen=True)
 class SiteEntry:
@@ -121,6 +132,14 @@ class SiteIndex:
         entry = self.match(url)
         if entry is not None:
             return entry.nsfw
+        try:
+            from app.services import gallery
+
+            category = gallery.extractor_name(url)
+        except Exception:  # noqa: BLE001 — تشخیص نباید لینک را بشکند
+            category = ""
+        if category and category in GALLERY_NSFW:
+            return True
         host = (url or "").lower()
         return any(word in host for word in NSFW_HOST_WORDS)
 

@@ -7,6 +7,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.6.0] - 2026-10-31 · "Gallery Engine"
+
+### Added
+- **gallery-dl engine** (`app/services/gallery.py`): image/album sites that
+  yt-dlp rejects (Instagram posts and carousels, Pinterest, X/Twitter media,
+  Reddit galleries, Pixiv, Danbooru, Kemono, and adult gallery sites) now
+  download through `gallery-dl`, which runs in a cancellable subprocess.
+- Automatic fallback: if yt-dlp says `unsupported` during probe or download,
+  the link is retried with gallery-dl when it is a known extractor.
+- Gallery/album delivery: images are sent as Telegram media groups of 10
+  (`send_media_group`), other files individually; `document` mode sends raw
+  files. Direct-link mode packs the album into a single ZIP.
+- Album size/count guard: `GALLERY_MAX_ITEMS` (default 50, max 200) limits how
+  many files one gallery link can download.
+- Cookie files and the configured proxy are passed to gallery-dl, so private
+  posts work the same way they do with yt-dlp.
+- Gallery-only adult categories are recognised by the NSFW filter
+  (`GALLERY_NSFW` in `app/services/sites.py`).
+- New text keys `quality_gallery` and `gallery_note` in fa/en/ru.
+
 ## [5.5.0] - 2026-10-31 · "Durable Deploy"
 
 ### Added

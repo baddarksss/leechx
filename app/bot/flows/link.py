@@ -144,6 +144,9 @@ def can_send_as_video(draft: Draft) -> bool:
 
 def normalize_delivery_mode(draft: Draft) -> None:
     """A non-playable output must use document mode, including audio/images."""
+    if draft.kind == "gallery":
+        # برای گالری، «ویدیو» یعنی ارسال آلبومی و «فایل» یعنی خام.
+        return
     if draft.option is not None and draft.send_as == "video" and not can_send_as_video(draft):
         draft.send_as = "document"
 
@@ -284,6 +287,42 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
         svc.drafts.put(draft)
         await edit(status, delivery_text(lang, draft, svc.settings.ttl_hours),
                    reply_markup=kb.delivery_menu(lang, draft))
+        return
+
+    # ── گالری/آلبوم (gallery-dl): بدون منوی کیفیت ──────────────
+    if info.gallery:
+        option = FormatOption(
+            kind="gallery",
+            code="gallery",
+            label=text.t(lang, "quality_gallery"),
+            selector="",
+            ext="",
+        )
+        draft = Draft(
+            id=svc.drafts.new_id(),
+            user_id=user.id,
+            chat_id=update.effective_chat.id,
+            url=info.url,
+            title=info.title,
+            options=[option],
+            option=option,
+            duration=None,
+            thumbnail=info.thumbnail,
+            uploader=info.uploader,
+            extractor=info.extractor,
+            kind="gallery",
+            auto_quality=True,
+            lang=lang,
+        )
+        await apply_user_preferences(draft)
+        svc.drafts.put(draft)
+        await edit(
+            status,
+            delivery_text(lang, draft, svc.settings.ttl_hours)
+            + "\n"
+            + text.t(lang, "gallery_note"),
+            reply_markup=kb.delivery_menu(lang, draft),
+        )
         return
 
     # ── صفحهٔ انتخاب کیفیت ──────────────────────────────────
@@ -467,6 +506,7 @@ async def enqueue(
         direct=option.kind == "direct",
         ext=option.ext,
         filesize=option.filesize,
+        gallery=option.kind == "gallery",
     )
     task = JobTask(
         id=new_job_id(),

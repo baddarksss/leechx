@@ -142,7 +142,11 @@ async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
             await safe_answer(query)
             return
         requested = args[2]
-        if requested == "video" and not link_flow.can_send_as_video(draft):
+        if (
+            requested == "video"
+            and draft.kind != "gallery"
+            and not link_flow.can_send_as_video(draft)
+        ):
             draft.send_as = "document"
             await safe_answer(
                 query, text.t(user_lang, "video_mode_unavailable"), alert=True
@@ -183,7 +187,7 @@ async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
         if mode is None or draft.option is None:
             await safe_answer(query)
             return
-        if mode == "video" and not link_flow.can_send_as_video(draft):
+        if mode == "video" and draft.kind != "gallery" and not link_flow.can_send_as_video(draft):
             mode = "document"
 
     if not svc.limiter.has_slot(draft.user_id, svc.cfg.per_user_concurrency):
