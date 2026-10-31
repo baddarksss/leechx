@@ -7,19 +7,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.core import human
+
 MAX_VIDEO_OPTIONS = 7
+# وقتی منو بر اساس کدک جدا می‌شود (مثل Eporner با ۵ نسخهٔ MP4 و ۵ نسخهٔ AV1)
+# باید جای بیشتری برای گزینه‌های ویدیویی باشد.
+MAX_SPLIT_VIDEO_OPTIONS = 12
 
 
 @dataclass(frozen=True)
 class FormatOption:
     kind: str          # video | audio
-    code: str          # "1080" | "mp3" | "m4a"
-    label: str         # "1080p" | "MP3 192k"
+    code: str          # "1080" | "1080-av1" | "mp3" | "m4a"
+    label: str         # "1080p MP4 · 78.5 MB" | "MP3 192k"
     selector: str      # انتخاب‌گر yt-dlp
     height: int = 0
     ext: str = ""
     filesize: int | None = None
     fps: int = 0
+    codec: str = ""    # "mp4" | "av1" | ... (برای تفکیک کدک‌ها)
+    # اگر پر باشد، دانلود مستقیم از همین آدرس انجام می‌شود (نسخه‌هایی که
+    # اکسترکتور yt-dlp دوباره پیدا نمی‌کند، مثل AV1 اپورنر).
+    media_url: str = ""
 
 
 AUDIO_MP3 = FormatOption(
@@ -54,6 +63,29 @@ def _size_of(fmt: dict) -> int | None:
     return int(size) if size else None
 
 
+def _codec_name(fmt: dict) -> str:
+    """نام کوتاه کدک برای برچسب دکمه (MP4 / AV1 / WEBM…)."""
+    vcodec = (fmt.get("vcodec") or "").lower()
+    if vcodec.startswith(("av01", "av1")):
+        return "AV1"
+    if vcodec.startswith(("avc", "h264")):
+        return "MP4"
+    ext = (fmt.get("ext") or "").lower()
+    if ext == "mp4":
+        return "MP4"
+    return ext.upper()
+
+
+def _label_of(height: int, fps: int, filesize: int | None, codec: str = "") -> str:
+    """مثلاً ``1080p`` یا ``1080p MP4 · 78.5 MB``."""
+    label = f"{height}p" + (f"{fps}" if fps >= 50 else "")
+    if codec:
+        label = f"{label} {codec}"
+    if filesize:
+        label = f"{label} · {human.human_bytes(filesize)}"
+    return label
+
+
 def _fps_of(fmt: dict) -> int:
     try:
         return int(fmt.get("fps") or 0)
@@ -61,15 +93,26 @@ def _fps_of(fmt: dict) -> int:
         return 0
 
 
-def build_options(formats: list[dict] | None, max_height: int = 0) -> list[FormatOption]:
-    """بهترین فرمت هر ارتفاع را انتخاب و به گزینه تبدیل می‌کند."""
+def build_options(
+    formats: list[dict] | None,
+    max_height: int = 0,
+    split_codecs: bool = False,
+) -> list[FormatOption]:
+    """بهترین فرمت هر ارتفاع را انتخاب و به گزینه تبدیل می‌کند.
+
+    با ``split_codecs=True`` هر کدک (مثلاً MP4 و AV1) جداگانه نمایش داده می‌شود
+    تا کاربر بداند دقیقاً چه چیزی دانلود می‌کند.
+    """
     formats = formats or []
+    if split_codecs:
+        return _build_split_options(formats, max_height)
+
     best: dict[int, dict] = {}
 
     for fmt in formats:
         if not isinstance(fmt, dict):
             continue
-        if (fmt.get("vcodec") or "none") == "none":
+        if str(fmt.get("vcodec") or "").lower() == "none":
             continue
         if fmt.get("ext") in ("mhtml", "none"):
             continue
@@ -103,17 +146,74 @@ def build_options(formats: list[dict] | None, max_height: int = 0) -> list[Forma
     for height in heights:
         fmt = best[height]
         fps = _fps_of(fmt)
-        label = f"{height}p" + (f"{fps}" if fps >= 50 else "")
+        filesize = _size_of(fmt)
         options.append(
             FormatOption(
                 kind="video",
                 code=str(height),
-                label=label,
+                label=_label_of(height, fps, filesize),
                 selector=video_selector(height),
                 height=height,
                 ext="mp4",
-                filesize=_size_of(fmt),
+                filesize=filesize,
                 fps=fps,
+                codec=_codec_name(fmt).lower() or "mp4",
+            )
+        )
+    return options
+
+
+def _build_split_options(formats: list[dict], max_height: int) -> list[FormatOption]:
+    """یک گزینه برای هر ترکیب ارتفاع+کدک؛ با انتخاب‌گر دقیق ``format_id``."""
+    best: dict[tuple[int, str], dict] = {}
+    for fmt in formats:
+        if not isinstance(fmt, dict):
+            continue
+        if str(fmt.get("vcodec") or "").lower() == "none":
+            continue
+        if fmt.get("ext") in ("mhtml", "none"):
+            continue
+        try:
+            height = int(fmt.get("height") or 0)
+        except (TypeError, ValueError):
+            height = 0
+        if height <= 0:
+            continue
+        if max_height and height > max_height:
+            continue
+        codec = _codec_name(fmt) or "VIDEO"
+        current = best.get((height, codec))
+        if current is None or _rank(fmt) > _rank(current):
+            best[(height, codec)] = fmt
+
+    if not best:
+        return build_options(formats, max_height)
+
+    priority = {"MP4": 0, "AV1": 1}
+    keys = sorted(best, key=lambda key: (key[0], priority.get(key[1], 2), key[1]))
+    while len(keys) > MAX_SPLIT_VIDEO_OPTIONS:
+        keys.pop(0)
+
+    options: list[FormatOption] = []
+    for height, codec in keys:
+        fmt = best[(height, codec)]
+        fps = _fps_of(fmt)
+        filesize = _size_of(fmt)
+        code = str(height) if codec == "MP4" else f"{height}-{codec.lower()}"
+        options.append(
+            FormatOption(
+                kind="video",
+                code=code,
+                label=_label_of(height, fps, filesize, codec),
+                # format_id دقیق، چون منوی جداگانه باید همان نسخهٔ کدک را بدهد.
+                selector=str(fmt.get("format_id") or "") or video_selector(height),
+                height=height,
+                ext=(fmt.get("ext") or "mp4").lower(),
+                filesize=filesize,
+                fps=fps,
+                codec=codec.lower(),
+                # نسخه‌های ساخته‌شده (AV1) در استخراج دوم yt-dlp وجود ندارند.
+                media_url=(fmt.get("url") or "") if fmt.get("synthetic") else "",
             )
         )
     return options
@@ -131,8 +231,16 @@ def _rank(fmt: dict) -> tuple:
     )
 
 
-def all_options(formats: list[dict] | None, max_height: int = 0) -> list[FormatOption]:
-    return [*build_options(formats, max_height), AUDIO_MP3, AUDIO_M4A]
+def all_options(
+    formats: list[dict] | None,
+    max_height: int = 0,
+    split_codecs: bool = False,
+) -> list[FormatOption]:
+    return [
+        *build_options(formats, max_height, split_codecs=split_codecs),
+        AUDIO_MP3,
+        AUDIO_M4A,
+    ]
 
 
 def find_option(options: list[FormatOption], kind: str, code: str) -> FormatOption | None:

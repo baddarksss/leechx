@@ -135,10 +135,18 @@ def draft_name(draft: Draft) -> str:
     return base
 
 
+def split_codec_menu(extractor: str | None) -> bool:
+    """سایت‌هایی که چند نسخهٔ کدک برای هر کیفیت دارند (فعلاً فقط Eporner)."""
+    return (extractor or "").casefold().startswith("eporner")
+
+
 def can_send_as_video(draft: Draft) -> bool:
     """Whether the selected output is a Telegram-playable video candidate."""
     option = draft.option
     if option is None or option.kind not in {"video", "direct"}:
+        return False
+    # تلگرام AV1 را به‌عنوان ویدیو پخش نمی‌کند؛ بهتر است فایل فرستاده شود.
+    if (option.codec or "").casefold() == "av1":
         return False
     extension = (option.ext or Path(urlsplit(draft.url).path).suffix).lower()
     if extension and not extension.startswith("."):
@@ -212,6 +220,8 @@ def quality_text(lang: str, draft: Draft, note: str = "") -> str:
         lines.append(note)
     lines.append("")
     lines.append(text.t(lang, "choose_quality", title="").replace("<b></b>", "").strip())
+    if any(o.filesize for o in draft.options if o.kind == "video"):
+        lines.append(text.t(lang, "quality_size_hint"))
     return "\n".join(lines)
 
 
@@ -330,7 +340,11 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
         return
 
     # ── صفحهٔ انتخاب کیفیت ──────────────────────────────────
-    options = all_options(info.formats, svc.cfg.max_height)
+    options = all_options(
+        info.formats,
+        svc.cfg.max_height,
+        split_codecs=split_codec_menu(info.extractor),
+    )
     draft = Draft(
         id=svc.drafts.new_id(),
         user_id=user.id,

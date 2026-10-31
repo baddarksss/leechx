@@ -41,6 +41,10 @@ USER_AGENT = (
 _EMBED_VIDEO = re.compile(
     r"^https?://(?:www\.)?eporner\.com/video-([A-Za-z0-9]+)(?:/|$)", re.IGNORECASE
 )
+_EPORNER_SLUG_TITLE = re.compile(
+    r"^https?://(?:www\.)?eporner\.com/video-[A-Za-z0-9]+/([A-Za-z0-9-]+)/?",
+    re.IGNORECASE,
+)
 
 
 def extractor_url(url: str) -> str:
@@ -49,6 +53,59 @@ def extractor_url(url: str) -> str:
     if match:
         return f"https://www.eporner.com/embed/{match.group(1)}/"
     return url
+
+
+def is_eporner_extractor(extractor: str | None) -> bool:
+    return (extractor or "").casefold().startswith(("eporner", "gallery-dl:eporner"))
+
+
+def fallback_title(url: str, title: str | None) -> str:
+    """صفحهٔ امبد عنوان ندارد؛ از اسلاگ آدرس عنوان خوانا می‌سازیم."""
+    clean = (title or "").strip()
+    if clean and clean.casefold() not in {"untitled", "media", "video"}:
+        return clean
+    match = _EPORNER_SLUG_TITLE.match(url or "")
+    if match:
+        slug = match.group(1).replace("-", " ").strip()
+        if slug:
+            return slug[:1].upper() + slug[1:]
+    return clean or "media"
+
+
+def _is_av1_format(fmt: dict) -> bool:
+    return (fmt.get("vcodec") or "").casefold().startswith(("av01", "av1"))
+
+
+def with_av1_variants(formats: list[dict] | None) -> list[dict]:
+    """نسخه‌های AV1 اپورنر را به لیست فرمت‌ها اضافه می‌کند.
+
+    سایت این نسخه‌ها را روی CDN دارد (``...-av1.mp4``) ولی در JSON امبد
+    فهرست نمی‌کند؛ پس از روی نسخهٔ MP4 هر ارتفاع می‌سازیم.
+    """
+    formats = [f for f in (formats or []) if isinstance(f, dict)]
+    existing = {int(f.get("height") or 0) for f in formats if _is_av1_format(f)}
+    out = list(formats)
+    for fmt in formats:
+        if _is_av1_format(fmt):
+            continue
+        try:
+            height = int(fmt.get("height") or 0)
+        except (TypeError, ValueError):
+            height = 0
+        src = str(fmt.get("url") or "")
+        if height <= 0 or height in existing or not src.lower().endswith(".mp4"):
+            continue
+        av1 = dict(fmt)
+        av1["format_id"] = f"{fmt.get('format_id') or height}-av1"
+        av1["url"] = src[:-4] + "-av1.mp4"
+        av1["vcodec"] = "av01.0.08M.08"
+        av1["format_note"] = f"{fmt.get('format_note') or f'{height}p'} (AV1)"
+        av1["filesize"] = None
+        av1["filesize_approx"] = None
+        av1["synthetic"] = True
+        out.append(av1)
+        existing.add(height)
+    return out
 
 MEDIA_MIME_PREFIXES = ("video/", "audio/", "image/")
 DIRECT_MIME_TYPES = {
@@ -93,6 +150,17 @@ def is_direct_mime(ctype: str) -> bool:
     """آیا این Content-Type یک فایل قابل تحویل مستقیم است؟"""
     ctype = (ctype or "").split(";")[0].strip().lower()
     return ctype.startswith(MEDIA_MIME_PREFIXES) or ctype in DIRECT_MIME_TYPES
+
+
+def _variant_filename(title: str, option: FormatOption) -> str:
+    """نام فایل برای نسخهٔ کدک‌دار؛ مثلاً ``Title [1080p AV1].mp4``."""
+    stem = human.safe_filename(title or "media", 100)
+    codec = (option.codec or "").upper()
+    tag = f"{option.height}p" if option.height else ""
+    if codec:
+        tag = f"{tag} {codec}".strip()
+    ext = (option.ext or "mp4").lstrip(".")
+    return f"{stem} [{tag}].{ext}" if tag else f"{stem}.{ext}"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -312,7 +380,7 @@ class Downloader:
                 return direct
 
         try:
-            return await asyncio.to_thread(self._probe_blocking, url)
+            info = await asyncio.to_thread(self._probe_blocking, url)
         except errors.LeechError as exc:
             # yt-dlp ویدیو-محور است؛ اگر سایت عکس/آلبوم باشد gallery-dl را امتحان کن.
             if gallery.available() and gallery.supports(url):
@@ -324,6 +392,45 @@ class Downloader:
         except Exception as exc:  # noqa: BLE001 — هر خطای دیگری هم باید به کاربر برسد
             log.exception("probe failed for %s", url)
             raise map_error(exc) from exc
+
+        if is_eporner_extractor(info.extractor):
+            # اپورنر حجم فایل‌ها را در متادیتا نمی‌دهد؛ با HEAD پر می‌کنیم.
+            await self._fill_sizes(info.formats, referer=info.url)
+        return info
+
+    async def _fill_sizes(self, formats: list[dict], referer: str = "") -> None:
+        """حجم تقریبی فرمت‌های بدون حجم را با درخواست HEAD پر می‌کند."""
+        targets = [
+            fmt for fmt in (formats or [])
+            if isinstance(fmt, dict)
+            and not fmt.get("filesize") and not fmt.get("filesize_approx")
+            and str(fmt.get("url") or "").lower().startswith(("http://", "https://"))
+        ]
+        if not targets:
+            return
+
+        headers = {"User-Agent": USER_AGENT, "Accept": "*/*", "Accept-Encoding": "identity"}
+        if referer:
+            headers["Referer"] = referer
+        timeout = aiohttp.ClientTimeout(total=20)
+        sem = asyncio.Semaphore(5)
+
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
+            async def one(fmt: dict) -> None:
+                async with sem:
+                    try:
+                        async with safe_http_request(sess, "HEAD", str(fmt["url"])) as resp:
+                            length = resp.headers.get("Content-Length")
+                            if resp.status < 400 and length and str(length).isdigit():
+                                fmt["filesize"] = int(length)
+                    except (errors.LeechError, aiohttp.ClientError, TimeoutError, OSError):
+                        return
+
+            await asyncio.gather(*(one(fmt) for fmt in targets))
+        log.debug(
+            "filled sizes for %d/%d formats",
+            sum(1 for f in targets if f.get("filesize")), len(targets),
+        )
 
     def _probe_gallery(self, url: str) -> MediaInfo:
         """بررسی سبک لینک گالری؛ بدون درخواست شبکه تا لینک سریع پاسخ بگیرد."""
@@ -361,16 +468,25 @@ class Downloader:
         if info.get("is_live"):
             raise errors.LiveUnsupported()
 
+        extractor = str(info.get("extractor_key") or info.get("extractor") or "")
+        formats = list(info.get("formats") or [])
+        if is_eporner_extractor(extractor):
+            formats = with_av1_variants(formats)
+
         return MediaInfo(
             # برای لینک‌های embed-only، آدرس اصلی کاربر نمایش داده شود.
             url=url if target != url else (info.get("webpage_url") or url),
-            title=human.safe_filename(info.get("title") or "media", 150),
+            title=human.safe_filename(
+                fallback_title(url, info.get("title")) if target != url
+                else (info.get("title") or "media"),
+                150,
+            ),
             duration=int(info["duration"]) if info.get("duration") else None,
             uploader=info.get("uploader") or info.get("channel") or info.get("creator"),
             thumbnail=info.get("thumbnail"),
-            extractor=str(info.get("extractor_key") or info.get("extractor") or ""),
+            extractor=extractor,
             is_live=bool(info.get("is_live")),
-            formats=list(info.get("formats") or []),
+            formats=formats,
             ext=info.get("ext") or "",
             playlist=bool(info.get("_playlist")),
         )
@@ -437,6 +553,20 @@ class Downloader:
 
         if info is not None and info.direct:
             return await self._download_direct(url, workdir, progress, cancel, info)
+
+        if option.media_url:
+            # نسخه‌هایی مثل AV1 اپورنر در استخراج دوبارهٔ yt-dlp نیستند؛
+            # همان آدرس مستقیم CDN را می‌گیریم ولی عنوان اصلی حفظ می‌شود.
+            fallback = info or MediaInfo(url=url, title="")
+            return await self._download_direct(
+                option.media_url,
+                workdir,
+                progress,
+                cancel,
+                fallback,
+                name=_variant_filename(fallback.title, option),
+                title=fallback.title,
+            )
 
         try:
             return await asyncio.to_thread(
@@ -604,14 +734,16 @@ class Downloader:
         progress: Progress,
         cancel: asyncio.Event,
         info: MediaInfo,
+        name: str = "",
+        title: str = "",
     ) -> DownloadResult:
         if not await urlcheck.is_safe_public_url(url):
             raise errors.UnsupportedUrl("Invalid or non-public download URL")
         progress.reset_download()
-        name = human.safe_filename(urlcheck.filename_from_url(url, "download"), 120)
+        name = name or human.safe_filename(urlcheck.filename_from_url(url, "download"), 120)
         if info.ext and not name.lower().endswith("." + info.ext.lower()):
             name = f"{name}.{info.ext}"
-        dest = workdir / name
+        dest = workdir / human.safe_filename(name, 150)
 
         timeout = aiohttp.ClientTimeout(total=None, sock_read=120, connect=30)
         headers = {"User-Agent": USER_AGENT, "Accept": "*/*", "Accept-Encoding": "identity"}
@@ -654,7 +786,7 @@ class Downloader:
         mime = _mime_for(dest)
         return DownloadResult(
             path=dest,
-            title=human.safe_filename(dest.stem, 150),
+            title=human.safe_filename(title or dest.stem, 150),
             mime=info.mime or mime,
             size=size,
             is_audio=mime.startswith("audio/"),

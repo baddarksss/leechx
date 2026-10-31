@@ -7,6 +7,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.6.3] - 2026-10-31 · "Codec Menu"
+
+### Added
+- Eporner quality menu now lists all ten versions: five MP4 and five AV1
+  variants, one button per codec and resolution. AV1 versions are synthesized
+  from the MP4 CDN URLs because yt-dlp's extractor only returns the MP4 set.
+- Every video button shows the codec and the file size, e.g.
+  `1080p MP4 · 78.5 MB` / `1080p AV1 · 27.2 MB`. Missing sizes are filled with
+  bounded HEAD requests at probe time (Eporner only), and the hint line under
+  the menu explains what the labels mean.
+- Split-codec menus use the exact `format_id` so the chosen codec is really
+  downloaded; synthesized AV1 variants download straight from their CDN URL
+  while keeping the original title.
+
+### Changed
+- Formats with unknown `vcodec` (like Eporner's plain MP4 entries) are no
+  longer treated as audio-only, so real quality options appear.
+- Eporner videos keep a human title derived from the URL slug instead of
+  "Untitled" (the embed page has no title).
+- AV1 options default to document delivery because Telegram does not play AV1.
+
 ## [5.6.2] - 2026-10-31 · "Quiet Errors"
 
 ### Fixed

@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.6.2"
-CODENAME = "Quiet Errors"
+__version__ = "5.6.3"
+CODENAME = "Codec Menu"
 RELEASE_DATE = "2026-10-31"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.
