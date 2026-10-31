@@ -7,6 +7,20 @@ from app.core import errors
 from app.services import splitter
 
 
+def test_retry_limit_forces_at_least_two_parts():
+    size = 200_000
+    limit = 230_000  # فایل زیر سقف است ولی تلگرام آن را رد کرده
+    assert splitter.planned_parts(size, splitter.usable_bytes(limit)) == 1
+    retry = splitter.retry_limit(size, limit)
+    assert retry < limit
+    assert splitter.planned_parts(size, splitter.usable_bytes(retry)) >= 2
+    # وقتی فایل از قبل بزرگ‌تر از دو پارت است، سقف دست نمی‌خورد.
+    assert splitter.retry_limit(10 * limit, limit) == limit
+    # حالت‌های مرزی نباید خطا بدهند.
+    assert splitter.retry_limit(0, limit) == limit
+    assert splitter.retry_limit(1, 1) >= 1
+
+
 def test_planned_parts_and_usable_bytes():
     assert splitter.usable_bytes(1000) == 900
     assert splitter.planned_parts(0, 900) == 1

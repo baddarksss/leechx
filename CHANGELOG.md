@@ -7,6 +7,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.9.1] - 2026-10-31 · "Split Delivery"
+
+### Changed
+- Upload cap raised to Telegram's real local-Bot-API ceiling: `MAX_UPLOAD_MB=1999`.
+  Telegram's "2000 MB" is binary (2000 MiB = 2,097,152,000 bytes; verified by
+  uploading a 1,999.9 MiB file), so a ~1.95 GB file is now delivered as a single
+  file instead of being split into two parts.
+
+### Fixed
+- If Telegram still rejects a single upload as too large, the job no longer fails:
+  `splitter.retry_limit()` picks a cap that guarantees at least two parts, the
+  file is split on the spot and the parts are delivered automatically.
+
 ## [5.9.0] - 2026-10-31 · "Split Delivery"
 
 ### Added

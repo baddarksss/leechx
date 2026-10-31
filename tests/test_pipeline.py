@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from aiohttp import web
 
+from app.core import errors
 from app.db import repo
 from app.services import splitter
 from app.services.downloader import Downloader, DownloadResult
@@ -327,3 +328,59 @@ def test_is_direct_mime():
     assert not is_direct_mime("text/html")
     assert not is_direct_mime("application/json")
     assert not is_direct_mime("")
+
+
+class RejectingOnceUploader(SplitStubUploader):
+    """اولین ارسال را مثل تلگرام رد می‌کند تا مسیر پشتیبان تقسیم تست شود."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rejected = False
+
+    async def send(self, bot, chat_id, result, progress, source_url="", **kwargs):
+        if not self.rejected:
+            self.rejected = True
+            raise errors.TooLarge(key="too_big", size="1", max="1")
+        return await super().send(bot, chat_id, result, progress, source_url, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_rejected_single_upload_falls_back_to_splitting(db, binary_server, monkeypatch):
+    """اگر تلگرام فایل تکی را رد کند، کار نباید بشکند: خودکار تقسیم می‌شود."""
+    cfg = db
+    store = FileStore(cfg.files_dir, cfg.tmp_dir)
+    downloader = Downloader(cfg)
+    uploader = RejectingOnceUploader()
+    settings = RuntimeSettings(cfg)
+    await settings.load()
+
+    # سقف کمی بالاتر از حجم فایل است، پس از اول تقسیم نمی‌شود و ارسال تکی رد می‌شود.
+    limit = 230_000
+    assert len(PAYLOAD) <= limit
+    assert splitter.usable_bytes(limit) < len(PAYLOAD)
+    monkeypatch.setattr("app.services.jobs.upload_limit", lambda *_args: limit)
+    manager = JobManager(cfg, settings, store, downloader, uploader, RateLimiter(0))
+    manager.bot = StubBot()
+
+    info = await downloader.probe(binary_server)
+    task = JobTask(
+        id="split2",
+        user_id=45,
+        chat_id=45,
+        url=binary_server,
+        option=FormatOption(kind="direct", code="direct", label="direct", selector=""),
+        title=info.title,
+        info=info,
+        lang="fa",
+        mode="document",
+    )
+
+    await manager.submit(task)
+    await manager._run(task)
+
+    assert uploader.rejected is True
+    assert len(uploader.results) >= 2
+    assert sum(part.size for part in uploader.results) == len(PAYLOAD)
+    job = await repo.get_job("split2")
+    assert job.status == "done"
+    assert not (store.jobs / "split2").exists()

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.9.0"
+__version__ = "5.9.1"
 CODENAME = "Split Delivery"
 RELEASE_DATE = "2026-10-31"
 

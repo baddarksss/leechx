@@ -450,6 +450,31 @@ class JobManager:
                         if task.cancel.is_set():
                             raise errors.JobCancelled() from None
                         raise
+                    except errors.TooLarge:
+                        # سقف واقعی سرور تلگرام کمی پایین‌تر از تنظیم ما بود؛ به‌جای
+                        # شکست، همان فایل را تقسیم و پارت‌به‌پارت می‌فرستیم.
+                        if task.cancel.is_set():
+                            raise errors.JobCancelled() from None
+                        plan = await splitter.split_file(
+                            result.path,
+                            splitter.retry_limit(result.path.stat().st_size, limit),
+                            workdir,
+                            mime=result.mime,
+                            cancel=task.cancel,
+                        )
+                        if plan.count < 2:
+                            raise
+                        split_plan = plan
+                        task.progress.parts = plan.count
+                        uploaded_message = await self._send_split(task, result, plan)
+                        uploaded_bytes = int(
+                            getattr(task.progress, "uploaded_bytes_total", 0) or 0
+                        )
+                        if uploaded_bytes > 0:
+                            await self._record_traffic(
+                                telegram_upload_bytes=uploaded_bytes
+                            )
+                            upload_traffic_recorded = uploaded_bytes
                     finally:
                         task.upload_task = None
                     if task.cancel.is_set():

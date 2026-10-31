@@ -10,6 +10,7 @@ cookies/
 *.db
 *.db-wal
 *.db-shm
+*.bak-*
 
 # --- python ---
 __pycache__/

@@ -57,6 +57,18 @@ def planned_parts(size: int, limit: int) -> int:
     return max(1, math.ceil(size / limit))
 
 
+def retry_limit(size: int, limit: int) -> int:
+    """سقف مناسب برای تلاش دوباره وقتی تلگرام ارسال تکی را رد کرده است.
+
+    اگر فایل از سقف تنظیم‌شده کوچک‌تر بود ولی سرور آن را «خیلی بزرگ» دانست،
+    یعنی سقف واقعی پایین‌تر است؛ این تابع سقفی می‌دهد که دست‌کم دو پارت بسازد.
+    """
+    cap = usable_bytes(limit)
+    if size <= 0 or size > 2 * cap:
+        return limit
+    return max(1, int(math.ceil(size / 2) / SAFETY))
+
+
 def part_name(stem: str, index: int, total: int, ext: str, *, bytes_mode: bool = False) -> str:
     """نام خوانا برای هر پارت؛ بدون کاراکتر غیرمجاز."""
     base = human.safe_filename(stem or "file", 110) or "file"
