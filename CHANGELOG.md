@@ -7,6 +7,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.6.8] - 2026-10-31 · "Site Rescue"
+
+### Added
+- **VK wall posts** (`vk.com/wall…`, `vk.ru/wall…`). yt-dlp returns an empty
+  playlist for some wall posts and does not know `vk.ru` at all; the bot now
+  reads the wall page with a crawler user-agent (OG tags, no captcha), extracts
+  the real `video_ext.php` owner/id, and probes that video URL with the normal
+  VK extractor. Downloads use the resolved video URL, not the wall page.
+- **missav-style pages with no player iframe**: when the Cloudflare-solved page
+  carries the master playlist inside Dean-Edwards-packed JavaScript, the package
+  is unpacked and every `.m3u8` is considered (entries containing `playlist`
+  first). Media-only playlists (no `#EXT-X-STREAM-INF`) are accepted as a single
+  variant.
+- HLS quality menu now shows an approximate size per variant, computed from the
+  media playlist (`sum(EXTINF) × BANDWIDTH / 8`), so stream-only sites are not
+  left with a bare `720p MP4` label.
+
+### Fixed
+- **TNAFlix locale URLs** (`/es/…`, `/de/…`, …) are rewritten to the canonical
+  path before extraction, so the real resolutions (144p…1080p) are listed
+  instead of anonymous `0 MP4`, `1 MP4` entries.
+- Formats without `height` but with the resolution in the file name
+  (`…-1080p.mp4`), format note, or format id get their height inferred; the
+  quality menu no longer collapses such sites into one option.
+- **Sizes for every site**, not only Eporner: at probe time missing sizes are
+  filled in parallel with `HEAD` and, for CDNs that reject HEAD, a
+  `Range: bytes=0-0` request. HLS/DASH variants without a HEAD-able file are
+  estimated from duration × advertised bitrate.
+- HLS downloads accept a manifest URL directly (missav) and fall back to the
+  page's `.m3u8` links when no `hls3`/`hls2` config object exists.
+- Aggregator pages whose video is hosted on **DoodStream/playmogo** (e.g.
+  pornhoarder) now fail with a clear `captcha_wall` message instead of a generic
+  403: those hosts gate the player behind an interactive Turnstile widget that
+  no headless browser can pass without a human click.
+
 ## [5.6.7] - 2026-10-31 · "Cloud HLS"
 
 ### Added

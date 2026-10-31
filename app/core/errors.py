@@ -67,6 +67,10 @@ class LiveUnsupported(LeechError):
     key = "live_unsupported"
 
 
+class CaptchaWall(LeechError):
+    key = "captcha_wall"
+
+
 class JobCancelled(Exception):
     """کاربر کار را لغو کرد (کنترل‌شده، خطا نیست)."""
 

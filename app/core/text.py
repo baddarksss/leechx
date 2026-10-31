@@ -124,6 +124,7 @@ FA: dict[str, str] = {
     "too_big": "📦 حجم فایل ({size}) از حد مجاز ({max}) بیشتر است.",
     "not_media": "📄 این فایل ویدیو/موزیک نیست.",
     "live_unsupported": "🔴 پخش زنده پشتیبانی نمی‌شود.",
+    "captcha_wall": "🔐 پلیر این سایت پشت کپچای تعاملی است و به‌صورت خودکار باز نمی‌شود.",
     "playlist_detected": "📚 این لینک یک پلی‌لیست است؛ فقط مورد اول دانلود می‌شود.",
 
     # ── لینک مستقیم ──
@@ -782,6 +783,7 @@ EN: dict[str, str] = {
     "too_big": "📦 File size ({size}) exceeds the limit ({max}).",
     "not_media": "📄 Not a video/audio file.",
     "live_unsupported": "🔴 Live streams are not supported.",
+    "captcha_wall": "🔐 This site's player is behind an interactive captcha and cannot be opened automatically.",
     "playlist_detected": "📚 Playlist detected; only the first item is downloaded.",
     "direct_start": "🔗 Direct link detected — downloading without quality selection…",
     "file_received": "📥 File received. Preparing your link…",
@@ -1412,6 +1414,7 @@ RU: dict[str, str] = {
     "too_big": "📦 Размер файла ({size}) превышает лимит ({max}).",
     "not_media": "📄 Это не видео/аудио файл.",
     "live_unsupported": "🔴 Прямые трансляции не поддерживаются.",
+    "captcha_wall": "🔐 Плеер этого сайта защищён интерактивной капчей и не открывается автоматически.",
     "playlist_detected": "📚 Обнаружен плейлист; скачивается только первый элемент.",
     "direct_start": "🔗 Прямая ссылка — скачиваю без выбора качества…",
     "file_received": "📥 Файл получен. Готовлю ссылку…",

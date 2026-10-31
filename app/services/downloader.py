@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urljoin
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import aiohttp
 import yt_dlp
@@ -50,13 +50,95 @@ _EPORNER_SLUG_TITLE = re.compile(
     re.IGNORECASE,
 )
 
+# ── VK ────────────────────────────────────────────────────────
+# yt-dlp sometimes returns an empty playlist for `wall` posts and does not
+# recognize the `vk.ru` domain at all. We read the wall page with a crawler
+# user-agent (which gets the OG tags instead of a captcha), find the real video
+# id in `video_ext.php?...oid=...&id=...`, and hand that video URL to yt-dlp.
+_VK_WALL = re.compile(
+    r"^https?://(?:(?:m|new)\.)?vk(?:video)?\.(?:com|ru)/wall(?P<id>-?\d+_\d+)",
+    re.IGNORECASE,
+)
+_VK_VIDEO = re.compile(
+    r"^https?://(?:(?:m|new)\.)?vk(?:video)?\.(?:com|ru)/(?:video|clip)(?P<id>-?\d+_\d+)",
+    re.IGNORECASE,
+)
+_VK_WALL_RU = re.compile(r"^(https?://)(?:(?:m|new)\.)?vk\.ru/wall", re.IGNORECASE)
+_CRAWLER_UAS = (
+    "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+    "Twitterbot/1.0",
+    "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+)
+
+# TNAFlix serves different HTML per locale (`/es/...`) and the generic extractor
+# loses the real resolutions there; the canonical path is `/...`.
+_TNAFLIX_LOCALE = re.compile(
+    r"^(https?://(?:www\.)?tnaflix\.com)/(?:en|es|de|fr|it|pt|pl|ru|ja|ko|zh|nl|tr|ar|hi|id|th|vi|sv|cs|el|hu|ro|uk|da|fi|no)/",
+    re.IGNORECASE,
+)
+
+# Resolution hidden in the file name (`...-1080p.mp4`).
+_HEIGHT_HINT = re.compile(r"(?<![\d.])(\d{3,4})p(?![\d])", re.IGNORECASE)
+_M3U8_URL = re.compile(r"https?://[^\"'\s<>\\]+\.m3u8[^\"'\s<>\\]*", re.IGNORECASE)
+_MANIFEST_SUFFIXES = (".m3u8", ".mpd")
+_MANIFEST_PROTOCOLS = ("m3u8", "m3u8_native", "dash", "http_dash_segments", "http_dash")
+# Aggregators that label the file host next to the player (pornhoarder: "hosted on doodstream").
+# DoodStream/playmogo players sit behind an interactive Turnstile widget, so the
+# media URL cannot be obtained without a browser session (see 5.6.8 notes).
+_CAPTCHA_HOST = re.compile(
+    r"hosted on\s*(?:<[^>]+>\s*)?(?:doodstream|dood|playmogo)"
+    r"|playmogo\.com/e/|/pass_md5/|doodstream\.com/e/",
+    re.IGNORECASE,
+)
+
+
+def _int_or_zero(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def vk_wall_url(url: str) -> str | None:
+    """Canonical `https://vk.com/wall...` for a VK wall link, if it is one."""
+    match = _VK_WALL.match(url or "")
+    if not match:
+        return None
+    return f"https://vk.com/wall{match.group('id')}"
+
+
+def vk_video_url(url: str) -> str | None:
+    """Canonical `https://vk.com/video...` for a VK video link, if it is one."""
+    match = _VK_VIDEO.match(url or "")
+    if not match:
+        return None
+    return f"https://vk.com/video{match.group('id')}"
+
+
+def vk_video_ref(html: str) -> tuple[str, str] | None:
+    """`(owner_id, video_id)` from the wall page HTML (OG/embed tags)."""
+    for raw in re.findall(r"video_ext\.php\?[^\"'\s<>]+", html or "", re.IGNORECASE):
+        query = parse_qs(urlparse(raw.replace("&amp;", "&")).query)
+        owner = (query.get("oid") or [""])[0]
+        video = (query.get("id") or [""])[0]
+        if re.fullmatch(r"-?\d+", owner) and video.isdigit():
+            return owner, video
+    match = re.search(r"\bvideo(-?\d+_\d+)\b", html or "")
+    if match:
+        owner, _, video = match.group(1).partition("_")
+        return owner, video
+    return None
+
 
 def extractor_url(url: str) -> str:
-    """آدرس مناسب اکسترکتور؛ برای سایت‌های embed-only مسیر را بازنویسی می‌کند."""
-    match = _EMBED_VIDEO.match(url or "")
+    """Extractor-friendly URL: fixes embed-only sites and locale/alias paths."""
+    clean = (url or "").split("#", 1)[0].strip()
+    clean = _VK_WALL_RU.sub(r"\1vk.com/wall", clean)
+    clean = _TNAFLIX_LOCALE.sub(r"\1/", clean)
+    match = _EMBED_VIDEO.match(clean)
     if match:
         return f"https://www.eporner.com/embed/{match.group(1)}/"
-    return url
+    return clean
 
 
 def is_eporner_extractor(extractor: str | None) -> bool:
@@ -110,6 +192,42 @@ def with_av1_variants(formats: list[dict] | None) -> list[dict]:
         out.append(av1)
         existing.add(height)
     return out
+
+
+def _is_manifest(fmt: dict) -> bool:
+    """Is this format an HLS/DASH manifest? (HEAD would not return a size)"""
+    protocol = str(fmt.get("protocol") or "").casefold()
+    if protocol.startswith(_MANIFEST_PROTOCOLS):
+        return True
+    path = str(fmt.get("url") or "").casefold().split("?", 1)[0]
+    return path.endswith(_MANIFEST_SUFFIXES)
+
+
+def infer_heights(formats: list[dict] | None) -> list[dict]:
+    """Fill missing resolutions from the file name / note / format id.
+
+    Some extractors (e.g. TNAFlix through the generic extractor) return formats
+    without a height while the URL clearly says `...-1080p.mp4`; without this the
+    menu collapses them into `0 MP4`, `1 MP4`, ...
+    """
+    for fmt in formats or []:
+        if not isinstance(fmt, dict):
+            continue
+        if str(fmt.get("vcodec") or "").casefold() == "none":
+            continue
+        if _int_or_zero(fmt.get("height")) > 0:
+            continue
+        hint = " ".join(str(fmt.get(key) or "") for key in ("url", "format_note", "format_id"))
+        match = _HEIGHT_HINT.search(hint)
+        if not match:
+            continue
+        height = int(match.group(1))
+        if not 100 <= height <= 4320:
+            continue
+        fmt["height"] = height
+        if _int_or_zero(fmt.get("width")) <= 0:
+            fmt["width"] = round(height * 16 / 9)
+    return formats
 
 
 # ─── KVS (Kernel Video Sharing) ───────────────────────────────
@@ -385,6 +503,36 @@ def hls_segments(text: str, base_url: str = "") -> list[str]:
     ]
 
 
+def m3u8_candidates(html: str, base_url: str = "") -> list[str]:
+    """Find `.m3u8` links on a page, even inside packed JavaScript.
+
+    MissAV keeps the master playlist inside a Dean-Edwards packed script
+    (`e='8://7.6/5-4-3-2-1/d.0'`), so plain URL regexes find nothing. The
+    playlist is unpacked first; entries containing `playlist` are preferred.
+    """
+    text = unpack_packed_js(html) or html or ""
+    text = text.replace("\\/", "/").replace("&amp;", "&")
+    out: list[str] = []
+    sources = [text, (html or "").replace("\\/", "/").replace("&amp;", "&")]
+    for source in sources:
+        for raw in _M3U8_URL.findall(source):
+            url = raw if raw.startswith(("http://", "https://")) else urljoin(base_url, raw)
+            if url not in out:
+                out.append(url)
+    out.sort(key=lambda item: (0 if "playlist" in item.casefold() else 1, len(item)))
+    return out
+
+
+def hls_manifest_variants(text: str, base_url: str = "") -> list[dict]:
+    """Variants of a manifest; a media-only playlist becomes one variant."""
+    variants = hls_master_variants(text, base_url)
+    if variants:
+        return variants
+    if "#EXTINF" in (text or ""):
+        return [{"url": base_url, "height": 0, "width": 0, "fps": 0, "bandwidth": 0, "codecs": ""}]
+    return []
+
+
 def pick_hls_variant(variants: list[dict], height: int = 0) -> dict | None:
     """واریانت متناظر ارتفاع انتخاب‌شده (یا بهترین موجود)."""
     usable = [item for item in (variants or []) if item.get("url")]
@@ -421,6 +569,7 @@ def _hls_formats(variants: list[dict]) -> list[dict]:
                 "width": int(variant.get("width") or 0),
                 "fps": int(variant.get("fps") or 0),
                 "tbr": round(bandwidth / 1000) if bandwidth else None,
+                "filesize_approx": variant.get("filesize_approx"),
                 "vcodec": vcodec or None,
                 "acodec": "mp4a.40.2" if "mp4a" in codecs.lower() else None,
                 "hls": True,
@@ -707,6 +856,11 @@ class Downloader:
         try:
             info = await asyncio.to_thread(self._probe_blocking, url)
         except errors.LeechError as exc:
+            # VK wall posts must be resolved to their real video URL first;
+            # gallery-dl would only return the post's photos.
+            vk = await self._vk_fallback(url, exc)
+            if vk is not None:
+                return vk
             # yt-dlp ویدیو-محور است؛ اگر سایت عکس/آلبوم باشد gallery-dl را امتحان کن.
             if gallery.available() and gallery.supports(url):
                 log.info("yt-dlp probe failed (%s) for %s; trying gallery-dl", exc.key, url)
@@ -720,6 +874,9 @@ class Downloader:
             raise
         except (DownloadError, ExtractorError) as exc:
             mapped = map_error(exc)
+            vk = await self._vk_fallback(url, mapped)
+            if vk is not None:
+                return vk
             kvs = await self._kvs_fallback(url, mapped)
             if kvs is not None:
                 return kvs
@@ -731,19 +888,40 @@ class Downloader:
             log.exception("probe failed for %s", url)
             raise map_error(exc) from exc
 
-        if is_eporner_extractor(info.extractor):
-            # اپورنر حجم فایل‌ها را در متادیتا نمی‌دهد؛ با HEAD پر می‌کنیم.
-            await self._fill_sizes(info.formats, referer=info.url)
+        return await self._enrich(info)
+
+    async def _enrich(self, info: MediaInfo) -> MediaInfo:
+        """Fill missing resolutions and sizes before the quality menu is built."""
+        info.formats = infer_heights(info.formats)
+        await self._fill_sizes(info.formats, referer=info.url, duration=info.duration or 0)
         return info
 
-    async def _fill_sizes(self, formats: list[dict], referer: str = "") -> None:
-        """حجم تقریبی فرمت‌های بدون حجم را با درخواست HEAD پر می‌کند."""
+    async def _fill_sizes(
+        self,
+        formats: list[dict],
+        referer: str = "",
+        duration: int = 0,
+    ) -> None:
+        """Fill unknown format sizes, without slowing the probe too much.
+
+        * HLS/DASH: estimate from duration × advertised bitrate.
+        * Direct files: try ``HEAD`` first, then ``Range: bytes=0-0`` for CDNs
+          that reject HEAD. Both are bounded and run in parallel.
+        """
+        formats = [fmt for fmt in (formats or []) if isinstance(fmt, dict)]
+        for fmt in formats:
+            if fmt.get("filesize") or fmt.get("filesize_approx"):
+                continue
+            rate = _int_or_zero(fmt.get("tbr"))
+            if rate > 0 and duration > 0:
+                fmt["filesize_approx"] = int(duration * rate * 1000 / 8)
+
         targets = [
-            fmt for fmt in (formats or [])
-            if isinstance(fmt, dict)
-            and not fmt.get("filesize") and not fmt.get("filesize_approx")
+            fmt for fmt in formats
+            if not fmt.get("filesize") and not fmt.get("filesize_approx")
             and str(fmt.get("url") or "").lower().startswith(("http://", "https://"))
-        ]
+            and not _is_manifest(fmt)
+        ][:16]
         if not targets:
             return
 
@@ -751,24 +929,90 @@ class Downloader:
         if referer:
             headers["Referer"] = referer
         timeout = aiohttp.ClientTimeout(total=20)
-        sem = asyncio.Semaphore(5)
+        sem = asyncio.Semaphore(6)
 
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
-            async def one(fmt: dict) -> None:
-                async with sem:
+        async def one(fmt: dict) -> None:
+            async with sem:
+                url = str(fmt["url"])
+                for method, extra in (("HEAD", {}), ("GET", {"Range": "bytes=0-0"})):
                     try:
-                        async with safe_http_request(sess, "HEAD", str(fmt["url"])) as resp:
-                            length = resp.headers.get("Content-Length")
-                            if resp.status < 400 and length and str(length).isdigit():
-                                fmt["filesize"] = int(length)
+                        async with safe_http_request(sess, method, url, headers=extra) as resp:
+                            if resp.status >= 400:
+                                continue
+                            total = (
+                                resp.headers.get("Content-Range", "").rpartition("/")[2]
+                                or resp.headers.get("Content-Length")
+                            )
+                            if total and str(total).isdigit() and int(total) > 1024:
+                                fmt["filesize"] = int(total)
+                                return
                     except (errors.LeechError, aiohttp.ClientError, TimeoutError, OSError):
-                        return
+                        continue
 
-            await asyncio.gather(*(one(fmt) for fmt in targets))
+        try:
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
+                await asyncio.wait_for(
+                    asyncio.gather(*(one(fmt) for fmt in targets)), timeout=15
+                )
+        except TimeoutError:
+            log.debug("size lookup timed out for %s", referer or "?")
         log.debug(
             "filled sizes for %d/%d formats",
             sum(1 for f in targets if f.get("filesize")), len(targets),
         )
+
+    async def _vk_fallback(self, url: str, exc: errors.LeechError):
+        """VK wall posts: find the real video id and probe that video URL.
+
+        yt-dlp returns an empty playlist for some wall posts from some IPs and
+        rejects `vk.ru`; crawler user-agents get the OG tags without a captcha.
+        """
+        page_url = vk_wall_url(url)
+        if page_url is None:
+            return None
+        try:
+            ref: tuple[str, str] | None = None
+            for user_agent in _CRAWLER_UAS:
+                html = await self._fetch_text(page_url, user_agent)
+                ref = vk_video_ref(html)
+                if ref is not None:
+                    break
+            if ref is None:
+                log.info("VK wall %s has no video", page_url)
+                return None
+            owner, video = ref
+            video_url = f"https://vk.com/video{owner}_{video}"
+            info = await asyncio.to_thread(self._probe_blocking, video_url)
+            # Keep the canonical video URL: the download step must not retry the
+            # wall page (which yt-dlp cannot download).
+            info.url = video_url
+            info.embed_url = video_url
+            log.info("resolved VK wall %s -> %s", page_url, video_url)
+            return await self._enrich(info)
+        except errors.LeechError:
+            raise
+        except Exception:  # noqa: BLE001 — خطای اصلی باید به کاربر برسد
+            log.warning("VK fallback failed for %s", url, exc_info=True)
+            return None
+
+    async def _fetch_text(
+        self, url: str, user_agent: str, referer: str = "", timeout: int = 40,
+    ) -> str:
+        """Fetch HTML with a specific user-agent (crawler/browser)."""
+        headers = {
+            "User-Agent": user_agent,
+            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "identity",
+        }
+        if referer:
+            headers["Referer"] = referer
+        client_timeout = aiohttp.ClientTimeout(total=timeout, connect=15)
+        async with aiohttp.ClientSession(timeout=client_timeout, headers=headers) as sess:
+            async with safe_http_request(sess, "GET", url) as resp:
+                if resp.status >= 400:
+                    return ""
+                return await resp.text(errors="replace")
 
     async def _kvs_fallback(self, url: str, exc: errors.LeechError):
         """اگر خطا مربوط به KVS بود، خودمان صفحه را تفسیر می‌کنیم."""
@@ -824,11 +1068,12 @@ class Downloader:
         """اگر سایت پشت چالش Cloudflare بود، صفحه را با byparr باز می‌کنیم."""
         if not (self.cfg.byparr_url or "").strip() or not looks_like_cf_block(exc):
             return None
+        page_url = (url or "").split("#", 1)[0]
         try:
-            solved = await self._cf_solve(url)
+            solved = await self._cf_solve(page_url)
             if solved is None:
                 return None
-            info = await self._parse_solved_page(url, *solved)
+            info = await self._parse_solved_page(page_url, *solved)
         except errors.LeechError:
             raise
         except Exception:  # noqa: BLE001 — خطای اصلی باید به کاربر برسد
@@ -836,7 +1081,13 @@ class Downloader:
             return None
         if info is not None:
             log.info("resolved Cloudflare page for %s (%d formats)", url, len(info.formats))
-        return info
+            return await self._enrich(info)
+        if _CAPTCHA_HOST.search(solved[0]):
+            log.info("player behind an interactive captcha for %s", url)
+            raise errors.CaptchaWall(
+                "the video host (doodstream/playmogo) needs an interactive captcha"
+            )
+        return None
 
     async def _cf_solve(self, url: str) -> tuple[str, str] | None:
         """حل چالش Cloudflare با byparr؛ خروجی ``(html, user_agent)``."""
@@ -876,7 +1127,8 @@ class Downloader:
         thumbnail = urljoin(page_url, og_image.group(1)) if og_image else None
 
         candidates = list(iframe_sources(html))[:5]
-        if not candidates and not hls_links(html, page_url):
+        masters = m3u8_candidates(html, page_url)[:4]
+        if not candidates and not masters and not hls_links(html, page_url):
             return None
 
         headers = {
@@ -904,6 +1156,7 @@ class Downloader:
                 variants = await self._hls_variants(sess, master_url, embed_url)
                 if not variants:
                     continue
+                await self._hls_variant_sizes(sess, variants, embed_url)
                 return MediaInfo(
                     url=page_url,
                     title=human.safe_filename(title or "media", 150),
@@ -913,7 +1166,66 @@ class Downloader:
                     ext="mp4",
                     embed_url=embed_url,
                 )
+
+            # No player iframe: the page itself carries the manifest (e.g. missav).
+            for master_url in masters:
+                variants = await self._hls_from_manifest(sess, master_url, page_url)
+                if not variants:
+                    continue
+                await self._hls_variant_sizes(sess, variants, page_url)
+                return MediaInfo(
+                    url=page_url,
+                    title=human.safe_filename(title or "media", 150),
+                    thumbnail=thumbnail,
+                    extractor="HLS",
+                    formats=_hls_formats(variants),
+                    ext="mp4",
+                    embed_url=master_url,
+                )
         return None
+
+    async def _hls_from_manifest(self, sess, master_url: str, referer: str) -> list[dict]:
+        """Read a manifest URL and return its variants (or a single media one)."""
+        try:
+            async with safe_http_request(
+                sess, "GET", master_url, headers={"Referer": referer}
+            ) as resp:
+                if resp.status >= 400:
+                    return []
+                text = await resp.text(errors="replace")
+        except (errors.LeechError, aiohttp.ClientError, TimeoutError, OSError):
+            return []
+        return hls_manifest_variants(text, master_url)
+
+    async def _hls_variant_sizes(self, sess, variants: list[dict], referer: str) -> None:
+        """Approximate HLS sizes as `sum(EXTINF) × bandwidth / 8`.
+
+        The master playlist usually has no size, but the media playlist lists
+        every segment duration; combined with BANDWIDTH this is close enough for
+        the quality menu (and cheap: one small request per variant).
+        """
+        sem = asyncio.Semaphore(6)
+
+        async def one(variant: dict) -> None:
+            async with sem:
+                try:
+                    async with safe_http_request(
+                        sess, "GET", str(variant["url"]), headers={"Referer": referer}
+                    ) as resp:
+                        if resp.status >= 400:
+                            return
+                        text = await resp.text(errors="replace")
+                except (errors.LeechError, aiohttp.ClientError, TimeoutError, OSError):
+                    return
+            seconds = sum(float(value) for value in re.findall(r"#EXTINF:([0-9.]+)", text))
+            rate = _int_or_zero(variant.get("bandwidth"))
+            if seconds > 0 and rate > 0:
+                variant["filesize_approx"] = int(seconds * rate / 8)
+
+        try:
+            await asyncio.wait_for(asyncio.gather(*(one(v) for v in variants)), timeout=12)
+        except TimeoutError:
+            log.debug("HLS size lookup timed out for %s", referer)
 
     async def _hls_variants(self, sess, master_url: str, referer: str) -> list[dict]:
         """پلی‌لیست مادر را می‌خواند و واریانت‌ها را برمی‌گرداند."""
@@ -1076,9 +1388,13 @@ class Downloader:
                 title=fallback.title,
             )
 
+        # VK: the wall page has no downloadable formats; use the resolved video URL.
+        target = url
+        if info is not None and info.extractor == "VK" and info.embed_url:
+            target = info.embed_url
         try:
             return await asyncio.to_thread(
-                self._download_blocking, url, option, workdir, progress, cancel
+                self._download_blocking, target, option, workdir, progress, cancel
             )
         except errors.LeechError as exc:
             # بعضی لینک‌های عکس/آلبوم در مرحلهٔ دانلود هم «unsupported» می‌دهند.
@@ -1438,10 +1754,17 @@ class Downloader:
                 embed_html = await resp.text(errors="replace")
 
             links = hls_links(embed_html, embed_url)
-            if not links:
+            if "#EXTM3U" in embed_html or embed_url.split("?", 1)[0].casefold().endswith(".m3u8"):
+                # embed_url is already the playlist (e.g. missav, no iframe).
+                master_url = embed_url
+            elif links:
+                master_url = links.get("hls3") or links.get("hls2") or next(iter(links.values()))
+            else:
+                candidates = m3u8_candidates(embed_html, embed_url)
+                master_url = candidates[0] if candidates else ""
+            if not master_url:
                 raise errors.UnsupportedUrl("HLS links missing")
-            master_url = links.get("hls3") or links.get("hls2") or next(iter(links.values()))
-            variants = await self._hls_variants(sess, master_url, embed_url)
+            variants = await self._hls_from_manifest(sess, master_url, embed_url)
             picked = pick_hls_variant(variants, option.height)
             if picked is None:
                 raise errors.UnsupportedUrl("HLS variant missing")
