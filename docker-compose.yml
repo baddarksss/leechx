@@ -14,6 +14,8 @@ services:
       - ./data:/app/data
       # بسته‌های pip --user (مثل yt-dlp) — بعد از rebuild/restart هم می‌مانند
       - ./data/pylocal:/home/leechx/.local
+      # Local Bot API files (shared with telegram-bot-api)
+      - ./data/tg-bot-api:/var/lib/telegram-bot-api
       # کوکی‌ها (اختیاری)
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
@@ -31,7 +33,7 @@ services:
   #  و API_ID / API_HASH را از my.telegram.org بگیر.
   # ───────────────────────────────────────────────────────────
   telegram-bot-api:
-    image: tdlib/telegram-bot-api:latest
+    image: aiogram/telegram-bot-api:latest
     profiles: ["localapi"]
     restart: unless-stopped
     environment:
@@ -46,8 +48,11 @@ services:
       - "--dir=/var/lib/telegram-bot-api"
     volumes:
       - ./data/tg-bot-api:/var/lib/telegram-bot-api
+    networks:
+      default:
+        ipv4_address: 172.18.0.10
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8082:8081"
 
   # ───────────────────────────────────────────────────────────
   #  Cloudflare WARP — خروج از IP دیتاسنتر برای یوتیوب
@@ -64,6 +69,8 @@ services:
     dns:
       - 1.1.1.1
       - 1.0.0.1
+    extra_hosts:
+      - "telegram-bot-api:172.18.0.10"
     sysctls:
       net.ipv6.conf.all.disable_ipv6: 0
       net.ipv4.conf.all.src_valid_mark: 1

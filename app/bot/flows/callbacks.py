@@ -13,6 +13,7 @@ from app.bot.flows import link as link_flow
 from app.bot.flows import start as start_flow
 from app.bot.flows import user_links as links_flow
 from app.core import human, text
+from app.services import splitter
 from app.services.formats import find_option
 
 log = logging.getLogger("leechx.callbacks")
@@ -183,21 +184,40 @@ async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
         )
         return
 
-    new_panel = action == "start"
-    if new_panel:
-        if draft.option is None:
-            await safe_answer(query)
-            return
-        link_flow.normalize_delivery_mode(draft)
-        mode = "link" if draft.destination == "link" else draft.send_as
+    if action == "nosplit":
+        # کاربر تقسیم را نمی‌خواهد؛ به صفحهٔ تحویل برگرد (هنوز چیزی صف نشده).
+        draft.pending_mode = ""
+        await safe_answer(query, text.t(user_lang, "delivery_choice_saved"))
+        await edit(
+            query.message,
+            link_flow.delivery_text(user_lang, draft, svc.settings.ttl_hours),
+            reply_markup=kb.delivery_menu(user_lang, draft),
+        )
+        return
+
+    split_confirmed = action == "split"
+    if split_confirmed:
+        # Only non-link deliveries reach this screen; keep the mode chosen before the offer.
+        mode = draft.pending_mode or draft.send_as
+        if mode not in {"video", "document"}:
+            mode = "video"
+        new_panel = False
     else:
-        # Keep callbacks already present on older Telegram messages working.
-        mode = MODE_BY_FLAG.get(action)
-        if mode is None or draft.option is None:
-            await safe_answer(query)
-            return
-        if mode == "video" and draft.kind != "gallery" and not link_flow.can_send_as_video(draft):
-            mode = "document"
+        new_panel = action == "start"
+        if new_panel:
+            if draft.option is None:
+                await safe_answer(query)
+                return
+            link_flow.normalize_delivery_mode(draft)
+            mode = "link" if draft.destination == "link" else draft.send_as
+        else:
+            # Keep callbacks already present on older Telegram messages working.
+            mode = MODE_BY_FLAG.get(action)
+            if mode is None or draft.option is None:
+                await safe_answer(query)
+                return
+            if mode == "video" and draft.kind != "gallery" and not link_flow.can_send_as_video(draft):
+                mode = "document"
 
     if not svc.limiter.has_slot(draft.user_id, svc.cfg.per_user_concurrency):
         await safe_answer(query, text.t(user_lang, "too_many_active"), alert=True)
@@ -214,21 +234,34 @@ async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
             return
 
     if (
-        mode != "link"
+        not split_confirmed
+        and mode != "link"
+        and draft.kind != "gallery"
         and draft.option is not None
         and (draft.option.filesize or 0) > link_flow.telegram_limit(svc)
     ):
-        # فایل بزرگ‌تر از سقف Bot API فقط با لینک مستقیم تحویل می‌شود؛
-        # جلوی دانلود بی‌فایده گرفته می‌شود.
-        await safe_answer(
-            query,
-            text.t(
-                user_lang,
-                "too_big",
-                size=human.human_bytes(draft.option.filesize or 0),
-                max=human.human_bytes(link_flow.telegram_limit(svc)),
-            ),
-            alert=True,
+        size = draft.option.filesize or 0
+        limit = link_flow.telegram_limit(svc)
+        parts = splitter.planned_parts(size, splitter.usable_bytes(limit))
+        if parts > splitter.MAX_PARTS:
+            await safe_answer(
+                query,
+                text.t(
+                    user_lang,
+                    "too_big",
+                    size=human.human_bytes(size),
+                    max=human.human_bytes(limit),
+                ),
+                alert=True,
+            )
+            return
+        # هنوز دانلود شروع نشده؛ اول اجازهٔ کاربر برای تقسیم را می‌گیریم.
+        draft.pending_mode = mode
+        await safe_answer(query)
+        await edit(
+            query.message,
+            link_flow.split_offer_text(user_lang, draft, size, limit, parts),
+            reply_markup=kb.split_offer_menu(user_lang, draft, parts),
         )
         return
 

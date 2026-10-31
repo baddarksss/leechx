@@ -39,6 +39,18 @@ ALBUM_CHUNK = 10                 # حداکثر آیتم در هر media group
 PLAYABLE_VIDEO_EXT = {".mp4", ".m4v", ".mov"}
 
 
+def upload_limit(cfg: Config, settings: RuntimeSettings) -> int:
+    """بزرگ‌ترین فایلی که در این نصب می‌توان به تلگرام فرستاد.
+
+    بدون سرور محلی، Bot API سخت‌گیرانه ۵۰ مگابایت است؛ با Local Bot API سقف
+    قابل‌تنظیم ``max_upload_mb`` اعمال می‌شود.
+    """
+    limit = int(getattr(settings, "max_upload_bytes", BOT_API_LIMIT) or BOT_API_LIMIT)
+    if getattr(cfg, "uses_local_api", False):
+        return limit
+    return min(limit, BOT_API_LIMIT)
+
+
 class ProgressReader:
     """فایل را می‌خواند و تعداد بایت‌های خوانده‌شده را گزارش می‌کند."""
 
@@ -92,19 +104,17 @@ class Uploader:
         self.settings = settings
 
     def _check_size(self, size: int) -> None:
-        limit = self.settings.max_upload_bytes
+        limit = upload_limit(self.cfg, self.settings)
         if size > limit:
             raise errors.TooLarge(
                 key="too_big",
                 size=human.human_bytes(size),
                 max=human.human_bytes(limit),
             )
-        if size > BOT_API_LIMIT and not self.cfg.uses_local_api:
-            raise errors.TooLarge(
-                key="too_big",
-                size=human.human_bytes(size),
-                max=human.human_bytes(BOT_API_LIMIT),
-            )
+
+    def limit(self) -> int:
+        """سقف آپلود مؤثر (برای نمایش و تصمیم تقسیم)."""
+        return upload_limit(self.cfg, self.settings)
 
     async def send(
         self,
@@ -237,10 +247,11 @@ class Uploader:
         except TelegramError as exc:
             msg = str(exc)
             if "too big" in msg.lower():
+                limit = upload_limit(self.cfg, self.settings)
                 raise errors.TooLarge(
                     key="too_big",
                     size=human.human_bytes(result.size),
-                    max=human.human_bytes(BOT_API_LIMIT),
+                    max=human.human_bytes(limit),
                 ) from exc
             raise
         finally:
@@ -277,7 +288,7 @@ class Uploader:
 
         title = caption_title or result.title
         if len(parts) == 1:
-            single = self._part_result(result, parts[0])
+            single = self.part_result(result, parts[0])
             return await self.send(
                 bot, chat_id, single, progress, source_url,
                 as_document=as_document, filename=filename,
@@ -351,7 +362,7 @@ class Uploader:
                     for path in chunk:
                         if cancel is not None and cancel.is_set():
                             raise errors.JobCancelled() from None
-                        single = self._part_result(result, path)
+                        single = self.part_result(result, path)
                         message = await self.send(
                             bot, chat_id, single, progress, source_url,
                             as_document=False,
@@ -367,7 +378,7 @@ class Uploader:
             for path in others:
                 if cancel is not None and cancel.is_set():
                     raise errors.JobCancelled()
-                single = self._part_result(result, path)
+                single = self.part_result(result, path)
                 message = await self.send(
                     bot, chat_id, single, progress, source_url,
                     as_document=(
@@ -399,9 +410,10 @@ class Uploader:
         mime, _ = mimetypes.guess_type(path.name)
         return bool(mime and mime.startswith("image/"))
 
-    def _part_result(self, parent: DownloadResult, path: Path) -> DownloadResult:
+    def part_result(self, parent: DownloadResult, path: Path) -> DownloadResult:
+        """یک نتیجهٔ مستقل برای هر پارت (برای آپلود جداگانه)."""
         mime, _ = mimetypes.guess_type(path.name)
-        mime = mime or "application/octet-stream"
+        mime = mime or parent.mime or "application/octet-stream"
         try:
             size = path.stat().st_size
         except OSError:
@@ -409,8 +421,11 @@ class Uploader:
         return DownloadResult(
             path=path,
             title=parent.title,
+            width=parent.width,
+            height=parent.height,
             mime=mime,
             size=size,
+            thumbnail=parent.thumbnail,
             is_audio=mime.startswith("audio/"),
             gallery=parent.gallery,
         )

@@ -356,3 +356,47 @@ async def test_non_video_defaults_to_document_automatically(db):
     draft = next(iter(services.drafts._items.values()))
     assert draft.send_as == "document"
     assert not link_flow.can_send_as_video(draft)
+
+
+@pytest.mark.asyncio
+async def test_oversized_telegram_delivery_offers_split_then_enqueues(db):
+    size = 25 * 1024 * 1024
+    info = MediaInfo(
+        url="https://cdn.example.com/big.mp4",
+        title="big.mp4",
+        direct=True,
+        ext="mp4",
+        mime="video/mp4",
+        filesize=size,
+    )
+    update = make_update()
+    context, services, jobs = make_context(info)
+    services.cfg.uses_local_api = True
+    services.settings.max_upload_bytes = 10 * 1024 * 1024
+    await link_flow.handle_link(update, context, info.url)
+    draft = next(iter(services.drafts._items.values()))
+
+    query = FakeQuery(update.effective_message)
+    await callbacks_flow._on_delivery(make_update(query), context, [draft.id, "start"])
+
+    # قبل از دانلود، فقط پیشنهاد تقسیم نمایش داده می‌شود.
+    assert jobs.tasks == []
+    assert draft.id in services.drafts._items
+    markup = update.effective_message.kwargs[-1]["reply_markup"]
+    callbacks = {
+        btn.callback_data
+        for row in markup.inline_keyboard
+        for btn in row
+        if btn.callback_data
+    }
+    assert f"o|{draft.id}|split" in callbacks
+    assert f"o|{draft.id}|nosplit" in callbacks
+    assert draft.pending_mode == "video"
+
+    # تأیید کاربر → همان انتخاب قبلی در صف قرار می‌گیرد.
+    await callbacks_flow._on_delivery(make_update(query), context, [draft.id, "split"])
+
+    assert len(jobs.tasks) == 1
+    assert jobs.tasks[0].mode == "video"
+    assert len(services.drafts) == 0
+

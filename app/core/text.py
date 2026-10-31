@@ -195,6 +195,24 @@ FA: dict[str, str] = {
     "thumbnail_saved": "✅ تصویر بندانگشتی سفارشی ذخیره شد.",
     "thumbnail_bad": "⚠️ یک عکس کوچک را به‌صورت Photo بفرست (حداکثر ۳۲۰×۳۲۰ و ۲۰۰KB).",
 
+    # ── تقسیم فایل بزرگ‌تر از سقف تلگرام ──
+    "split_offer": (
+        "<b>📥 {title}</b>\n"
+        "📦 حجم فایل: <b>{size}</b> — سقف هر فایل تلگرام: <b>{max}</b>\n\n"
+        "✂️ این فایل برای ارسال باید به <b>{parts} پارت</b> تقسیم شود؛ "
+        "پارت‌ها به ترتیب ارسال می‌شوند و هر پارت مستقل قابل پخش/دانلود است.\n\n"
+        "تقسیم می‌کنی؟"
+    ),
+    "split_yes_btn": "✂️ بله، به {parts} پارت تقسیم کن",
+    "split_no_btn": "↩️ نه، برگرد",
+    "split_part_line": "🧩 پارت {part} از {parts}",
+    "split_caption": "{title} — پارت {part} از {parts}",
+    "splitting": "✂️ در حال تقسیم فایل به {parts} پارت…",
+    "split_note": "🧩 فایل به {parts} پارت تقسیم و ارسال شد.",
+    "split_no_space": "💾 فضای کافی برای تقسیم فایل نیست (نیاز: {need}، آزاد: {free}).",
+    "split_too_many": "📦 این فایل به {parts} پارت نیاز دارد که از سقف {max} پارت بیشتر است.",
+    "split_failed": "❌ تقسیم فایل ناموفق بود. {reason}",
+
     # ── دکمه‌های منو ──
     "btn_help": "📚 راهنما",
     "btn_status": "📈 آمار من",
@@ -866,6 +884,22 @@ EN: dict[str, str] = {
     "thumbnail_prompt": "🖼 Send a picture as a Telegram Photo. The thumbnail must be JPEG, at most 320×320 and 200 KB.",
     "thumbnail_saved": "✅ Custom thumbnail saved.",
     "thumbnail_bad": "⚠️ Send a small picture as a Telegram Photo (max 320×320 and 200 KB).",
+    "split_offer": (
+        "<b>📥 {title}</b>\n"
+        "📦 File size: <b>{size}</b> — Telegram per-file limit: <b>{max}</b>\n\n"
+        "✂️ This file must be split into <b>{parts} parts</b> to be sent; "
+        "parts are delivered in order and each one is independently playable/downloadable.\n\n"
+        "Split it?"
+    ),
+    "split_yes_btn": "✂️ Yes, split into {parts} parts",
+    "split_no_btn": "↩️ No, go back",
+    "split_part_line": "🧩 Part {part} of {parts}",
+    "split_caption": "{title} — part {part} of {parts}",
+    "splitting": "✂️ Splitting the file into {parts} parts…",
+    "split_note": "🧩 The file was split into {parts} parts and sent.",
+    "split_no_space": "💾 Not enough disk space to split the file (need: {need}, free: {free}).",
+    "split_too_many": "📦 This file needs {parts} parts, more than the {max}-part limit.",
+    "split_failed": "❌ Could not split the file. {reason}",
     "btn_help": "📚 Help",
     "btn_status": "📈 My stats",
     "btn_sites": "🌐 Supported sites",
@@ -1509,6 +1543,24 @@ RU: dict[str, str] = {
     "thumbnail_prompt": "🖼 Отправь изображение как Фото в Telegram. Миниатюра: JPEG, не более 320×320 и 200 КБ.",
     "thumbnail_saved": "✅ Своя миниатюра сохранена.",
     "thumbnail_bad": "⚠️ Отправь небольшое изображение как Фото (макс. 320×320 и 200 КБ).",
+
+    # ── Разделение файла больше лимита Telegram ──
+    "split_offer": (
+        "<b>📥 {title}</b>\n"
+        "📦 Размер файла: <b>{size}</b> — лимит Telegram на файл: <b>{max}</b>\n\n"
+        "✂️ Файл нужно разделить на <b>{parts} частей</b>; "
+        "части отправляются по порядку, каждую можно воспроизвести/скачать отдельно.\n\n"
+        "Разделить?"
+    ),
+    "split_yes_btn": "✂️ Да, разделить на {parts} частей",
+    "split_no_btn": "↩️ Нет, назад",
+    "split_part_line": "🧩 Часть {part} из {parts}",
+    "split_caption": "{title} — часть {part} из {parts}",
+    "splitting": "✂️ Разделяю файл на {parts} частей…",
+    "split_note": "🧩 Файл разделён на {parts} частей и отправлен.",
+    "split_no_space": "💾 Недостаточно места для разделения (нужно: {need}, свободно: {free}).",
+    "split_too_many": "📦 Файлу нужно {parts} частей — больше лимита в {max} частей.",
+    "split_failed": "❌ Не удалось разделить файл. {reason}.",
 
     # ── Кнопки меню ──
     "btn_help": "📚 Помощь",

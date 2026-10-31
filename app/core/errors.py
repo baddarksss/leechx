@@ -95,3 +95,21 @@ class RateLimited(LeechError):
 
 class Maintenance(LeechError):
     key = "maintenance"
+
+
+class SplitTooMany(LeechError):
+    """فایل آن‌قدر بزرگ است که به بیش از سقف پارت‌ها نیاز دارد."""
+
+    key = "split_too_many"
+
+
+class NotEnoughSpace(LeechError):
+    """فضای دیسک برای ساخت پارت‌ها کافی نیست."""
+
+    key = "split_no_space"
+
+
+class SplitFailed(LeechError):
+    """تقسیم فایل (مثلاً برش ویدیو) ناموفق بود."""
+
+    key = "split_failed"

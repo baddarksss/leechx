@@ -695,6 +695,9 @@ class Progress:
     uploaded: int = 0
     uploaded_bytes_total: int = 0
     note: str = ""
+    # تقسیم فایل بزرگ‌تر از سقف تلگرام: شمارهٔ پارت جاری و تعداد کل
+    part: int = 0
+    parts: int = 0
 
     def reset_download(self) -> None:
         self.stage = "downloading"
@@ -704,6 +707,8 @@ class Progress:
         self.total = 0
         self.speed = 0.0
         self.eta = None
+        self.part = 0
+        self.parts = 0
 
 
 # ─────────────────────────────────────────────────────────────

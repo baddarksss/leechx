@@ -7,6 +7,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.9.0] - 2026-10-31 · "Split Delivery"
+
+### Added
+- **Automatic splitting of files above the Telegram upload limit.** Before any
+  download starts, the bot reports the real size and asks how many parts it will
+  produce (e.g. a 2.7 GB video → 2 parts). Confirming splits the file into
+  independent, playable video parts (`ffmpeg -c copy`) or byte parts for other
+  files, then uploads each part separately with its own progress and caption.
+- Part progress (“Part 2 of 3”) and localized part captions in fa/en/ru.
+- `SplitTooMany`, `NotEnoughSpace` and `SplitFailed` errors with localized text.
+
+### Changed
+- The effective upload limit is centralized in `uploader.upload_limit()` and
+  honours the Local Bot API configuration.
+- The Local Bot API runs PTB in local mode, so downloaded files are read from
+  disk instead of being re-uploaded through HTTP.
+
+### Fixed
+- Cancelling or failing a split upload removes every part already sent.
+
 ## [5.8.1] - 2026-10-31 · "App Shelf"
 
 ### Changed

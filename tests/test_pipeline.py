@@ -12,7 +12,8 @@ import pytest
 from aiohttp import web
 
 from app.db import repo
-from app.services.downloader import Downloader
+from app.services import splitter
+from app.services.downloader import Downloader, DownloadResult
 from app.services.filestore import FileStore
 from app.services.formats import FormatOption
 from app.services.jobs import JobManager, JobTask
@@ -49,6 +50,18 @@ class StubBot:
         self.edits.append(kwargs.get("text", ""))
 
 
+class SplitStubUploader(StubUploader):
+    """آپلودر تست که پارت‌های تقسیم‌شده را مثل Uploader واقعی می‌سازد."""
+
+    def part_result(self, parent, path):
+        return DownloadResult(
+            path=path,
+            title=parent.title,
+            mime=parent.mime,
+            size=path.stat().st_size,
+        )
+
+
 @pytest.fixture()
 async def file_server():
     async def handler(request: web.Request) -> web.Response:
@@ -62,6 +75,24 @@ async def file_server():
     await site.start()
     port = site._server.sockets[0].getsockname()[1]  # noqa: SLF001
     yield f"http://127.0.0.1:{port}/movie.mp4"
+    await runner.cleanup()
+
+
+@pytest.fixture()
+async def binary_server():
+    """فایل غیرویدیو (PDF) برای تست تقسیم بایتی."""
+
+    async def handler(request: web.Request) -> web.Response:
+        return web.Response(body=PAYLOAD, content_type="application/pdf")
+
+    app = web.Application()
+    app.router.add_get("/archive.pdf", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # noqa: SLF001
+    yield f"http://127.0.0.1:{port}/archive.pdf"
     await runner.cleanup()
 
 
@@ -124,6 +155,50 @@ async def test_direct_job_full_pipeline(db, file_server):
     assert not (store.jobs / "pipe1").exists()
     assert manager.active_count == 0
     assert manager.limiter.active_count(42) == 0
+
+
+@pytest.mark.asyncio
+async def test_oversized_file_is_split_and_uploaded_in_parts(db, binary_server, monkeypatch):
+    cfg = db
+    store = FileStore(cfg.files_dir, cfg.tmp_dir)
+    downloader = Downloader(cfg)
+    uploader = SplitStubUploader()
+    settings = RuntimeSettings(cfg)
+    await settings.load()
+
+    limit = 100_000
+    monkeypatch.setattr("app.services.jobs.upload_limit", lambda *_args: limit)
+    manager = JobManager(cfg, settings, store, downloader, uploader, RateLimiter(0))
+    manager.bot = StubBot()
+
+    info = await downloader.probe(binary_server)
+    task = JobTask(
+        id="split1",
+        user_id=44,
+        chat_id=44,
+        url=binary_server,
+        option=FormatOption(kind="direct", code="direct", label="direct", selector=""),
+        title=info.title,
+        info=info,
+        lang="fa",
+        mode="document",
+    )
+
+    await manager.submit(task)
+    await manager._run(task)
+
+    cap = splitter.usable_bytes(limit)
+    expected = splitter.planned_parts(len(PAYLOAD), cap)
+    assert expected >= 2
+    assert len(uploader.results) == expected
+    assert all(part.size <= cap for part in uploader.results)
+    assert sum(part.size for part in uploader.results) == len(PAYLOAD)
+
+    job = await repo.get_job("split1")
+    assert job.status == "done"
+    assert job.size == len(PAYLOAD)
+    assert not (store.jobs / "split1").exists()
+    assert manager.limiter.active_count(44) == 0
 
 
 @pytest.mark.asyncio

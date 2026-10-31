@@ -277,6 +277,15 @@ def delivery_menu(lang: str, draft: Draft) -> Kb:
     return Kb(rows)
 
 
+def split_offer_menu(lang: str, draft: Draft, parts: int) -> Kb:
+    """Offer to split an oversized file before any download starts."""
+    return Kb([
+        [_delivery_btn(text.t(lang, "split_yes_btn", parts=parts),
+                       f"o|{draft.id}|split", style="success")],
+        [_delivery_btn(text.t(lang, "split_no_btn"), f"o|{draft.id}|nosplit")],
+    ])
+
+
 def cookies_menu(lang: str, names: list[str]) -> Kb:
     rows: list[list] = [[
         Btn(text.t(lang, "btn_cookie_add"), callback_data="a|ckadd"),

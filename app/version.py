@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.8.1"
-CODENAME = "App Shelf"
+__version__ = "5.9.0"
+CODENAME = "Split Delivery"
 RELEASE_DATE = "2026-10-31"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.

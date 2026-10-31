@@ -18,19 +18,21 @@ from pathlib import Path
 
 from telegram import InlineKeyboardButton as Btn
 from telegram import InlineKeyboardMarkup as Kb
+from telegram import Message
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
 from app.config import Config
 from app.core import errors, human, text
 from app.db import repo
+from app.services import splitter
 from app.services.downloader import Downloader, MediaInfo, Progress, fetch_thumbnail
 from app.services.filestore import FileStore
 from app.services.formats import FormatOption
 from app.services.linktoken import make_token
 from app.services.ratelimit import RateLimiter
 from app.services.runtime_settings import RuntimeSettings
-from app.services.uploader import PLAYABLE_VIDEO_EXT, Uploader, media_kind
+from app.services.uploader import PLAYABLE_VIDEO_EXT, Uploader, media_kind, upload_limit
 
 log = logging.getLogger("leechx.jobs")
 
@@ -353,80 +355,115 @@ class JobManager:
                             )
                             source_traffic_recorded += thumbnail_bytes
 
-                task.progress.stage = "uploading"
-                task.progress.pct = 0.0
-                task.upload_started = time.monotonic()
-                await self._edit_progress(task, force=True)
-                if self.hub is not None:
-                    await self.hub.notify_job("upload", task, result)
+                limit = upload_limit(self.cfg, self.settings)
+                split_plan = None
+                if not getattr(result, "gallery", False) and result.size > limit:
+                    # فایل از سقف تلگرام بزرگ‌تر است: قبل از آپلود به پارت‌های
+                    # مستقل تقسیم می‌شود (کاربر قبلاً تأیید کرده یا حجم نامشخص بود).
+                    planned = splitter.planned_parts(
+                        result.size, splitter.usable_bytes(limit)
+                    )
+                    task.progress.stage = "splitting"
+                    task.progress.parts = planned
+                    await self._edit_progress(task, force=True)
+                    if self.hub is not None:
+                        await self.hub.notify_job("upload", task, result)
+                    split_plan = await splitter.split_file(
+                        result.path,
+                        limit,
+                        workdir,
+                        mime=result.mime,
+                        cancel=task.cancel,
+                    )
+                    if split_plan.count > 1:
+                        task.progress.parts = split_plan.count
+                    else:
+                        split_plan = None
 
                 if task.cancel.is_set():
                     raise errors.JobCancelled()
-                if getattr(result, "gallery", False):
-                    # گالری/آلبوم: عکس‌ها گروهی و بقیه تک‌تک می‌روند. حالت
-                    # «ویدیو» برای گالری یعنی ارسال به‌صورت مدیا، «فایل» یعنی خام.
-                    send_coro = self.uploader.send_gallery(
-                        self.bot,
-                        task.chat_id,
-                        result,
-                        task.progress,
-                        task.url,
-                        as_document=task.mode == "document",
-                        caption_title=result.title,
-                        custom_thumbnail=task.custom_thumbnail,
-                        cancel=task.cancel,
-                    )
-                else:
-                    send_coro = self.uploader.send(
-                        self.bot,
-                        task.chat_id,
-                        result,
-                        task.progress,
-                        task.url,
-                        as_document=(
-                            task.mode == "document"
-                            or (
-                                task.mode == "video"
-                                and (
-                                    media_kind(result) != "video"
-                                    or result.suffix not in PLAYABLE_VIDEO_EXT
-                                )
-                            )
-                        ),
-                        filename=result.path.name,
-                        custom_thumbnail=task.custom_thumbnail,
-                        cancel=task.cancel,
-                    )
-                task.upload_task = asyncio.create_task(send_coro)
-                try:
-                    uploaded_message = await task.upload_task
+
+                if split_plan is not None:
+                    uploaded_message = await self._send_split(task, result, split_plan)
                     uploaded_bytes = int(
-                        getattr(task.progress, "uploaded_bytes_total", 0)
-                        or task.progress.uploaded
-                        or result.size
-                        or 0
+                        getattr(task.progress, "uploaded_bytes_total", 0) or 0
                     )
                     if uploaded_bytes > 0:
                         await self._record_traffic(telegram_upload_bytes=uploaded_bytes)
                         upload_traffic_recorded = uploaded_bytes
-                except asyncio.CancelledError:
-                    if task.cancel.is_set():
-                        raise errors.JobCancelled() from None
-                    raise
-                finally:
-                    task.upload_task = None
-                if task.cancel.is_set():
-                    # If the upload finished concurrently with cancellation,
-                    # remove the message instead of claiming a successful cancel.
-                    try:
-                        await self.bot.delete_message(
-                            chat_id=task.chat_id, message_id=uploaded_message.message_id
+                else:
+                    task.progress.stage = "uploading"
+                    task.progress.pct = 0.0
+                    task.upload_started = time.monotonic()
+                    await self._edit_progress(task, force=True)
+                    if self.hub is not None:
+                        await self.hub.notify_job("upload", task, result)
+
+                    if getattr(result, "gallery", False):
+                        # گالری/آلبوم: عکس‌ها گروهی و بقیه تک‌تک می‌روند. حالت
+                        # «ویدیو» برای گالری یعنی ارسال به‌صورت مدیا، «فایل» یعنی خام.
+                        send_coro = self.uploader.send_gallery(
+                            self.bot,
+                            task.chat_id,
+                            result,
+                            task.progress,
+                            task.url,
+                            as_document=task.mode == "document",
+                            caption_title=result.title,
+                            custom_thumbnail=task.custom_thumbnail,
+                            cancel=task.cancel,
                         )
-                    except TelegramError:
-                        pass
-                    raise errors.JobCancelled()
-                if self.cache is not None:
-                    await self.cache.record_delivery(self.bot, task, result, uploaded_message)
+                    else:
+                        send_coro = self.uploader.send(
+                            self.bot,
+                            task.chat_id,
+                            result,
+                            task.progress,
+                            task.url,
+                            as_document=(
+                                task.mode == "document"
+                                or (
+                                    task.mode == "video"
+                                    and (
+                                        media_kind(result) != "video"
+                                        or result.suffix not in PLAYABLE_VIDEO_EXT
+                                    )
+                                )
+                            ),
+                            filename=result.path.name,
+                            custom_thumbnail=task.custom_thumbnail,
+                            cancel=task.cancel,
+                        )
+                    task.upload_task = asyncio.create_task(send_coro)
+                    try:
+                        uploaded_message = await task.upload_task
+                        uploaded_bytes = int(
+                            getattr(task.progress, "uploaded_bytes_total", 0)
+                            or task.progress.uploaded
+                            or result.size
+                            or 0
+                        )
+                        if uploaded_bytes > 0:
+                            await self._record_traffic(telegram_upload_bytes=uploaded_bytes)
+                            upload_traffic_recorded = uploaded_bytes
+                    except asyncio.CancelledError:
+                        if task.cancel.is_set():
+                            raise errors.JobCancelled() from None
+                        raise
+                    finally:
+                        task.upload_task = None
+                    if task.cancel.is_set():
+                        # If the upload finished concurrently with cancellation,
+                        # remove the message instead of claiming a successful cancel.
+                        try:
+                            await self.bot.delete_message(
+                                chat_id=task.chat_id, message_id=uploaded_message.message_id
+                            )
+                        except TelegramError:
+                            pass
+                        raise errors.JobCancelled()
+                    if self.cache is not None:
+                        await self.cache.record_delivery(self.bot, task, result, uploaded_message)
 
             await repo.update_job(
                 task.id,
@@ -441,10 +478,12 @@ class JobManager:
             await repo.log_event(task.user_id, "upload_done")
             await repo.log_event(task.user_id, "bytes", float(result.size))
             if task.mode != "link":
-                await self._edit_final(
-                    task,
-                    text.t(task.lang, "done") + f"\n<b>{human.esc(result.title)}</b>",
-                )
+                body = text.t(task.lang, "done") + f"\n<b>{human.esc(result.title)}</b>"
+                if split_plan is not None and split_plan.count > 1:
+                    body += "\n" + text.t(
+                        task.lang, "split_note", parts=split_plan.count
+                    )
+                await self._edit_final(task, body)
             if self.hub is not None:
                 await self.hub.notify_job_result(task, "done", result.size)
 
@@ -514,6 +553,84 @@ class JobManager:
             self.limiter.release_slot(task.user_id)
             self._tasks.pop(task.id, None)
             self._wake.set()
+
+    async def _delete_messages(self, chat_id: int, message_ids: list[int]) -> None:
+        """پاک‌کردن پارت‌های ارسال‌شده بعد از لغو/خطا."""
+        for message_id in message_ids:
+            try:
+                await self.bot.delete_message(chat_id=chat_id, message_id=message_id)
+            except TelegramError:
+                pass
+
+    async def _send_split(self, task: JobTask, result, plan) -> Message:
+        """آپلود پارت‌های یک فایل تقسیم‌شده، هر پارت با پیشرفت مستقل."""
+        total = plan.count
+        first: Message | None = None
+        sent: list[int] = []
+        task.progress.parts = total
+        try:
+            for index, path in enumerate(plan.parts, start=1):
+                if task.cancel.is_set():
+                    raise errors.JobCancelled()
+                part = self.uploader.part_result(result, path)
+                task.progress.stage = "uploading"
+                task.progress.part = index
+                task.progress.pct = 0.0
+                task.progress.uploaded = 0
+                task.progress.total = part.size
+                task.upload_started = time.monotonic()
+                await self._edit_progress(task, force=True)
+
+                caption = text.t(
+                    task.lang,
+                    "split_caption",
+                    title=result.title,
+                    part=index,
+                    parts=total,
+                )
+                send_coro = self.uploader.send(
+                    self.bot,
+                    task.chat_id,
+                    part,
+                    task.progress,
+                    task.url,
+                    as_document=(
+                        task.mode == "document"
+                        or (
+                            task.mode == "video"
+                            and (
+                                media_kind(part) != "video"
+                                or part.suffix not in PLAYABLE_VIDEO_EXT
+                            )
+                        )
+                    ),
+                    filename=path.name,
+                    caption_title=caption,
+                    custom_thumbnail=task.custom_thumbnail,
+                    cancel=task.cancel,
+                    reset_progress=False,
+                )
+                task.upload_task = asyncio.create_task(send_coro)
+                try:
+                    message = await task.upload_task
+                except asyncio.CancelledError:
+                    if task.cancel.is_set():
+                        raise errors.JobCancelled() from None
+                    raise
+                finally:
+                    task.upload_task = None
+                sent.append(message.message_id)
+                if first is None:
+                    first = message
+            task.progress.pct = 100.0
+            if first is None:
+                raise errors.UnsupportedUrl("Nothing uploaded")
+            return first
+        except BaseException:
+            # اگر ارسال نیمه‌کاره ماند، پارت‌های قبلی هم پاک می‌شوند تا فایل
+            # ناقص در چت کاربر نماند.
+            await self._delete_messages(task.chat_id, sent)
+            raise
 
     async def _report_error(self, task: JobTask, reason: str) -> bool:
         """خطای کار را در لاگ‌ها و تاپیک گزارش‌های گروه ادمین ثبت می‌کند."""
@@ -656,6 +773,11 @@ class JobManager:
                 speed=human.human_speed(prog.speed),
                 eta=human.human_eta(prog.eta),
             )
+        if prog.stage == "splitting":
+            step = "۲/۲" if lang == "fa" else "2/2"
+            return text.t(lang, "progress_stage_upload", step=step) + "\n" + text.t(
+                lang, "splitting", parts=max(2, prog.parts or 2)
+            )
         if prog.stage == "uploading":
             elapsed = max(.001, time.monotonic() - task.upload_started)
             speed = prog.uploaded / elapsed
@@ -663,7 +785,12 @@ class JobManager:
             waiting = prog.total and prog.uploaded >= prog.total
             step = "۲/۲" if lang == "fa" else "2/2"
             stage = text.t(lang, "progress_stage_upload", step=step)
-            return stage + "\n" + text.t(
+            part_line = ""
+            if prog.parts > 1 and prog.part:
+                part_line = text.t(
+                    lang, "split_part_line", part=prog.part, parts=prog.parts
+                ) + "\n"
+            return stage + "\n" + part_line + text.t(
                 lang,
                 "uploading",
                 bar=human.progress_bar(prog.pct, show_pct=True),

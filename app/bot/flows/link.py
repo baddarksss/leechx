@@ -25,7 +25,7 @@ from app.db import repo
 from app.services import apkstore
 from app.services.drafts import Draft
 from app.services.formats import FormatOption, all_options
-from app.services.uploader import BOT_API_LIMIT
+from app.services.uploader import BOT_API_LIMIT, upload_limit
 
 log = logging.getLogger("leechx.link")
 
@@ -209,6 +209,18 @@ def delivery_text(lang: str, draft: Draft, ttl_hours: float = 6.0) -> str:
     )
 
 
+def split_offer_text(lang: str, draft: Draft, size: int, limit: int, parts: int) -> str:
+    """Panel shown before download when a file exceeds the Telegram upload cap."""
+    return text.t(
+        lang,
+        "split_offer",
+        title=human.esc(draft.title),
+        size=human.human_bytes(size),
+        max=human.human_bytes(limit),
+        parts=parts,
+    )
+
+
 def quality_text(lang: str, draft: Draft, note: str = "") -> str:
     lines = [f"<b>{human.esc(draft.title)}</b>"]
     meta = []
@@ -229,10 +241,7 @@ def quality_text(lang: str, draft: Draft, note: str = "") -> str:
 
 def telegram_limit(svc) -> int:
     """بزرگ‌ترین فایلی که تلگرام در این نصب می‌پذیرد."""
-    limit = int(getattr(svc.settings, "max_upload_bytes", BOT_API_LIMIT) or BOT_API_LIMIT)
-    if getattr(svc.cfg, "uses_local_api", False):
-        return limit
-    return min(limit, BOT_API_LIMIT)
+    return upload_limit(svc.cfg, svc.settings)
 
 
 def apk_text(lang: str, page: apkstore.ApkPage, *, local_api: bool = False) -> str:

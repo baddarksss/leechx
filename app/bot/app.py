@@ -235,6 +235,9 @@ def build_app(cfg: Config) -> Application:
         builder = builder.base_url(cfg.telegram_api_url.strip())
         if cfg.telegram_api_file_url.strip():
             builder = builder.base_file_url(cfg.telegram_api_file_url.strip())
+        # Local Bot API accepts local paths for downloads; files must be visible
+        # at the same path inside this container.
+        builder = builder.local_mode(True)
 
     app = builder.build()
     app.bot_data["cfg"] = cfg
