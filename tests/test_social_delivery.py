@@ -7,6 +7,7 @@ from app.bot.flows import callbacks as callbacks_flow
 from app.bot.flows import link as link_flow
 from app.bot.keyboards import delivery_menu
 from app.core import text
+from app.db import repo
 from app.services.downloader import MediaInfo
 from app.services.drafts import Draft
 from app.services.formats import FormatOption
@@ -251,3 +252,30 @@ async def test_delivery_section_tab_only_explains_choices(db):
     assert query.answers[-1] == text.t("fa", "delivery_section_hint")
     assert (draft.send_as, draft.destination, draft.option) == before
     assert jobs.tasks == []
+
+
+@pytest.mark.asyncio
+async def test_link_quota_blocks_delivery_and_keeps_draft(db, tmp_path):
+    active = tmp_path / "active.mp4"
+    active.write_bytes(b"x")
+    await repo.create_shared("active-1", 1, str(active), active.name, "video/mp4", 1, 3600)
+
+    info = MediaInfo(
+        url="https://www.instagram.com/reel/LIMIT/",
+        title="Video",
+        extractor="Instagram",
+        formats=VIDEO_FORMATS,
+    )
+    context, services, jobs = make_context(info)
+    services.settings.max_links_per_user = 1
+
+    request = make_update()
+    await link_flow.handle_link(request, context, info.url)
+    draft = next(iter(services.drafts._items.values()))
+
+    query = FakeQuery(request.effective_message)
+    await callbacks_flow._on_delivery(make_update(query), context, [draft.id, "l"])
+
+    assert jobs.tasks == []                     # سقف پر است: کاری صف نمی‌شود
+    assert len(services.drafts) == 1            # پیش‌نویس برای تلاش دوباره می‌ماند
+    assert query.answers[-1] == text.t("fa", "link_quota_full", limit=1)
