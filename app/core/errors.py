@@ -1,6 +1,17 @@
 """خطاهای دامنه — هر خطا یک «کلید پیام» قابل‌ترجمه دارد."""
 from __future__ import annotations
 
+import re
+
+_URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+
+
+def public_reason(reason: str, limit: int = 160) -> str:
+    """دلیل خطا را برای نمایش به کاربر پاک می‌کند: بدون لینک و در یک خط."""
+    text = _URL_RE.sub("", str(reason or ""))
+    text = " ".join(text.split()).strip(" :;,.-")
+    return text[:limit]
+
 
 class LeechError(Exception):
     """خطای قابل‌نمایش به کاربر."""

@@ -7,6 +7,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.6.2] - 2026-10-31 · "Quiet Errors"
+
+### Fixed
+- Unsupported-link replies no longer include the raw extractor error or its
+  GitHub issue URL. The user gets one short localized line; the full reason is
+  still written to the log and the admin report.
+- Other user-facing error reasons are stripped of URLs and collapsed to a
+  single line (`errors.public_reason`).
+- NSFW-blocked links get their own localized message instead of the generic
+  unsupported text.
+
+### Added
+- `Downloader.extractor_url()` rewrites Eporner `/video-<id>/...` links to the
+  `/embed/<id>/` endpoint. yt-dlp's normal Eporner path fails with
+  "Unable to extract hash" for some regions/IPs (open upstream issue), while
+  the embed endpoint extracts normally from the same host.
+
 ## [5.6.1] - 2026-10-31 · "Audit Clock"
 
 ### Fixed

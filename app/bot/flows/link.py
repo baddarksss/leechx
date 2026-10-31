@@ -81,7 +81,11 @@ REPORTABLE = {"unsupported", "live_unsupported"}
 
 def error_text(lang: str, exc: errors.LeechError) -> str:
     kwargs = dict(exc.extra)
-    kwargs.setdefault("reason", human.esc(exc.reason or "?"))
+    if exc.key in REPORTABLE:
+        # پیام کاربر ساده می‌ماند؛ جزئیات خام فقط در لاگ و گزارش ادمین است.
+        kwargs.pop("reason", None)
+    else:
+        kwargs.setdefault("reason", human.esc(errors.public_reason(exc.reason or "?")))
     return text.t(lang, exc.key, **kwargs)
 
 
@@ -230,7 +234,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
         return
 
     if svc.sites.is_nsfw_url(url) and not svc.settings.nsfw_enabled:
-        await reply(update, text.t(lang, "unsupported", reason="NSFW disabled"))
+        await reply(update, text.t(lang, "nsfw_blocked"))
         return
 
     status = await reply(update, text.t(lang, "probing"))
@@ -252,7 +256,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
         log.exception("probe crashed")
         await edit(
             status,
-            text.t(lang, "failed", reason=human.esc(str(exc)[:150]))
+            text.t(lang, "failed", reason=human.esc(errors.public_reason(str(exc))))
             + ("\n\n" + text.t(lang, "issue_reported")
                if await _report_issue(update, context, url, f"probe crashed: {exc}") else ""),
         )

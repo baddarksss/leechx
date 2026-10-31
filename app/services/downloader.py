@@ -12,6 +12,7 @@ import asyncio
 import logging
 import mimetypes
 import os
+import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +35,20 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
+
+# بعضی سایت‌ها فقط از مسیر embed متادیتای ویدیو را می‌دهند (مثل Eporner؛
+# صفحهٔ عادی برای بعضی IPها صفحهٔ verification برمی‌گرداند و hash ندارد).
+_EMBED_VIDEO = re.compile(
+    r"^https?://(?:www\.)?eporner\.com/video-([A-Za-z0-9]+)(?:/|$)", re.IGNORECASE
+)
+
+
+def extractor_url(url: str) -> str:
+    """آدرس مناسب اکسترکتور؛ برای سایت‌های embed-only مسیر را بازنویسی می‌کند."""
+    match = _EMBED_VIDEO.match(url or "")
+    if match:
+        return f"https://www.eporner.com/embed/{match.group(1)}/"
+    return url
 
 MEDIA_MIME_PREFIXES = ("video/", "audio/", "image/")
 DIRECT_MIME_TYPES = {
@@ -323,10 +338,11 @@ class Downloader:
         )
 
     def _probe_blocking(self, url: str) -> MediaInfo:
-        opts = _base_opts(self.cfg, url, self.cookie_for(url))
+        target = extractor_url(url)
+        opts = _base_opts(self.cfg, target, self.cookie_for(target))
         opts.update({"skip_download": True, "extract_flat": False})
         with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            info = ydl.extract_info(target, download=False)
 
         if not isinstance(info, dict):
             raise errors.UnsupportedUrl("Empty metadata")
@@ -346,7 +362,8 @@ class Downloader:
             raise errors.LiveUnsupported()
 
         return MediaInfo(
-            url=info.get("webpage_url") or url,
+            # برای لینک‌های embed-only، آدرس اصلی کاربر نمایش داده شود.
+            url=url if target != url else (info.get("webpage_url") or url),
             title=human.safe_filename(info.get("title") or "media", 150),
             duration=int(info["duration"]) if info.get("duration") else None,
             uploader=info.get("uploader") or info.get("channel") or info.get("creator"),
@@ -474,6 +491,7 @@ class Downloader:
         cancel: asyncio.Event,
     ) -> DownloadResult:
         progress.reset_download()
+        target = extractor_url(url)
         finished: list[str] = []
         per_file_downloaded: dict[str, int] = {}
         downloaded_bytes_total = 0
@@ -507,7 +525,7 @@ class Downloader:
                 if filename:
                     finished.append(filename)
 
-        opts = _base_opts(self.cfg, url, self.cookie_for(url))
+        opts = _base_opts(self.cfg, target, self.cookie_for(target))
         opts.update(
             {
                 "format": option.selector,
@@ -531,7 +549,7 @@ class Downloader:
 
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
+                info = ydl.extract_info(target, download=True)
         except DownloadError as exc:
             if cancel.is_set():
                 raise errors.JobCancelled() from exc

@@ -484,7 +484,7 @@ class JobManager:
             await repo.log_event(task.user_id, "download_failed")
             await self._edit_final(
                 task,
-                text.t(task.lang, "failed", reason=human.esc(str(exc)[:150])),
+                text.t(task.lang, "failed", reason=human.esc(errors.public_reason(str(exc)))),
             )
             await self._report_error(task, f"crash: {exc}")
             if self.hub is not None:
@@ -545,7 +545,11 @@ class JobManager:
 
     def _error_text(self, lang: str, exc: errors.LeechError) -> str:
         kwargs = dict(exc.extra)
-        kwargs.setdefault("reason", human.esc(exc.reason or "?"))
+        if exc.key in ("unsupported", "live_unsupported"):
+            # پیام کاربر ساده می‌ماند؛ جزئیات خام فقط در لاگ و گزارش ادمین است.
+            kwargs.pop("reason", None)
+        else:
+            kwargs.setdefault("reason", human.esc(errors.public_reason(exc.reason or "?")))
         return text.t(lang, exc.key, **kwargs)
 
     @staticmethod
