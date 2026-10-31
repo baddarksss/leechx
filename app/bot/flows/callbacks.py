@@ -12,7 +12,7 @@ from app.bot.flows import admin as admin_flow
 from app.bot.flows import link as link_flow
 from app.bot.flows import start as start_flow
 from app.bot.flows import user_links as links_flow
-from app.core import text
+from app.core import human, text
 from app.services.formats import find_option
 
 log = logging.getLogger("leechx.callbacks")
@@ -85,7 +85,11 @@ async def _on_quality(update: Update, context: ContextTypes.DEFAULT_TYPE, args: 
     draft.option = option
     draft.lang = draft.lang or lang
     link_flow.normalize_delivery_mode(draft)
-    await safe_answer(query, option.label)
+    switched = link_flow.apply_apk_limits(svc, draft)
+    if switched:
+        await safe_answer(query, text.t(draft.lang, "apk_switched_link"))
+    else:
+        await safe_answer(query, option.label)
     await edit(
         query.message,
         link_flow.delivery_text(draft.lang, draft, svc.settings.ttl_hours),
@@ -133,7 +137,12 @@ async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
         if draft.kind == "direct" or draft.auto_quality:
             return
         draft.option = None
-        await edit(query.message, link_flow.quality_text(user_lang, draft),
+        body = (
+            link_flow.apk_draft_text(user_lang, draft)
+            if draft.kind == "apk"
+            else link_flow.quality_text(user_lang, draft)
+        )
+        await edit(query.message, body,
                    reply_markup=kb.quality_menu(user_lang, draft))
         return
 
@@ -203,6 +212,25 @@ async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
                 query, text.t(user_lang, "link_quota_full", limit=limit), alert=True
             )
             return
+
+    if (
+        mode != "link"
+        and draft.option is not None
+        and (draft.option.filesize or 0) > link_flow.telegram_limit(svc)
+    ):
+        # فایل بزرگ‌تر از سقف Bot API فقط با لینک مستقیم تحویل می‌شود؛
+        # جلوی دانلود بی‌فایده گرفته می‌شود.
+        await safe_answer(
+            query,
+            text.t(
+                user_lang,
+                "too_big",
+                size=human.human_bytes(draft.option.filesize or 0),
+                max=human.human_bytes(link_flow.telegram_limit(svc)),
+            ),
+            alert=True,
+        )
+        return
 
     svc.drafts.pop(draft_id, draft.user_id)
     if mode == "link":

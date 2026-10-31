@@ -29,7 +29,7 @@ from yt_dlp.utils import DownloadError, ExtractorError, js_to_json, parse_resolu
 
 from app.config import Config
 from app.core import errors, human, urlcheck
-from app.services import gallery
+from app.services import apkstore, gallery
 from app.services.cookies import CookieStore
 from app.services.formats import FormatOption
 
@@ -1374,6 +1374,12 @@ class Downloader:
                 info or MediaInfo(url=url, title=""),
             )
 
+        if option.media_url and apkstore.is_apk_media(option.media_url):
+            # نسخه‌های APK/XAPK از CDN فروشگاه می‌آیند و کوکی Cloudflare
+            # لازم دارند؛ دانلودر خودش کوکی را تازه می‌کند.
+            fallback = info or MediaInfo(url=url, title="")
+            return await self._download_apk(option, workdir, progress, cancel, fallback)
+
         if option.media_url:
             # نسخه‌هایی مثل AV1 اپورنر در استخراج دوبارهٔ yt-dlp نیستند؛
             # همان آدرس مستقیم CDN را می‌گیریم ولی عنوان اصلی حفظ می‌شود.
@@ -1614,6 +1620,127 @@ class Downloader:
             mime=info.mime or mime,
             size=size,
             is_audio=mime.startswith("audio/"),
+        )
+
+    async def _download_apk(
+        self,
+        option: FormatOption,
+        workdir: Path,
+        progress: Progress,
+        cancel: asyncio.Event,
+        info: MediaInfo,
+    ) -> DownloadResult:
+        """دانلود نسخهٔ APK/XAPK از CDN APKPure با کوکی حل‌شدهٔ Cloudflare."""
+        url = option.media_url
+        if not await urlcheck.is_safe_public_url(url):
+            raise errors.UnsupportedUrl("Invalid app download URL")
+        progress.reset_download()
+
+        ext = (option.ext or "apk").lstrip(".")
+        base = human.safe_filename(info.title or "app", 100)
+        tag = option.code or ""
+        name = f"{base} [{tag}].{ext}" if tag else f"{base}.{ext}"
+        dest = workdir / human.safe_filename(name, 150)
+
+        timeout = aiohttp.ClientTimeout(total=None, sock_read=120, connect=30)
+        headers = {
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "identity",
+        }
+        try:
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
+                session = apkstore.session_for(url)
+                resp = None
+                for attempt in range(2):
+                    if session is None:
+                        session = await apkstore.refresh_session(self.cfg, url)
+                    if session is None:
+                        raise errors.AccessDenied("app store cookies unavailable")
+                    resp = await sess.get(
+                        url,
+                        headers={
+                            "User-Agent": session.user_agent or USER_AGENT,
+                            "Cookie": session.cookie,
+                            "Referer": session.referer,
+                        },
+                        allow_redirects=False,
+                    )
+                    if resp.status in (401, 403) and attempt == 0:
+                        resp.release()
+                        session = None
+                        continue
+                    break
+                if resp is None:
+                    raise errors.AccessDenied("app store did not respond")
+
+                # پرش به CDN وی‌نودف بدون کوکی‌های APKPure انجام می‌شود.
+                for _ in range(4):
+                    if resp.status not in (301, 302, 303, 307, 308):
+                        break
+                    location = resp.headers.get("Location")
+                    resp.release()
+                    if not location:
+                        raise errors.UnsupportedUrl("Redirect without Location")
+                    next_url = urljoin(url, location)
+                    if not await urlcheck.is_safe_public_url(next_url):
+                        raise errors.UnsupportedUrl("Unsafe redirect destination")
+                    url = next_url
+                    resp = await sess.get(url, allow_redirects=False)
+
+                if resp.status == 404:
+                    resp.release()
+                    raise errors.ResourceNotFound("404")
+                if resp.status in (401, 403):
+                    resp.release()
+                    raise errors.AccessDenied(str(resp.status))
+                if resp.status >= 400:
+                    resp.release()
+                    raise errors.UnsupportedUrl(f"HTTP {resp.status}")
+
+                total = int(resp.headers.get("Content-Length") or 0)
+                progress.total = total
+                try:
+                    with dest.open("wb") as fh:
+                        async for chunk in resp.content.iter_chunked(1024 * 512):
+                            if cancel.is_set():
+                                raise errors.JobCancelled()
+                            fh.write(chunk)
+                            progress.downloaded += len(chunk)
+                            progress.downloaded_bytes_total += len(chunk)
+                            if total:
+                                progress.pct = min(
+                                    99.9, progress.downloaded * 100.0 / total
+                                )
+                finally:
+                    resp.release()
+
+                if not progress.downloaded or (total and progress.downloaded != total):
+                    raise errors.IncompleteDownload(
+                        f"expected {total} bytes, received {progress.downloaded}"
+                    )
+        except errors.LeechError:
+            raise
+        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+            raise map_error(exc) from exc
+
+        if cancel.is_set():
+            raise errors.JobCancelled()
+
+        progress.pct = 100.0
+        size = dest.stat().st_size
+        # XAPK در واقع زیپ است؛ APK را با MIME درست می‌فرستیم تا کلاینت‌ها بشناسند.
+        mime = (
+            "application/vnd.android.package-archive"
+            if ext == "apk"
+            else "application/octet-stream"
+        )
+        return DownloadResult(
+            path=dest,
+            title=human.safe_filename(info.title or dest.stem, 150),
+            mime=mime,
+            size=size,
+            is_audio=False,
         )
 
     async def _download_kvs(

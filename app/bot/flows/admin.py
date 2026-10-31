@@ -92,6 +92,26 @@ def _admin_kb(lang: str, update: Update):
     return None
 
 
+async def _audit_soon(
+    context: ContextTypes.DEFAULT_TYPE,
+    category: str,
+    action: str,
+    user_id: int | None = None,
+    details: str = "",
+    severity: str = "INFO",
+) -> None:
+    """ثبت ممیزی بدون تأخیر در پنل؛ ارسال به گروه می‌تواند چند ثانیه طول بکشد."""
+    svc = services(context)
+    hub = getattr(svc, "admin_group", None)
+    if hub is None:
+        return
+    await run_detached(
+        context,
+        hub.audit(category, action, user_id, details, severity),
+        update=None,
+    )
+
+
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await require_admin(update, context):
         return
@@ -226,7 +246,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
             await safe_answer(query, text.t(lang, "admin_owner_immutable"), alert=True)
             return
         ok = await repo.remove_admin(uid)
-        await svc.admin_group.audit("security", "admin_removed",
+        await _audit_soon(context, "security", "admin_removed",
                                     update.effective_user.id, f"target={uid}, changed={ok}")
         if uid in svc.cfg.extra_admins:
             await safe_answer(query, text.t(lang, "admin_env_admin"), alert=True)
@@ -265,7 +285,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
             await safe_answer(query, text.t(lang, "admin_ban_staff"), alert=True)
             return
         await repo.set_banned(uid, action == "ban")
-        await svc.admin_group.audit("security", f"user_{action}", update.effective_user.id, f"target={uid}")
+        await _audit_soon(context, "security", f"user_{action}", update.effective_user.id, f"target={uid}")
         await safe_answer(query, "✅")
         await _show_user(update, context, uid)
         return
@@ -288,7 +308,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         key = args[0]
         if key in SCHEMA and SCHEMA[key][0] == "bool":
             value = await svc.settings.toggle(key)
-            await svc.admin_group.audit("security", "setting_toggled",
+            await _audit_soon(context, "security", "setting_toggled",
                                         update.effective_user.id, f"{key}={value}")
             await safe_answer(query, f"{svc.settings.label(key, lang)}: {'ON' if value else 'OFF'}")
             await panel(
@@ -334,7 +354,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         if args:
             name = args[0]
             ok = svc.cookies.delete(name)
-            await svc.admin_group.audit("security", "cookie_deleted",
+            await _audit_soon(context, "security", "cookie_deleted",
                                         update.effective_user.id, f"name={name}, changed={ok}")
             await safe_answer(
                 query,
@@ -363,7 +383,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
                    label=svc.settings.label(key, lang),
                    value=("🟢" if value else "🔴")),
         )
-        await svc.admin_group.audit("security", "runtime_updated",
+        await _audit_soon(context, "security", "runtime_updated",
                                     update.effective_user.id, f"key={key}, value={value}")
         await _render_runtime(update, context)
         return
@@ -415,7 +435,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         return
 
     if action == "groupoff":
-        await svc.admin_group.audit("security", "group_disconnected", update.effective_user.id)
+        await _audit_soon(context, "security", "group_disconnected", update.effective_user.id)
         await svc.admin_group.disable()
         await safe_answer(query, text.t(lang, "admin_group_off_done"))
         await _render_group(update, context)
@@ -430,7 +450,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         await safe_answer(query)
         enabled = not svc.force_join.enabled
         await svc.force_join.set_enabled(enabled)
-        await svc.admin_group.audit("security", "force_join_toggled",
+        await _audit_soon(context, "security", "force_join_toggled",
                                     update.effective_user.id, f"enabled={enabled}")
         await _render_join(update, context)
         return
@@ -455,7 +475,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
         if removed is None:
             await safe_answer(query, text.t(lang, "admin_join_bad"), alert=True)
         else:
-            await svc.admin_group.audit("security", "force_join_target_removed",
+            await _audit_soon(context, "security", "force_join_target_removed",
                                         update.effective_user.id, f"chat={chat_id}")
             await safe_answer(query, text.t(lang, "admin_join_removed", title=removed.title))
         await _render_join(update, context)
@@ -563,7 +583,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
     if action == "dprestartyes":
         await safe_answer(query)
         await panel(update, context, text.t(lang, "deploy_restart_scheduled"))
-        await svc.admin_group.audit("security", "manual_restart", update.effective_user.id)
+        await _audit_soon(context, "security", "manual_restart", update.effective_user.id)
         svc.request_restart()
         return
 
@@ -595,7 +615,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
             query,
             text.t(lang, "debug_toggle_on" if enabled else "debug_toggle_off"),
         )
-        await svc.admin_group.audit(
+        await _audit_soon(context, 
             "security", "debug_toggled", update.effective_user.id, f"enabled={enabled}"
         )
         await _render_debug(update, context)
@@ -645,7 +665,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
             return
         ok = await svc.debug.revoke(token_id)
         if ok:
-            await svc.admin_group.audit("security", "debug_token_revoked",
+            await _audit_soon(context, "security", "debug_token_revoked",
                                         update.effective_user.id, f"id={token_id}")
         await safe_answer(query, text.t(lang, "debug_revoke_ok" if ok else "debug_revoke_fail"))
         await _render_debug(update, context)
@@ -654,7 +674,7 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
     if action == "dbrevokeall":
         count = await svc.debug.revoke_all()
         await safe_answer(query, text.t(lang, "debug_revoke_ok"))
-        await svc.admin_group.audit("security", "debug_tokens_revoked", update.effective_user.id,
+        await _audit_soon(context, "security", "debug_tokens_revoked", update.effective_user.id,
                                     f"count={count}")
         await _render_debug(update, context)
         return
@@ -709,7 +729,7 @@ async def _upgrade_ytdlp(update: Update, context: ContextTypes.DEFAULT_TYPE, msg
     else:
         body = text.t(lang, "deploy_ytdlp_fail", reason=human.esc(str(result.get("error") or "unknown")))
     await edit(msg, body, reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY))
-    await svc.admin_group.audit(
+    await _audit_soon(context, 
         "system",
         "ytdlp_update",
         update.effective_user.id,
@@ -723,19 +743,40 @@ async def _upgrade_ytdlp(update: Update, context: ContextTypes.DEFAULT_TYPE, msg
 
 
 # ── رندرها ─────────────────────────────────────────────────
+_STATS_CACHE: dict[str, tuple[float, str]] = {}
+STATS_CACHE_SECONDS = 3.0
+
+
 async def _render_stats(context: ContextTypes.DEFAULT_TYPE) -> str:
     svc = services(context)
     lang = lang_of(context)
-    users = await repo.count_users()
-    active_users = await repo.count_active_users(7)
-    banned = await repo.count_banned_users()
-    admins = await repo.count_admins() + len(svc.cfg.owners)
-    jobs, done, failed = await repo.jobs_count_today()
-    active_links = await repo.count_active_shared()
-    reports = await repo.count_open_reports()
-    shared_size = await repo.shared_total_size()
+    cached = _STATS_CACHE.get(lang)
+    if cached is not None and time.monotonic() - cached[0] < STATS_CACHE_SECONDS:
+        return cached[1]
+
+    (
+        users,
+        active_users,
+        banned,
+        admins,
+        jobs_today,
+        active_links,
+        reports,
+        shared_size,
+    ) = await asyncio.gather(
+        repo.count_users(),
+        repo.count_active_users(7),
+        repo.count_banned_users(),
+        repo.count_admins(),
+        repo.jobs_count_today(),
+        repo.count_active_shared(),
+        repo.count_open_reports(),
+        repo.shared_total_size(),
+    )
+    jobs, done, failed = jobs_today
+    admins += len(svc.cfg.owners)
     used = await asyncio.to_thread(svc.store.total_size) + shared_size
-    return text.t(
+    body = text.t(
         lang,
         "admin_stats",
         users=users,
@@ -753,6 +794,8 @@ async def _render_stats(context: ContextTypes.DEFAULT_TYPE) -> str:
         uptime=human.human_duration(svc.uptime),
         version=__version__,
     )
+    _STATS_CACHE[lang] = (time.monotonic(), body)
+    return body
 
 
 async def _render_traffic(lang: str = "fa") -> str:
@@ -1120,7 +1163,7 @@ async def _apply_staged(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY),
         )
         return
-    await svc.admin_group.audit("system", "source_deployed", update.effective_user.id,
+    await _audit_soon(context, "system", "source_deployed", update.effective_user.id,
                                 f"version={result.version}, files={result.files}, "
                                 f"removed={result.removed}, deps={result.deps}")
     body = text.t(lang, "deploy_applied", version=human.esc(result.version))
@@ -1195,7 +1238,7 @@ async def _create_debug_token(
     )
     if "127.0.0.1" in base or "localhost" in base:
         body += "\n\n" + text.t(lang, "debug_no_public_url", base=human.esc(base))
-    await svc.admin_group.audit("security", "debug_token_created", update.effective_user.id,
+    await _audit_soon(context, "security", "debug_token_created", update.effective_user.id,
                                 f"scope={row.scopes}, id={row.id}, hours={hours}")
     # همان پیام پنل ویرایش می‌شود؛ پیام تازه‌ای در چت نمی‌آید.
     await panel(update, context, body, kb.debug_token_menu(lang, url, row.id))
@@ -1288,7 +1331,7 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
             await panel(update, context, text.t(lang, "admin_limit_reached", max=svc.cfg.max_admins))
             return
         await repo.add_admin(user.id, update.effective_user.id)
-        await svc.admin_group.audit("security", "admin_added",
+        await _audit_soon(context, "security", "admin_added",
                                     update.effective_user.id, f"new_admin={user.id}")
         await panel(update, context, text.t(lang, "admin_add_ok", uid=user.id))
         return
@@ -1314,7 +1357,7 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
             await panel(update, context, text.t(lang, "admin_bad_value"))
             return
         await svc.settings.set(key, value)
-        await svc.admin_group.audit("security", "setting_updated",
+        await _audit_soon(context, "security", "setting_updated",
                                     update.effective_user.id, f"key={key} (value hidden)")
         svc.limiter.set_interval(svc.settings.rate_limit_seconds)
         await panel(
@@ -1388,7 +1431,7 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
             await panel(update, context, text.t(lang, "admin_bad_value"))
             return
         await svc.settings.set(key, value)
-        await svc.admin_group.audit("security", "runtime_updated",
+        await _audit_soon(context, "security", "runtime_updated",
                                     update.effective_user.id, f"key={key} (value hidden)")
         svc.settings.apply_to_config()
         if key == "rate_limit_seconds":
@@ -1441,7 +1484,7 @@ async def _add_join_target(update: Update, context: ContextTypes.DEFAULT_TYPE, r
             await panel(update, context, text.t(lang, "admin_join_admin_needed", title=human.esc(target.title)))
             return
     await svc.force_join.add(target)
-    await svc.admin_group.audit("security", "force_join_target_added", update.effective_user.id,
+    await _audit_soon(context, "security", "force_join_target_added", update.effective_user.id,
                                 f"chat={target.chat_id}")
     await panel(
         update,
@@ -1519,7 +1562,7 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"\n🔐 امنیت: <code>{created.get('security') or '—'}</code>"
     )
     await reply(update, body)
-    await svc.admin_group.audit("security", "group_setup", user.id,
+    await _audit_soon(context, "security", "group_setup", user.id,
                                 f"group {chat.id}; topics {sum(bool(x) for x in created.values())}/7")
 
 
@@ -1573,13 +1616,12 @@ async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 # ── پیام همگانی ────────────────────────────────────────────
 async def _run_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, ids, body, status) -> None:
-    svc = services(context)
     lang = lang_of(context)
     ok, fail = await broadcast(context, ids, body, lang)
     done = text.t(lang, "admin_broadcast_done", ok=ok, fail=fail)
     if await edit(status, done) is None:
         await reply(update, done)
-    await svc.admin_group.audit("security", "broadcast_completed",
+    await _audit_soon(context, "security", "broadcast_completed",
                                 update.effective_user.id, f"sent={ok}, failed={fail}")
 
 

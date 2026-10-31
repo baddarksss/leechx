@@ -182,8 +182,9 @@ def quality_menu(lang: str, draft: Draft) -> Kb:
     rows: list[list] = []
     pair: list = []
     for opt in videos:
+        label_key = "apk_btn" if opt.codec == "apk" else "video_btn"
         pair.append(_delivery_btn(
-            text.t(lang, "video_btn", label=opt.label),
+            text.t(lang, label_key, label=opt.label),
             f"q|{draft.id}|{opt.code}|v",
         ))
         if len(pair) == 2:

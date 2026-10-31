@@ -7,6 +7,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.8.0] - 2026-10-31 · "App Shelf"
+
+### Added
+- **Google Play links → APK/XAPK builds.** Send a `play.google.com/store/apps/details?id=…`
+  (or `market://details?id=…`) link and the bot lists the available builds from
+  APKPure — `arm64-v8a`, `armeabi-v7a`, `universal` — each with its version and
+  real file size, instead of meaningless video qualities. Picking one downloads
+  that exact file (Cloudflare cookies are obtained through byparr and refreshed
+  automatically on `403`) and delivers it through the normal job pipeline.
+- Builds larger than the Bot API limit automatically switch to **direct link**
+  delivery, and the delivery button refuses (instead of downloading 150 MB and
+  then failing) when Telegram cannot take the file.
+- Admin **stats** now runs its queries concurrently, caches the disk-size walk
+  for 30 s and reuses the rendered page for 3 s.
+
+### Changed
+- Admin audit events are dispatched in the background, so a slow Telegram send
+  to the admin group no longer delays panel buttons by a few seconds.
+
+### Fixed
+- **Support messages** are now really delivered: if the reports topic is not
+  configured or the group send fails, the message is sent to the owners in a
+  private chat. The confirmation is a **new message** and only says
+  “delivered” when a send actually succeeded; otherwise the user is told to
+  retry instead of being lied to.
+
 ## [5.7.0] - 2026-10-31 · "Link Guard"
 
 ### Added

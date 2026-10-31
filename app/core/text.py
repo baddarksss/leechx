@@ -78,6 +78,19 @@ FA: dict[str, str] = {
     "quality_size_hint": "💡 روی هر دکمه کدک و حجم تقریبی فایل نوشته شده است.",
     "video_btn": "🎬 {label}",
     "audio_btn": "🎵 {label}",
+    "apk_btn": "📦 {label}",
+    "apk_choose": (
+        "📱 <b>{title}</b>\n"
+        "نسخه: <code>{version}</code> · بستهٔ <code>{package}</code>\n\n"
+        "🎚 نسخهٔ مناسب گوشی‌ات را انتخاب کن:"
+    ),
+    "apk_size_hint": "💡 حجم هر نسخه روی دکمهٔ همان نسخه نوشته شده است.",
+    "apk_link_only": (
+        "⚠️ نسخه‌های بزرگ‌تر از ۵۰ مگابایت را تلگرام نمی‌پذیرد؛ "
+        "برای آن‌ها خودکار «لینک مستقیم» انتخاب می‌شود."
+    ),
+    "apk_switched_link": "📦 این نسخه بزرگ‌تر از سقف تلگرام است؛ لینک مستقیم انتخاب شد.",
+    "apk_unavailable": "❌ نسخهٔ APK این برنامه در فروشگاه پیدا نشد. کمی بعد دوباره تلاش کن.",
     "quality_title": "<b>{title}</b>",
     "cancel_btn": "✖️ لغو",
     "my_links_btn": "🔗 لینک‌های من",
@@ -741,6 +754,19 @@ EN: dict[str, str] = {
     "quality_size_hint": "💡 Each button shows the codec and the approximate file size.",
     "video_btn": "🎬 {label}",
     "audio_btn": "🎵 {label}",
+    "apk_btn": "📦 {label}",
+    "apk_choose": (
+        "📱 <b>{title}</b>\n"
+        "Version: <code>{version}</code> · Package: <code>{package}</code>\n\n"
+        "🎚 Pick the build that matches your phone:"
+    ),
+    "apk_size_hint": "💡 Each button shows the size of that build.",
+    "apk_link_only": (
+        "⚠️ Telegram rejects builds over 50 MB; those are delivered as a "
+        "direct link instead."
+    ),
+    "apk_switched_link": "📦 This build is over the Telegram limit; direct link selected.",
+    "apk_unavailable": "❌ No APK build was found for this app. Try again in a moment.",
     "quality_title": "<b>{title}</b>",
     "cancel_btn": "✖️ Cancel",
     "my_links_btn": "🔗 My links",
@@ -1382,6 +1408,19 @@ RU: dict[str, str] = {
     "quality_size_hint": "💡 На каждой кнопке указан кодек и примерный размер файла.",
     "video_btn": "🎬 {label}",
     "audio_btn": "🎵 {label}",
+    "apk_btn": "📦 {label}",
+    "apk_choose": (
+        "📱 <b>{title}</b>\n"
+        "Версия: <code>{version}</code> · Пакет: <code>{package}</code>\n\n"
+        "🎚 Выбери сборку для своего телефона:"
+    ),
+    "apk_size_hint": "💡 На каждой кнопке указан размер этой сборки.",
+    "apk_link_only": (
+        "⚠️ Telegram не принимает сборки больше 50 МБ; для них автоматически "
+        "выбирается прямая ссылка."
+    ),
+    "apk_switched_link": "📦 Эта сборка больше лимита Telegram; выбрана прямая ссылка.",
+    "apk_unavailable": "❌ APK для этого приложения не найден. Попробуй ещё раз позже.",
     "quality_title": "<b>{title}</b>",
     "cancel_btn": "✖️ Отмена",
     "my_links_btn": "🔗 Мои ссылки",

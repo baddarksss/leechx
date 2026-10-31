@@ -107,26 +107,46 @@ class AdminGroup:
             await self.settings.set(f"topic_{key}", "")
 
     # ── ارسال ──────────────────────────────────────────────
-    async def send(self, topic: str, body: str, reply_markup=None) -> bool:
+    async def send(self, topic: str, body: str, reply_markup=None, *,
+                   direct_fallback: bool = False) -> bool:
+        """پیام را در تاپیک می‌فرستد؛ در صورت شکست (اختیاری) به مالکان DM می‌کند."""
         chat_id = self.chat_id
-        if self.bot is None or chat_id is None:
+        if self.bot is None:
             return False
         thread = self.topic_id(topic)
-        if not thread:
+        if chat_id is not None and thread:
+            kwargs: dict[str, Any] = {
+                "parse_mode": ParseMode.HTML,
+                "disable_web_page_preview": True,
+                "message_thread_id": thread,
+            }
+            try:
+                await self.bot.send_message(chat_id, body, reply_markup=reply_markup, **kwargs)
+                return True
+            except TelegramError as exc:
+                log.warning("admin group topic send failed (%s): %s", topic, exc)
+        elif chat_id is not None:
             log.warning("cannot send %s without a configured topic", topic)
-            return False
-        kwargs: dict[str, Any] = {
-            "parse_mode": ParseMode.HTML,
-            "disable_web_page_preview": True,
-        }
-        if thread:
-            kwargs["message_thread_id"] = thread
-        try:
-            await self.bot.send_message(chat_id, body, reply_markup=reply_markup, **kwargs)
-            return True
-        except TelegramError as exc:
-            log.warning("admin group topic send failed (%s): %s", topic, exc)
-            return False
+        return await self._send_owners(body, reply_markup) if direct_fallback else False
+
+    async def _send_owners(self, body: str, reply_markup=None) -> bool:
+        """پیام مهم را مستقیم برای مالکان می‌فرستد (گروه تنظیم/در دسترس نیست)."""
+        sent = False
+        for owner in self.cfg.owners:
+            try:
+                await self.bot.send_message(
+                    owner,
+                    body,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+                sent = True
+            except TelegramError as exc:
+                log.warning("owner DM fallback failed for %s: %s", owner, exc)
+            except Exception:  # noqa: BLE001 — یک مالک نباید بقیه را متوقف کند
+                log.exception("owner DM fallback crashed for %s", owner)
+        return sent
 
     async def cache_event(self, component: str, action: str, summary: str) -> bool:
         """Diagnostics without sending user URLs, secrets or file bodies."""
@@ -235,7 +255,8 @@ class AdminGroup:
             log.exception("upload notification failed")
 
     # ── گزارش‌ها ────────────────────────────────────────────
-    async def notify_report(self, report) -> None:
+    async def notify_report(self, report) -> bool:
+        """گزارش/پیام کاربر را به تاپیک گزارش‌ها می‌فرستد؛ در نبود گروه، به مالکان."""
         try:
             label = {
                 "contact": "✉️ پیام کاربر به ادمین",
@@ -251,9 +272,10 @@ class AdminGroup:
             if report.text:
                 parts += ["", f"📝 {human.esc(human.truncate(report.text, 1500))}"]
             parts += ["", f"🆔 گزارش: <code>#{report.id}</code>"]
-            await self.send("reports", "\n".join(parts))
+            return await self.send("reports", "\n".join(parts), direct_fallback=True)
         except Exception:  # noqa: BLE001
             log.exception("report notification failed")
+            return False
 
     async def report_issue(
         self,

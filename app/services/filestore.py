@@ -3,11 +3,14 @@
 قاعدهٔ طلایی: هر کاری که شروع می‌شود یک پوشهٔ اختصاصی می‌گیرد و در
 ``finally`` پاک می‌شود. هیچ فایلی از «حالت لینک» باقی نمی‌ماند.
 """
+
 from __future__ import annotations
 
 import shutil
 import time
 from pathlib import Path
+
+SIZE_CACHE_TTL = 30.0
 
 
 def dir_size(path: Path) -> int:
@@ -29,6 +32,7 @@ class FileStore:
         self.tmp = Path(tmp)
         self.jobs = self.root / "jobs"
         self.links = self.root / "links"
+        self._size_cache: tuple[float, int] | None = None
         for p in (self.root, self.tmp, self.jobs, self.links):
             p.mkdir(parents=True, exist_ok=True)
 
@@ -87,4 +91,13 @@ class FileStore:
             return 0
 
     def total_size(self) -> int:
-        return dir_size(self.jobs) + dir_size(self.links)
+        """حجم کل پوشه‌ها با کش کوتاه‌عمر؛ آمار نباید هر بار کل درخت را بگردد."""
+        now = time.monotonic()
+        if self._size_cache is not None and now - self._size_cache[0] < SIZE_CACHE_TTL:
+            return self._size_cache[1]
+        size = dir_size(self.jobs) + dir_size(self.links)
+        self._size_cache = (now, size)
+        return size
+
+    def invalidate_size_cache(self) -> None:
+        self._size_cache = None

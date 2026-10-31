@@ -22,8 +22,10 @@ from app.bot.common import DRAFT_SLOT, drop_user_input, edit, lang_of, panel, re
 from app.bot.states import ST_RENAME, ST_THUMBNAIL, clear_state, get_data, set_state
 from app.core import errors, human, text
 from app.db import repo
+from app.services import apkstore
 from app.services.drafts import Draft
 from app.services.formats import FormatOption, all_options
+from app.services.uploader import BOT_API_LIMIT
 
 log = logging.getLogger("leechx.link")
 
@@ -225,6 +227,55 @@ def quality_text(lang: str, draft: Draft, note: str = "") -> str:
     return "\n".join(lines)
 
 
+def telegram_limit(svc) -> int:
+    """بزرگ‌ترین فایلی که تلگرام در این نصب می‌پذیرد."""
+    limit = int(getattr(svc.settings, "max_upload_bytes", BOT_API_LIMIT) or BOT_API_LIMIT)
+    if getattr(svc.cfg, "uses_local_api", False):
+        return limit
+    return min(limit, BOT_API_LIMIT)
+
+
+def apk_text(lang: str, page: apkstore.ApkPage, *, local_api: bool = False) -> str:
+    """صفحهٔ انتخاب نسخهٔ APK؛ به‌جای کیفیت، ABI و حجم نمایش داده می‌شود."""
+    body = text.t(
+        lang,
+        "apk_choose",
+        title=human.esc(page.title),
+        version=human.esc(page.version or "—"),
+        package=human.esc(page.package),
+    )
+    body += "\n" + text.t(lang, "apk_size_hint")
+    if not local_api and any(
+        (link.size or 0) > BOT_API_LIMIT for link in page.links
+    ):
+        body += "\n" + text.t(lang, "apk_link_only")
+    return body
+
+
+def apk_draft_text(lang: str, draft: Draft) -> str:
+    """صفحهٔ انتخاب نسخه وقتی کاربر دوباره منوی نسخه‌ها را باز می‌کند."""
+    return text.t(
+        lang,
+        "apk_choose",
+        title=human.esc(draft.title),
+        version="—",
+        package=human.esc(draft.uploader or "—"),
+    ) + "\n" + text.t(lang, "apk_size_hint")
+
+
+def apply_apk_limits(svc, draft: Draft) -> bool:
+    """نسخهٔ بزرگ‌تر از سقف Bot API فقط با لینک مستقیم تحویل می‌شود."""
+    if draft.kind != "apk" or draft.option is None:
+        return False
+    size = draft.option.filesize or 0
+    if not size or size <= telegram_limit(svc):
+        return False
+    if draft.destination == "link":
+        return False
+    draft.destination = "link"
+    return True
+
+
 async def link_quota_used(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> tuple[int, int]:
     """سقف لینک همزمان و تعداد لینک فعال کاربر را برمی‌گرداند.
 
@@ -263,6 +314,11 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
 
     status = await reply(update, text.t(lang, "probing"))
     if status is None:
+        return
+
+    # ── لینک Play Store: نسخه‌های APK/XAPK از APKPure ──────────
+    if apkstore.is_apk_page(url):
+        await _start_apk(update, context, status, url)
         return
 
     try:
@@ -398,6 +454,48 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
     svc.drafts.put(draft)
     note = text.t(lang, "playlist_detected") if info.playlist else ""
     await edit(status, quality_text(lang, draft, note), reply_markup=kb.quality_menu(lang, draft))
+
+
+async def _start_apk(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    status,
+    url: str,
+) -> None:
+    """لینک Play Store را به فهرست نسخه‌های APK تبدیل و منو را نشان می‌دهد."""
+    svc = services(context)
+    lang = lang_of(context)
+    user = update.effective_user
+    try:
+        page = await apkstore.fetch_page(svc.cfg, url)
+    except Exception:  # noqa: BLE001 — خطای فروشگاه نباید جریان را بشکند
+        log.exception("apk store lookup crashed")
+        page = None
+    if page is None or not page.links:
+        await edit(status, text.t(lang, "apk_unavailable"))
+        return
+
+    draft = Draft(
+        id=svc.drafts.new_id(),
+        user_id=user.id,
+        chat_id=update.effective_chat.id,
+        url=url,
+        title=page.title,
+        options=apkstore.options_for(page),
+        duration=None,
+        thumbnail=None,
+        uploader=page.package,
+        extractor="APKPure",
+        kind="apk",
+        lang=lang,
+    )
+    await apply_user_preferences(draft)
+    svc.drafts.put(draft)
+    await edit(
+        status,
+        apk_text(lang, page, local_api=svc.cfg.uses_local_api),
+        reply_markup=kb.quality_menu(lang, draft),
+    )
 
 
 async def start_rename(update: Update, context: ContextTypes.DEFAULT_TYPE, draft: Draft) -> None:

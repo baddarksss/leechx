@@ -11,7 +11,17 @@ from telegram import InlineKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import ContextTypes
 
 from app.bot import keyboards as kb
-from app.bot.common import edit, fmt_ts, lang_of, panel, reply, safe_answer, send_home, services
+from app.bot.common import (
+    drop_user_input,
+    edit,
+    fmt_ts,
+    lang_of,
+    panel,
+    reply,
+    safe_answer,
+    send_home,
+    services,
+)
 from app.bot.guards import in_preview, is_admin
 from app.bot.states import ST_CONTACT, clear_state, get_state, set_state
 from app.core import human, text
@@ -403,12 +413,15 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     hub = getattr(svc, "admin_group", None)
+    delivered = False
     if hub is not None:
         try:
-            await hub.notify_report(report)
+            delivered = bool(await hub.notify_report(report))
         except Exception:  # noqa: BLE001
             log.exception("could not forward contact message")
-    await panel(update, context, text.t(lang, "contact_sent"))
+    # تأیید باید پیام تازه باشد؛ پیام پنل قبلی دست‌نخورده می‌ماند.
+    await reply(update, text.t(lang, "contact_sent" if delivered else "contact_failed"))
+    await drop_user_input(update)
 
 
 # ── callbackهای منو ────────────────────────────────────────
