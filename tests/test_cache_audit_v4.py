@@ -310,12 +310,13 @@ async def test_direct_link_access_log_is_rate_limited_and_keeps_token_private(db
         second = await client.get(f"/f/{token}", headers={"Range":"bytes=0-2"})
         assert second.status == 206
         assert await second.read() == b"vid"
-    # ثبت آدیت در انتهای handler و بعد از ارسال پاسخ انجام می‌شود؛
-    # روی ماشین‌های کند ممکن است چند میلی‌ثانیه دیر برسد.
-    for _ in range(200):
-        if audit.entries:
-            break
-        await asyncio.sleep(0.01)
+        # ثبت آدیت در انتهای handler و پس از ارسال پاسخ انجام می‌شود؛
+        # تا وقتی سرور زنده است فرصت بدهیم handler تمام شود (وگرنه در
+        # shutdown کنسل می‌شود و آدیت هرگز ثبت نمی‌شود).
+        for _ in range(200):
+            if audit.entries:
+                break
+            await asyncio.sleep(0.01)
     assert len(audit.entries) == 1
     assert audit.entries[0][0] == "link_http"
     assert audit.entries[0][2] == 42

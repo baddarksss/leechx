@@ -232,7 +232,11 @@ class LinkServer:
             log.debug("touch_shared failed", exc_info=True)
         if self.hub is not None:
             now = time.monotonic()
-            if now - self._access_logged.get(row.id, 0) >= 300:
+            # مبدأ monotonic مشخص نیست (روی لینوکس زمانِ بوت است)؛ پس
+            # «هنوز ثبت نشده» را با None می‌سنجیم، نه صفر. وگرنه روی میزبانِ
+            # تازه‌بوت‌شده پنج دقیقهٔ اول هیچ آدیتی ثبت نمی‌شد.
+            last_logged = self._access_logged.get(row.id)
+            if last_logged is None or now - last_logged >= 300:
                 self._access_logged[row.id] = now
                 try:
                     await self.hub.audit(

@@ -7,6 +7,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.6.1] - 2026-10-31 · "Audit Clock"
+
+### Fixed
+- Direct-link HTTP access auditing compares `time.monotonic()` with a `None`
+  sentinel instead of `0`. On a freshly booted host (monotonic below 300 s,
+  e.g. CI runners) the first access was treated as "just logged" and skipped,
+  so no audit entry was written for the first five minutes of uptime.
+- `tests/test_cache_audit_v4.py` now waits for the link handler to finish
+  while the test server is still alive before asserting the audit entry, so it
+  no longer depends on shutdown timing.
+
 ## [5.6.0] - 2026-10-31 · "Gallery Engine"
 
 ### Added
