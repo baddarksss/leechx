@@ -7,7 +7,15 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.bot import keyboards as kb
-from app.bot.common import DRAFT_SLOT, drop_user_input, lang_of, panel, reply, run_detached
+from app.bot.common import (
+    DRAFT_SLOT,
+    drop_user_input,
+    lang_of,
+    panel,
+    reply,
+    run_detached,
+    services,
+)
 from app.bot.flows import admin as admin_flow
 from app.bot.flows import link as link_flow
 from app.bot.flows import start as start_flow
@@ -96,6 +104,17 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     if message is None or not message.text:
         return
+
+    # ریپلای روی یکی از قابهای آلبوم = انتخاب تامبنیل؛ متن مهم نیست.
+    reply_to = getattr(message, "reply_to_message", None)
+    if reply_to is not None:
+        outcome = services(context).jobs.thumb_note_reply(
+            message.chat_id,
+            reply_to.message_id,
+            update.effective_user.id if update.effective_user else 0,
+        )
+        if outcome is not None:
+            return
 
     if context.user_data.get("is_admin"):
         section = _admin_section_for_label(message.text)

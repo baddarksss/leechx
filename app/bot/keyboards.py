@@ -237,6 +237,14 @@ def cancel_job(lang: str, job_id: str) -> Kb:
     return Kb([[Btn(text.t(lang, "cancel_btn"), callback_data=f"x|{job_id}")]])
 
 
+def thumb_picker_menu(lang: str, job_id: str) -> Kb:
+    """منوی انتخاب تامبنیل: ریپلای روی قاب یا اسکیپ."""
+    return Kb([
+        [Btn(text.t(lang, "thumb_custom_btn"), callback_data=f"t|hint|{job_id}")],
+        [Btn(text.t(lang, "thumb_skip_btn"), callback_data=f"t|skip|{job_id}")],
+    ])
+
+
 def delivery_start_key(draft: Draft) -> str:
     """Localized label for the final action, based on this link's current choices."""
     if draft.destination == "link":
@@ -410,6 +418,8 @@ def settings_menu(lang: str, snap: dict) -> Kb:
              callback_data="a|toggle|nsfw_autodelete_enabled")],
         [Btn(text.t(lang, "set_nsfw_seconds", v=snap["nsfw_autodelete_seconds"]),
              callback_data="a|edit|nsfw_autodelete_seconds")],
+        [Btn(text.t(lang, "set_thumb_wait", v=snap["thumb_wait_seconds"]),
+             callback_data="a|edit|thumb_wait_seconds")],
         [_btn(lang, "btn_admin_runtime", A_RUNTIME)],
     ])
 

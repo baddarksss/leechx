@@ -10,10 +10,12 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     DEBIAN_FRONTEND=noninteractive
 
-# ffmpeg برای ادغام ویدیو/صدا و تبدیل فرمت ضروری است
+# ffmpeg برای ادغام ویدیو/صدا و اسکرین‌شات تامبنیل، aria2c برای دانلود
+# چندکانالهٔ سریع‌تر (mp4 پیشرونده) و بقیه ضروری هستند
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ffmpeg \
+      aria2 \
       ca-certificates \
       tzdata \
       curl \

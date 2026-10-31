@@ -7,6 +7,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.11.0] - 2026-10-31 — "Frame Pick"
+
+### Added
+- **Pick the cover yourself.** After a video download the bot grabs **10 frames**
+  at random, spread-out timestamps and sends them as an album with a small
+  panel: reply to any frame (any text) to use it as the thumbnail, or press
+  **⏭ Skip** to upload immediately. If the user does nothing, the upload
+  continues automatically with the default cover after the configured wait.
+- Settings → **⏱ Thumbnail wait** (`thumb_wait_seconds`, 0–600 s, default 30;
+  0 disables the album). Runtime setting, no restart needed.
+
+### Fixed
+- **Black / missing thumbnails.** When the site cover is missing or rejected,
+  a real frame is now extracted from the downloaded video itself, so the file
+  never arrives without a cover.
+
+### Changed
+- **Faster downloads.** Progressive MP4s are downloaded through `aria2c` with
+  8 connections when the binary is present (`aria2` added to the Docker image),
+  and HLS/DASH fragments are fetched 8 at a time instead of 4.
+
 ## [5.10.2] - 2026-10-31 · "Sharp Cover"
 
 ### Fixed

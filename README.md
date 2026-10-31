@@ -19,6 +19,7 @@ per-user concurrency limits, automatic disk cleanup and a modular design.
 | 🏷 **Captions + hashtags** | title, source link and automatic hashtags on the media message itself |
 | 📁 **File → direct link** | signed URL, `Range` support, 6h TTL by default |
 | 🔞 **NSFW auto-delete** | adult media gets a countdown and is removed from the chat (default 30 s, off by default); the admin archive keeps the file as before |
+| 🖼 **Thumbnail picker** | 10 random frames of every video are offered as an album; reply to one to make it the cover, or skip — auto-upload after the admin-set wait |
 | 🧹 **Zero leftovers** | the working directory is removed right after upload |
 | ⚡️ **Job queue** | `WORKERS` global + `PER_USER_CONCURRENCY` per user |
 | 👑 **Admin panel** | categorized screens (stats, users, settings, groups, deploy, diagnostics), admin group with topics, ban by forward/username/ID, reports, logs, broadcast, cleanup |

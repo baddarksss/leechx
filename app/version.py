@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.10.2"
-CODENAME = "Sharp Cover"
+__version__ = "5.11.0"
+CODENAME = "Frame Pick"
 RELEASE_DATE = "2026-10-31"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.

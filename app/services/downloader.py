@@ -29,7 +29,7 @@ from yt_dlp.utils import DownloadError, ExtractorError, js_to_json, parse_resolu
 
 from app.config import Config
 from app.core import errors, human, urlcheck
-from app.services import apkstore, gallery
+from app.services import apkstore, gallery, thumbs
 from app.services.cookies import CookieStore
 from app.services.formats import FormatOption
 
@@ -742,12 +742,15 @@ def _base_opts(cfg: Config, url: str, cookie: Path | None = None) -> dict[str, A
         "socket_timeout": 30,
         "retries": 3,
         "fragment_retries": 5,
-        "concurrent_fragment_downloads": 4,
+        "concurrent_fragment_downloads": 8,
         "http_headers": {"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
         "windowsfilenames": os.name == "nt",
         "overwrites": True,
         "trim_file_name": 120,
     }
+    # mp4های پیشرونده با aria2c چندکاناله دانلود می‌شوند؛ استریم‌های HLS/DASH
+    # با دانلودر داخلی و ۸ فرگمنت همزمان. سریع‌تر از یک رشتهٔ واحد.
+    opts.update(thumbs.aria2c_opts())
     cookie = cookie or _cookie_file(cfg, url)
     if cookie:
         opts["cookiefile"] = str(cookie)

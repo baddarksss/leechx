@@ -144,6 +144,18 @@ FA: dict[str, str] = {
     "nsfw_autodelete_countdown": "🔞 حذف خودکار تا <b>{seconds}</b> ثانیهٔ دیگر…",
     "nsfw_autodelete_done": "🗑️ فایل بزرگسال طبق زمان‌بندی از چت حذف شد.",
     "nsfw_autodelete_job_line": "🔞 این فایل {seconds} ثانیهٔ دیگر از چت حذف می‌شود.",
+    # ── انتخاب تامبنیل از اسکرین‌شات‌های ویدیو ──
+    "thumb_album_caption": "🖼 قاب‌های ویدیو — برای کاور یکی را انتخاب کن",
+    "thumb_picker_text": (
+        "🖼 <b>تامبنیل را انتخاب کن</b>\n"
+        "روی یکی از {count} عکس بالا ریپلای کن (متن مهم نیست) تا همان قاب کاور شود.\n"
+        "اگر انتخاب نکنی، تا <b>{seconds}</b> ثانیهٔ دیگر با تامبنیل پیشفرض آپلود می‌شود."
+    ),
+    "thumb_custom_btn": "🖼 تامبنیل شخصی",
+    "thumb_custom_hint": "روی یکی از عکس‌های آلبوم ریپلای کن (متن مهم نیست)؛ همان قاب کاور می‌شود.",
+    "thumb_skip_btn": "⏭ رد و آپلود همین حالا",
+    "thumb_skipped": "⏭ تامبنیل پیشفرض؛ آپلود ادامه می‌یابد…",
+    "thumb_wait_stage": "🖼 انتخاب تامبنیل…",
     "too_big": "📦 حجم فایل ({size}) از حد مجاز ({max}) بیشتر است.",
     "not_media": "📄 این فایل ویدیو/موزیک نیست.",
     "live_unsupported": "🔴 پخش زنده پشتیبانی نمی‌شود.",
@@ -293,6 +305,7 @@ FA: dict[str, str] = {
     "set_nsfw": "🔞 سایت‌های بزرگسال {flag}",
     "set_nsfw_delete": "🔞 حذف خودکار NSFW {flag}",
     "set_nsfw_seconds": "⏱ ثانیهٔ حذف NSFW: {v}",
+    "set_thumb_wait": "⏱ ثانیهٔ صبر تامبنیل: {v}",
     "admin_settings_nsfw_hint": (
         "🔞 حذف خودکار NSFW روشن است ({seconds} ثانیه). فایل فقط از چت حذف "
         "می‌شود و آرشیو گروه ادمین مثل قبل می‌ماند. در گروه/کانال ربات باید "
@@ -300,6 +313,7 @@ FA: dict[str, str] = {
     ),
     "run_nsfw_autodelete_enabled": "حذف خودکار فایل بزرگسال",
     "run_nsfw_autodelete_seconds": "زمان حذف فایل بزرگسال (ثانیه)",
+    "run_thumb_wait_seconds": "ثانیهٔ صبر انتخاب تامبنیل",
     "admin_limit_reached": "⛔️ سقف ادمین‌ها ({max}) پر است.",
     "admin_env_admin": "این کاربر در ADMIN_IDS تنظیمات است؛ از env حذفش کن.",
 
@@ -856,6 +870,18 @@ EN: dict[str, str] = {
     "nsfw_autodelete_countdown": "🔞 Auto-delete in <b>{seconds}</b> seconds…",
     "nsfw_autodelete_done": "🗑️ The adult file was deleted on schedule.",
     "nsfw_autodelete_job_line": "🔞 This file leaves the chat in {seconds} seconds.",
+    # ── picking a thumbnail from video screenshots ──
+    "thumb_album_caption": "🖼 Video frames — pick one as the cover",
+    "thumb_picker_text": (
+        "🖼 <b>Pick a thumbnail</b>\n"
+        "Reply to one of the {count} frames above (any text) to use it as the cover.\n"
+        "If you don't choose, the upload continues with the default cover in {seconds} s."
+    ),
+    "thumb_custom_btn": "🖼 Custom thumbnail",
+    "thumb_custom_hint": "Reply to one of the album frames (any text); that frame becomes the cover.",
+    "thumb_skip_btn": "⏭ Skip and upload now",
+    "thumb_skipped": "⏭ Default cover; upload continues…",
+    "thumb_wait_stage": "🖼 Choosing thumbnail…",
     "too_big": "📦 File size ({size}) exceeds the limit ({max}).",
     "not_media": "📄 Not a video/audio file.",
     "live_unsupported": "🔴 Live streams are not supported.",
@@ -997,6 +1023,7 @@ EN: dict[str, str] = {
     "set_nsfw": "🔞 NSFW sites {flag}",
     "set_nsfw_delete": "🔞 NSFW auto-delete {flag}",
     "set_nsfw_seconds": "⏱ NSFW delete delay: {v}s",
+    "set_thumb_wait": "⏱ Thumbnail wait: {v}s",
     "admin_settings_nsfw_hint": (
         "🔞 NSFW auto-delete is ON ({seconds} s). Only the chat copy is "
         "removed; the admin archive keeps the file as before. In "
@@ -1004,6 +1031,7 @@ EN: dict[str, str] = {
     ),
     "run_nsfw_autodelete_enabled": "NSFW auto-delete",
     "run_nsfw_autodelete_seconds": "NSFW delete delay (seconds)",
+    "run_thumb_wait_seconds": "Thumbnail wait (seconds)",
     "admin_limit_reached": "⛔️ Admin limit reached ({max}).",
     "admin_env_admin": "This user is listed in ADMIN_IDS; remove them from env.",
     "status": (
@@ -1538,6 +1566,18 @@ RU: dict[str, str] = {
     "nsfw_autodelete_countdown": "🔞 Автоудаление через <b>{seconds}</b> с…",
     "nsfw_autodelete_done": "🗑️ Взрослый файл удалён по расписанию.",
     "nsfw_autodelete_job_line": "🔞 Файл покинет чат через {seconds} с.",
+    # ── выбор миниатюры из скриншотов видео ──
+    "thumb_album_caption": "🖼 Кадры видео — выбери один для обложки",
+    "thumb_picker_text": (
+        "🖼 <b>Выбери миниатюру</b>\n"
+        "Ответь (reply) на один из {count} кадров выше (текст не важен) — он станет обложкой.\n"
+        "Без выбора загрузка продолжится с обложкой по умолчанию через {seconds} с."
+    ),
+    "thumb_custom_btn": "🖼 Своя миниатюра",
+    "thumb_custom_hint": "Ответь на один из кадров выше (текст не важен); этот кадр станет обложкой.",
+    "thumb_skip_btn": "⏭ Пропустить и загрузить",
+    "thumb_skipped": "⏭ Обложка по умолчанию; загрузка продолжается…",
+    "thumb_wait_stage": "🖼 Выбор миниатюры…",
     "too_big": "📦 Размер файла ({size}) превышает лимит ({max}).",
     "not_media": "📄 Это не видео/аудио файл.",
     "live_unsupported": "🔴 Прямые трансляции не поддерживаются.",
@@ -1671,6 +1711,7 @@ RU: dict[str, str] = {
     "set_nsfw": "🔞 Взрослые сайты {flag}",
     "set_nsfw_delete": "🔞 Автоудаление NSFW {flag}",
     "set_nsfw_seconds": "⏱ Задержка удаления NSFW: {v} с",
+    "set_thumb_wait": "⏱ Ожидание миниатюры: {v} с",
     "admin_settings_nsfw_hint": (
         "🔞 Автоудаление NSFW включено ({seconds} с). Удаляется только копия "
         "в чате, архив в группе админов остаётся как раньше. В группах/каналах "
@@ -1678,6 +1719,7 @@ RU: dict[str, str] = {
     ),
     "run_nsfw_autodelete_enabled": "Автоудаление взрослых файлов",
     "run_nsfw_autodelete_seconds": "Задержка удаления взрослых файлов (с)",
+    "run_thumb_wait_seconds": "Ожидание выбора миниатюры (с)",
     "admin_limit_reached": "⛔️ Достигнут лимит админов ({max}).",
     "admin_env_admin": "Этот пользователь указан в ADMIN_IDS; удали его из env.",
 

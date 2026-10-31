@@ -22,10 +22,11 @@ from telegram import Message
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
+from app.bot import keyboards as kb
 from app.config import Config
 from app.core import errors, human, text
 from app.db import repo
-from app.services import nsfwguard, splitter
+from app.services import nsfwguard, splitter, thumbs
 from app.services.downloader import Downloader, MediaInfo, Progress, fetch_thumbnail
 from app.services.filestore import FileStore
 from app.services.formats import FormatOption
@@ -97,6 +98,10 @@ class JobTask:
     upload_started: float = 0.0
     # در _run یک‌بار محاسبه می‌شود (چک NSFW برای هر پارت تکرار نمی‌شود).
     nsfw: bool = False
+    # اسکرین‌شات‌های ویدیو برای انتخاب تامبنیل: (شناسهٔ پیام عکس، مسیر فایل)
+    shots: list[tuple[int, Path]] = field(default_factory=list)
+    thumb_picked: Path | None = None
+    thumb_done: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class JobManager:
@@ -125,6 +130,8 @@ class JobManager:
         self._workers: list[asyncio.Task] = []
         self._publisher: asyncio.Task | None = None
         self._nsfw_tasks: set[asyncio.Task] = set()
+        # (chat_id, message_id) → کار در حال «انتخاب تامبنیل»
+        self._pickers: dict[tuple[int, int], JobTask] = {}
         self._stop = asyncio.Event()
         self._wake = asyncio.Event()
 
@@ -377,6 +384,14 @@ class JobManager:
                                 source_download_bytes=thumbnail_bytes
                             )
                             source_traffic_recorded += thumbnail_bytes
+
+                # تامبنیل: قاب‌های ویدیو برای انتخاب کاربر + یک قاب پیشفرض معتبر
+                try:
+                    await self._maybe_pick_thumbnail(task, result, workdir)
+                except errors.JobCancelled:
+                    raise
+                except Exception:  # noqa: BLE001 — انتخاب تامبنیل نباید کار را بکشد
+                    log.exception("thumbnail picker failed; continuing with default")
 
                 limit = upload_limit(self.cfg, self.settings)
                 split_plan = None
@@ -643,6 +658,145 @@ class JobManager:
         if exc is not None:
             log.warning("nsfw cleanup failed", exc_info=exc)
 
+    # ── انتخاب تامبنیل از اسکرین‌شات‌های ویدیو ────────────────
+    async def _maybe_pick_thumbnail(
+        self, task: JobTask, result, workdir: Path
+    ) -> None:
+        """آلبوم قاب‌ها برای انتخاب کاربر؛ در نبود آن یک قاب پیشفرض می‌سازد."""
+        if task.mode == "link" or task.custom_thumbnail:
+            return
+        if getattr(result, "gallery", False):
+            return
+        kind = media_kind(result)
+        if kind not in ("video", "document"):
+            return
+        duration = float(
+            result.duration or (task.info.duration if task.info is not None else 0) or 0
+        )
+        if duration < 3:
+            return
+        wait = int(self.settings.thumb_wait_seconds)
+        if wait > 0:
+            await self._offer_thumb_shots(task, result, workdir, duration, wait)
+        if task.custom_thumbnail is None and result.thumbnail is None:
+            # کاور سایت نبود/خراب بود: یک قاب از خود ویدیو تا تلگرام سیاه نماند
+            shots = await thumbs.extract_shots(
+                result.path,
+                thumbs.shot_times(duration, 1),
+                workdir / "shots",
+                cancel=task.cancel,
+            )
+            if shots and shots[-1].stat().st_size <= thumbs.SHOT_MAX_BYTES:
+                task.custom_thumbnail = shots[-1].read_bytes()
+
+    async def _offer_thumb_shots(
+        self, task: JobTask, result, workdir: Path, duration: float, wait: int
+    ) -> None:
+        if self.bot is None or task.cancel.is_set():
+            return
+        shots = await thumbs.extract_shots(
+            result.path, thumbs.shot_times(duration), workdir / "shots",
+            cancel=task.cancel,
+        )
+        if not shots:
+            return
+        lang = task.lang
+        try:
+            ids = await thumbs.send_picker_album(
+                self.bot, task.chat_id, shots,
+                caption=text.t(lang, "thumb_album_caption"),
+            )
+        except TelegramError:
+            log.info("thumb album could not be sent", exc_info=True)
+            return
+        if len(ids) != len(shots):
+            shots = shots[: len(ids)]
+        if task.cancel.is_set():
+            await self._delete_messages(task.chat_id, ids)
+            raise errors.JobCancelled()
+        task.shots = list(zip(ids, shots, strict=False))
+        panel = None
+        try:
+            panel = await self.bot.send_message(
+                chat_id=task.chat_id,
+                text=text.t(
+                    lang, "thumb_picker_text", seconds=wait, count=len(shots)
+                ),
+                reply_markup=kb.thumb_picker_menu(lang, task.id),
+            )
+        except TelegramError:
+            log.info("thumb picker panel failed", exc_info=True)
+        for mid, _shot in task.shots:
+            self._pickers[(task.chat_id, mid)] = task
+        task.progress.stage = "thumb_wait"
+        await self._edit_progress(task, force=True)
+        try:
+            await self._wait_thumb_decision(task, wait)
+        finally:
+            for mid, _shot in task.shots:
+                self._pickers.pop((task.chat_id, mid), None)
+                # عکس‌ها دیگر لازم نیست؛ چت تمیز بماند
+                try:
+                    await self.bot.delete_message(task.chat_id, mid)
+                except (TelegramError, AttributeError):
+                    pass
+            if panel is not None:
+                try:
+                    await self.bot.delete_message(task.chat_id, panel.message_id)
+                except TelegramError:
+                    pass
+        if task.cancel.is_set():
+            raise errors.JobCancelled()
+        chosen = task.thumb_picked
+        if chosen is None or not chosen.is_file():
+            return
+        try:
+            payload = chosen.read_bytes()
+        except OSError:
+            return
+        if payload and len(payload) <= thumbs.SHOT_MAX_BYTES:
+            task.custom_thumbnail = payload
+
+    @staticmethod
+    async def _wait_thumb_decision(task: JobTask, wait: int) -> None:
+        remaining = max(1, int(wait))
+        while remaining > 0 and not task.cancel.is_set():
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(task.thumb_done.wait()), timeout=1.0
+                )
+                return
+            except TimeoutError:
+                remaining -= 1
+
+    def thumb_skip(self, job_id: str, user_id: int) -> bool:
+        """دکمهٔ «اسکیپ»: آپلود با تامبنیل پیشفرض ادامه می‌یابد."""
+        task = self._tasks.get(job_id)
+        if task is None or task.user_id != user_id:
+            return False
+        task.thumb_picked = None
+        task.thumb_done.set()
+        return True
+
+    def thumb_note_reply(
+        self, chat_id: int, reply_to: int, user_id: int
+    ) -> str | None:
+        """ریپلای روی یکی از قاب‌های آلبوم = انتخاب همان قاب به‌عنوان کاور.
+
+        ``None`` یعنی این پیام به قابِ هیچ کاری ربطی ندارد.
+        """
+        task = self._pickers.get((chat_id, reply_to))
+        if task is None:
+            return None
+        if user_id != task.user_id:
+            return "wrong_user"
+        shot = dict(task.shots).get(reply_to)
+        if shot is None or not shot.is_file():
+            return "gone"
+        task.thumb_picked = shot
+        task.thumb_done.set()
+        return "picked"
+
     async def _delete_messages(self, chat_id: int, message_ids: list[int]) -> None:
         """پاک‌کردن پارت‌های ارسال‌شده بعد از لغو/خطا."""
         for message_id in message_ids:
@@ -868,6 +1022,8 @@ class JobManager:
             return text.t(lang, "progress_stage_upload", step=step) + "\n" + text.t(
                 lang, "splitting", parts=max(2, prog.parts or 2)
             )
+        if prog.stage == "thumb_wait":
+            return text.t(lang, "thumb_wait_stage")
         if prog.stage == "uploading":
             elapsed = max(.001, time.monotonic() - task.upload_started)
             speed = prog.uploaded / elapsed

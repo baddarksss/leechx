@@ -50,6 +50,8 @@ async def _dispatch(update: Update, context: ContextTypes.DEFAULT_TYPE, query) -
             await _on_delivery(update, context, args)
         elif prefix == "x":
             await _on_cancel(update, context, args)
+        elif prefix == "t":
+            await _on_thumb(update, context, args)
         elif prefix == "u":
             await links_flow.on_callback(update, context, args)
         elif prefix == "d":
@@ -292,6 +294,24 @@ async def _on_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, args: l
         await safe_answer(update.callback_query, text.t(lang, "canceled"))
     else:
         await safe_answer(update.callback_query, text.t(lang, "expired_draft"), alert=True)
+
+
+async def _on_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE, args: list[str]) -> None:
+    """دکمه‌های «تامبنیل شخصی» (راهنما) و «اسکیپ» روی پنل انتخاب قاب."""
+    svc = services(context)
+    lang = lang_of(context)
+    query = update.callback_query
+    if len(args) < 2 or args[0] not in {"hint", "skip"}:
+        await safe_answer(query)
+        return
+    mode, job_id = args[0], args[1]
+    if mode == "hint":
+        await safe_answer(query, text.t(lang, "thumb_custom_hint"), alert=True)
+        return
+    if svc.jobs.thumb_skip(job_id, update.effective_user.id):
+        await safe_answer(query, text.t(lang, "thumb_skipped"))
+    else:
+        await safe_answer(query, text.t(lang, "expired_draft"), alert=True)
 
 
 async def _on_dismiss(update: Update, context: ContextTypes.DEFAULT_TYPE, args: list[str]) -> None:
