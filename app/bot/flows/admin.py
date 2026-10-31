@@ -849,7 +849,7 @@ def _render_settings(context: ContextTypes.DEFAULT_TYPE) -> str:
     svc = services(context)
     lang = lang_of(context)
     snap = svc.settings.snapshot()
-    return text.t(
+    body = text.t(
         lang,
         "admin_settings",
         ttl=f"{snap['link_ttl_hours']:g}",
@@ -860,6 +860,13 @@ def _render_settings(context: ContextTypes.DEFAULT_TYPE) -> str:
         maintenance=text.t(lang, "yes" if snap["maintenance"] else "no"),
         nsfw=text.t(lang, "yes" if snap["nsfw_enabled"] else "no"),
     )
+    if snap["nsfw_autodelete_enabled"]:
+        body += "\n\n" + text.t(
+            lang,
+            "admin_settings_nsfw_hint",
+            seconds=snap["nsfw_autodelete_seconds"],
+        )
+    return body
 
 
 async def _render_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

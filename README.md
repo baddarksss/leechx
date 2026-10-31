@@ -18,6 +18,7 @@ per-user concurrency limits, automatic disk cleanup and a modular design.
 | 🍪 **Cookies** | upload/paste `cookies.txt` (Netscape or JSON) from the admin panel for YouTube/Instagram |
 | 🏷 **Captions + hashtags** | title, source link and automatic hashtags on the media message itself |
 | 📁 **File → direct link** | signed URL, `Range` support, 6h TTL by default |
+| 🔞 **NSFW auto-delete** | adult media gets a countdown and is removed from the chat (default 30 s, off by default); groups get a private DM copy first |
 | 🧹 **Zero leftovers** | the working directory is removed right after upload |
 | ⚡️ **Job queue** | `WORKERS` global + `PER_USER_CONCURRENCY` per user |
 | 👑 **Admin panel** | categorized screens (stats, users, settings, groups, deploy, diagnostics), admin group with topics, ban by forward/username/ID, reports, logs, broadcast, cleanup |

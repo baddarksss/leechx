@@ -25,7 +25,7 @@ from telegram.error import TelegramError
 from app.config import Config
 from app.core import errors, human, text
 from app.db import repo
-from app.services import splitter
+from app.services import nsfwguard, splitter
 from app.services.downloader import Downloader, MediaInfo, Progress, fetch_thumbnail
 from app.services.filestore import FileStore
 from app.services.formats import FormatOption
@@ -84,6 +84,9 @@ class JobTask:
     mode: str = "video"
     custom_name: str = ""
     custom_thumbnail: bytes | None = None
+    # همهٔ پیام‌های رسانه‌ای که در این کار ارسال شدند (پارت‌ها/آلبوم)؛ برای
+    # حذف زمان‌بندی‌شدهٔ محتوای بزرگسال لازم است.
+    sent_messages: list[Message] = field(default_factory=list)
     cancel: asyncio.Event = field(default_factory=asyncio.Event)
     progress: Progress = field(default_factory=Progress)
     created_at: float = field(default_factory=time.time)
@@ -92,6 +95,8 @@ class JobTask:
     canceled_by_user: bool = False
     upload_task: asyncio.Task | None = None
     upload_started: float = 0.0
+    # در _run یک‌بار محاسبه می‌شود (چک NSFW برای هر پارت تکرار نمی‌شود).
+    nsfw: bool = False
 
 
 class JobManager:
@@ -119,6 +124,7 @@ class JobManager:
         self._tasks: dict[str, JobTask] = {}
         self._workers: list[asyncio.Task] = []
         self._publisher: asyncio.Task | None = None
+        self._nsfw_tasks: set[asyncio.Task] = set()
         self._stop = asyncio.Event()
         self._wake = asyncio.Event()
 
@@ -143,6 +149,10 @@ class JobManager:
             worker.cancel()
         if self._publisher is not None:
             self._publisher.cancel()
+        # تایمرهای حذف NSFW هم باید با خاموش‌شدن سرویس متوقف شوند.
+        for sweep in list(self._nsfw_tasks):
+            sweep.cancel()
+        self._nsfw_tasks.clear()
         for job in (*self._workers, self._publisher):
             if job is not None:
                 try:
@@ -276,6 +286,13 @@ class JobManager:
         workdir = self.store.job_dir(task.id)
         source_traffic_recorded = 0
         upload_traffic_recorded = 0
+        # محتوای بزرگسال: هرگز در کش گروه ادمین نگه داشته نمی‌شود و در صورت
+        # فعال‌بودن تنظیم، بعد از چند ثانیه از چت حذف می‌شود.
+        nsfw = nsfwguard.is_nsfw(
+            task.url, task.info.extractor if task.info is not None else ""
+        )
+        task.nsfw = nsfw
+        nsfw_delete_seconds = 0
         try:
             await repo.update_job(task.id, status="running", started_at=started)
             task.progress.stage = "downloading"
@@ -283,7 +300,12 @@ class JobManager:
             if self.hub is not None:
                 await self.hub.notify_job("download", task)
 
-            if task.mode != "link" and self.cache is not None and not task.custom_thumbnail:
+            if (
+                task.mode != "link"
+                and not nsfw
+                and self.cache is not None
+                and not task.custom_thumbnail
+            ):
                 try:
                     cached = await self.cache.cached_delivery(self.bot, task)
                 except Exception:
@@ -412,6 +434,8 @@ class JobManager:
                             caption_title=result.title,
                             custom_thumbnail=task.custom_thumbnail,
                             cancel=task.cancel,
+                            sent=task.sent_messages,
+                            spoiler=nsfw and task.chat_id != task.user_id,
                         )
                     else:
                         send_coro = self.uploader.send(
@@ -433,6 +457,8 @@ class JobManager:
                             filename=result.path.name,
                             custom_thumbnail=task.custom_thumbnail,
                             cancel=task.cancel,
+                            sent=task.sent_messages,
+                            spoiler=nsfw and task.chat_id != task.user_id,
                         )
                     task.upload_task = asyncio.create_task(send_coro)
                     try:
@@ -487,7 +513,7 @@ class JobManager:
                         except TelegramError:
                             pass
                         raise errors.JobCancelled()
-                    if self.cache is not None:
+                    if self.cache is not None and not nsfw:
                         await self.cache.record_delivery(self.bot, task, result, uploaded_message)
 
             await repo.update_job(
@@ -502,11 +528,23 @@ class JobManager:
             await repo.log_event(task.user_id, "download_done")
             await repo.log_event(task.user_id, "upload_done")
             await repo.log_event(task.user_id, "bytes", float(result.size))
+            if task.mode != "link" and nsfw and self.settings.nsfw_autodelete:
+                seconds = self.settings.nsfw_autodelete_seconds
+                if self._schedule_nsfw_cleanup(
+                    task, seconds, self.settings.nsfw_autodelete_copy_dm
+                ):
+                    nsfw_delete_seconds = seconds
             if task.mode != "link":
                 body = text.t(task.lang, "done") + f"\n<b>{human.esc(result.title)}</b>"
                 if split_plan is not None and split_plan.count > 1:
                     body += "\n" + text.t(
                         task.lang, "split_note", parts=split_plan.count
+                    )
+                if nsfw_delete_seconds:
+                    body += "\n" + text.t(
+                        task.lang,
+                        "nsfw_autodelete_job_line",
+                        seconds=nsfw_delete_seconds,
                     )
                 await self._edit_final(task, body)
             if self.hub is not None:
@@ -579,6 +617,37 @@ class JobManager:
             self._tasks.pop(task.id, None)
             self._wake.set()
 
+    def _schedule_nsfw_cleanup(
+        self, task: JobTask, seconds: int, copy_dm: bool
+    ) -> bool:
+        """تایمر حذف را جدا از worker اجرا می‌کند تا صف معطل نماند."""
+        ids = [m.message_id for m in task.sent_messages if m is not None]
+        if not ids or self.bot is None:
+            return False
+        job = asyncio.create_task(
+            nsfwguard.cleanup_messages(
+                self.bot,
+                chat_id=task.chat_id,
+                user_id=task.user_id,
+                message_ids=ids,
+                lang=task.lang,
+                seconds=seconds,
+                copy_dm=copy_dm,
+            ),
+            name=f"nsfw-{task.id}",
+        )
+        self._nsfw_tasks.add(job)
+        job.add_done_callback(self._nsfw_done)
+        return True
+
+    def _nsfw_done(self, job: asyncio.Task) -> None:
+        self._nsfw_tasks.discard(job)
+        if job.cancelled():
+            return
+        exc = job.exception()
+        if exc is not None:
+            log.warning("nsfw cleanup failed", exc_info=exc)
+
     async def _delete_messages(self, chat_id: int, message_ids: list[int]) -> None:
         """پاک‌کردن پارت‌های ارسال‌شده بعد از لغو/خطا."""
         for message_id in message_ids:
@@ -634,6 +703,8 @@ class JobManager:
                     custom_thumbnail=task.custom_thumbnail,
                     cancel=task.cancel,
                     reset_progress=False,
+                    sent=task.sent_messages,
+                    spoiler=task.nsfw and task.chat_id != task.user_id,
                 )
                 task.upload_task = asyncio.create_task(send_coro)
                 try:

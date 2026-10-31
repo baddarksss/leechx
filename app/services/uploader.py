@@ -132,6 +132,8 @@ class Uploader:
         with_caption: bool = True,
         reset_progress: bool = True,
         progress_total: int | None = None,
+        sent: list[Message] | None = None,
+        spoiler: bool = False,
     ) -> Message:
         self._check_size(result.size)
         if reset_progress:
@@ -183,6 +185,7 @@ class Uploader:
             progress.pct = 0.0
             progress.uploaded = 0
 
+        message: Message | None = None
         try:
             if custom_thumbnail:
                 if len(custom_thumbnail) > 200 * 1024:
@@ -194,7 +197,7 @@ class Uploader:
                 thumb_file = make_thumbnail_input(thumb_handle, "thumb.jpg")
 
             if not as_document and kind == "audio":
-                return await bot.send_audio(
+                message = await bot.send_audio(
                     chat_id=chat_id,
                     audio=open_media(),
                     title=title[:64],
@@ -203,27 +206,27 @@ class Uploader:
                     thumbnail=thumb_file,
                     **common,
                 )
-
-            if not as_document and kind == "image":
-                return await bot.send_photo(
+            elif not as_document and kind == "image":
+                message = await bot.send_photo(
                     chat_id=chat_id,
                     photo=open_media(),
+                    has_spoiler=spoiler or None,
                     **common,
                 )
-
-            if not as_document and kind == "video" and result.suffix in PLAYABLE_VIDEO_EXT:
+            elif not as_document and kind == "video" and result.suffix in PLAYABLE_VIDEO_EXT:
                 extra = {}
                 if result.width and result.height:
                     extra["width"] = result.width
                     extra["height"] = result.height
                 try:
-                    return await bot.send_video(
+                    message = await bot.send_video(
                         chat_id=chat_id,
                         video=open_media(),
                         duration=result.duration or 0,
                         supports_streaming=True,
                         thumbnail=thumb_file,
                         filename=display_name,
+                        has_spoiler=spoiler or None,
                         **extra,
                         **common,
                     )
@@ -237,13 +240,18 @@ class Uploader:
                     if thumb_handle is not None and not thumb_handle.closed:
                         thumb_handle.seek(0)
 
-            return await bot.send_document(
-                chat_id=chat_id,
-                document=open_media(),
-                filename=display_name,
-                thumbnail=thumb_file,
-                **common,
-            )
+            if message is None:
+                message = await bot.send_document(
+                    chat_id=chat_id,
+                    document=open_media(),
+                    filename=display_name,
+                    thumbnail=thumb_file,
+                    **common,
+                )
+            if sent is not None and message is not None:
+                # برای حذف زمان‌بندی‌شدهٔ NSFW به شناسهٔ همهٔ پارت‌ها نیاز داریم.
+                sent.append(message)
+            return message
         except TelegramError as exc:
             msg = str(exc)
             if "too big" in msg.lower():
@@ -276,6 +284,8 @@ class Uploader:
         caption_title: str | None = None,
         custom_thumbnail: bytes | None = None,
         cancel: asyncio.Event | None = None,
+        sent: list[Message] | None = None,
+        spoiler: bool = False,
     ) -> Message:
         """تحویل آلبوم/گالری: چندانتخابی عکس به‌صورت media group.
 
@@ -293,7 +303,7 @@ class Uploader:
                 bot, chat_id, single, progress, source_url,
                 as_document=as_document, filename=filename,
                 caption_title=title, custom_thumbnail=custom_thumbnail,
-                cancel=cancel,
+                cancel=cancel, sent=sent, spoiler=spoiler,
             )
 
         for part in parts:
@@ -334,6 +344,7 @@ class Uploader:
                 ),
                 caption=caption or None,
                 parse_mode=ParseMode.HTML if caption else None,
+                has_spoiler=spoiler or None,
             )
 
         try:
@@ -357,6 +368,8 @@ class Uploader:
                         caption_sent = True
                     if first_message is None and messages:
                         first_message = messages[0]
+                    if sent is not None:
+                        sent.extend(messages)
                 except TelegramError as exc:
                     log.info("media group rejected (%s); sending files one by one", exc)
                     for path in chunk:
@@ -371,6 +384,8 @@ class Uploader:
                             reset_progress=False,
                             progress_total=total,
                             cancel=cancel,
+                            sent=sent,
+                            spoiler=spoiler,
                         )
                         caption_sent = True
                         first_message = first_message or message
@@ -390,6 +405,8 @@ class Uploader:
                     reset_progress=False,
                     progress_total=total,
                     cancel=cancel,
+                    sent=sent,
+                    spoiler=spoiler,
                 )
                 caption_sent = True
                 first_message = first_message or message

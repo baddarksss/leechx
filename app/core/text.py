@@ -135,6 +135,16 @@ FA: dict[str, str] = {
     "invalid_url": "⚠️ لینک نامعتبر است.",
     "unsupported": "😕 این لینک پشتیبانی نمی‌شود.",
     "nsfw_blocked": "🔞 این محتوا در ربات غیرفعال است.",
+    # ── محافظت از ربات: حذف خودکار محتوای بزرگسال ──
+    "nsfw_autodelete_notice": (
+        "🔞 <b>محتوای بزرگسال</b>\n"
+        "این فایل تا <b>{seconds}</b> ثانیهٔ دیگر خودکار از چت حذف می‌شود.{dm_line}\n"
+        "اگر می‌خواهی نگهش داری، همین حالا ذخیره یا فورواردش کن."
+    ),
+    "nsfw_autodelete_dm_line": "\n📥 یک نسخهٔ خصوصی هم برایت فرستادم؛ از همان‌جا می‌توانی ذخیره‌اش کنی.",
+    "nsfw_autodelete_countdown": "🔞 حذف خودکار تا <b>{seconds}</b> ثانیهٔ دیگر…",
+    "nsfw_autodelete_done": "🗑️ فایل بزرگسال طبق زمان‌بندی از چت حذف شد.",
+    "nsfw_autodelete_job_line": "🔞 این فایل {seconds} ثانیهٔ دیگر از چت حذف می‌شود.",
     "too_big": "📦 حجم فایل ({size}) از حد مجاز ({max}) بیشتر است.",
     "not_media": "📄 این فایل ویدیو/موزیک نیست.",
     "live_unsupported": "🔴 پخش زنده پشتیبانی نمی‌شود.",
@@ -282,6 +292,17 @@ FA: dict[str, str] = {
     "set_links": "🔗 لینک‌های همزمان: {v}",
     "set_maintenance": "🛠 حالت تعمیر {flag}",
     "set_nsfw": "🔞 سایت‌های بزرگسال {flag}",
+    "set_nsfw_delete": "🔞 حذف خودکار NSFW {flag}",
+    "set_nsfw_seconds": "⏱ ثانیهٔ حذف NSFW: {v}",
+    "set_nsfw_copy": "📥 نسخهٔ خصوصی NSFW {flag}",
+    "admin_settings_nsfw_hint": (
+        "🔞 حذف خودکار NSFW روشن است ({seconds} ثانیه). در گروه/کانال ربات "
+        "باید دسترسی «حذف پیام» داشته باشد؛ نسخهٔ خصوصی فقط وقتی می‌رسد که "
+        "کاربر ربات را بلاک نکرده باشد."
+    ),
+    "run_nsfw_autodelete_enabled": "حذف خودکار فایل بزرگسال",
+    "run_nsfw_autodelete_seconds": "زمان حذف فایل بزرگسال (ثانیه)",
+    "run_nsfw_autodelete_copy_dm": "ارسال نسخهٔ خصوصی فایل بزرگسال",
     "admin_limit_reached": "⛔️ سقف ادمین‌ها ({max}) پر است.",
     "admin_env_admin": "این کاربر در ADMIN_IDS تنظیمات است؛ از env حذفش کن.",
 
@@ -829,6 +850,16 @@ EN: dict[str, str] = {
     "invalid_url": "⚠️ Invalid link.",
     "unsupported": "😕 This link is not supported.",
     "nsfw_blocked": "🔞 This content is disabled in this bot.",
+    # ── Bot protection: short-lived adult media ──
+    "nsfw_autodelete_notice": (
+        "🔞 <b>Adult content</b>\n"
+        "This file will be deleted from the chat in <b>{seconds}</b> seconds.{dm_line}\n"
+        "Save or forward it now if you want to keep it."
+    ),
+    "nsfw_autodelete_dm_line": "\n📥 I also sent a private copy so you can save it from there.",
+    "nsfw_autodelete_countdown": "🔞 Auto-delete in <b>{seconds}</b> seconds…",
+    "nsfw_autodelete_done": "🗑️ The adult file was deleted on schedule.",
+    "nsfw_autodelete_job_line": "🔞 This file leaves the chat in {seconds} seconds.",
     "too_big": "📦 File size ({size}) exceeds the limit ({max}).",
     "not_media": "📄 Not a video/audio file.",
     "live_unsupported": "🔴 Live streams are not supported.",
@@ -968,6 +999,17 @@ EN: dict[str, str] = {
     "set_links": "🔗 Concurrent links: {v}",
     "set_maintenance": "🛠 Maintenance {flag}",
     "set_nsfw": "🔞 NSFW sites {flag}",
+    "set_nsfw_delete": "🔞 NSFW auto-delete {flag}",
+    "set_nsfw_seconds": "⏱ NSFW delete delay: {v}s",
+    "set_nsfw_copy": "📥 NSFW private copy {flag}",
+    "admin_settings_nsfw_hint": (
+        "🔞 NSFW auto-delete is ON ({seconds} s). In groups/channels the bot "
+        "needs the “Delete messages” right; the private copy is only delivered "
+        "if the user has not blocked the bot."
+    ),
+    "run_nsfw_autodelete_enabled": "NSFW auto-delete",
+    "run_nsfw_autodelete_seconds": "NSFW delete delay (seconds)",
+    "run_nsfw_autodelete_copy_dm": "Send a private copy of NSFW files",
     "admin_limit_reached": "⛔️ Admin limit reached ({max}).",
     "admin_env_admin": "This user is listed in ADMIN_IDS; remove them from env.",
     "status": (
@@ -1493,6 +1535,16 @@ RU: dict[str, str] = {
     "invalid_url": "⚠️ Некорректная ссылка.",
     "unsupported": "😕 Эта ссылка не поддерживается.",
     "nsfw_blocked": "🔞 Этот контент отключён в боте.",
+    # ── Защита бота: временные взрослые медиа ──
+    "nsfw_autodelete_notice": (
+        "🔞 <b>Взрослый контент</b>\n"
+        "Файл будет автоматически удалён из чата через <b>{seconds}</b> с.{dm_line}\n"
+        "Сохрани или перешли его сейчас, если он нужен."
+    ),
+    "nsfw_autodelete_dm_line": "\n📥 Я также отправил приватную копию — её можно сохранить.",
+    "nsfw_autodelete_countdown": "🔞 Автоудаление через <b>{seconds}</b> с…",
+    "nsfw_autodelete_done": "🗑️ Взрослый файл удалён по расписанию.",
+    "nsfw_autodelete_job_line": "🔞 Файл покинет чат через {seconds} с.",
     "too_big": "📦 Размер файла ({size}) превышает лимит ({max}).",
     "not_media": "📄 Это не видео/аудио файл.",
     "live_unsupported": "🔴 Прямые трансляции не поддерживаются.",
@@ -1624,6 +1676,17 @@ RU: dict[str, str] = {
     "set_links": "🔗 Одновременные ссылки: {v}",
     "set_maintenance": "🛠 Обслуживание {flag}",
     "set_nsfw": "🔞 Взрослые сайты {flag}",
+    "set_nsfw_delete": "🔞 Автоудаление NSFW {flag}",
+    "set_nsfw_seconds": "⏱ Задержка удаления NSFW: {v} с",
+    "set_nsfw_copy": "📥 Приватная копия NSFW {flag}",
+    "admin_settings_nsfw_hint": (
+        "🔞 Автоудаление NSFW включено ({seconds} с). В группах/каналах боту "
+        "нужно право «Удалять сообщения»; приватная копия придёт, только если "
+        "пользователь не заблокировал бота."
+    ),
+    "run_nsfw_autodelete_enabled": "Автоудаление взрослых файлов",
+    "run_nsfw_autodelete_seconds": "Задержка удаления взрослых файлов (с)",
+    "run_nsfw_autodelete_copy_dm": "Отправлять приватную копию взрослых файлов",
     "admin_limit_reached": "⛔️ Достигнут лимит админов ({max}).",
     "admin_env_admin": "Этот пользователь указан в ADMIN_IDS; удали его из env.",
 

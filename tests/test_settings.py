@@ -60,6 +60,9 @@ async def test_snapshot(db):
         "max_links_per_user",
         "maintenance",
         "nsfw_enabled",
+        "nsfw_autodelete_enabled",
+        "nsfw_autodelete_seconds",
+        "nsfw_autodelete_copy_dm",
     }
 
 

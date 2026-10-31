@@ -22,6 +22,10 @@ SCHEMA: dict[str, tuple[str, str]] = {
     "max_links_per_user": ("int", "حداکثر لینک همزمان هر کاربر (0=خاموش)"),
     "maintenance": ("bool", "حالت تعمیر"),
     "nsfw_enabled": ("bool", "سایت‌های بزرگسال"),
+    # ── محافظت از ربات در برابر محتوای بزرگسال ──
+    "nsfw_autodelete_enabled": ("bool", "حذف خودکار فایل بزرگسال"),
+    "nsfw_autodelete_seconds": ("int", "زمان حذف فایل بزرگسال (ثانیه)"),
+    "nsfw_autodelete_copy_dm": ("bool", "ارسال نسخهٔ خصوصی فایل بزرگسال"),
     # ── مقادیر متنی که ادمین از خود ربات وارد می‌کند ──
     "public_base_url": ("text", "آدرس عمومی لینک‌ها"),
     "proxy": ("text", "پروکسی دانلود"),
@@ -85,6 +89,10 @@ class RuntimeSettings:
             "max_links_per_user": self.cfg.max_links_per_user,
             "maintenance": False,
             "nsfw_enabled": self.cfg.nsfw_enabled,
+            # پیش‌فرض خاموش است تا رفتار فعلی ربات تغییر نکند؛ ادمین روشنش می‌کند.
+            "nsfw_autodelete_enabled": False,
+            "nsfw_autodelete_seconds": 30,
+            "nsfw_autodelete_copy_dm": True,
             "public_base_url": self.cfg.public_base_url,
             "proxy": self.cfg.proxy,
             "telegram_api_url": self.cfg.telegram_api_url,
@@ -195,6 +203,21 @@ class RuntimeSettings:
         return self.get_bool("nsfw_enabled")
 
     @property
+    def nsfw_autodelete(self) -> bool:
+        """آیا فایل‌های بزرگسال بعد از چند ثانیه از چت حذف شوند؟"""
+        return self.get_bool("nsfw_autodelete_enabled")
+
+    @property
+    def nsfw_autodelete_seconds(self) -> int:
+        """زمان حذف؛ همیشه در بازهٔ ۵ تا ۶۰۰ ثانیه (پیش‌فرض ۳۰)."""
+        return max(5, min(600, self.get_int("nsfw_autodelete_seconds") or 30))
+
+    @property
+    def nsfw_autodelete_copy_dm(self) -> bool:
+        """ارسال نسخهٔ خصوصی به کاربر، قبل از حذف فایل از گروه/کانال."""
+        return self.get_bool("nsfw_autodelete_copy_dm")
+
+    @property
     def force_join_enabled(self) -> bool:
         return self.get_bool("force_join_enabled")
 
@@ -246,4 +269,7 @@ class RuntimeSettings:
             "max_links_per_user": self.max_links_per_user,
             "maintenance": self.maintenance,
             "nsfw_enabled": self.nsfw_enabled,
+            "nsfw_autodelete_enabled": self.nsfw_autodelete,
+            "nsfw_autodelete_seconds": self.nsfw_autodelete_seconds,
+            "nsfw_autodelete_copy_dm": self.nsfw_autodelete_copy_dm,
         }

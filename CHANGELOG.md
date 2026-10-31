@@ -7,6 +7,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.10.0] - 2026-10-31 · "Clean Chat"
+
+### Added
+- **NSFW auto-delete (temporary adult media).** When a delivery comes from an
+  adult site, the bot announces under the file that it will disappear from the
+  chat (default 30 s), counts down, then deletes every sent part. In private
+  chats it just deletes; in groups/channels it first copies the parts to the
+  user's DM so nothing is lost ("Saved Messages" is not writable by bots).
+- Settings → **🔞 NSFW auto-delete** (off by default), delete delay (5–600 s),
+  and **private copy** toggle; all three are runtime settings, no restart.
+- Anti-restriction safeguards: NSFW files are sent with a spoiler in groups,
+  are never cached in the admin group, DM copies are capped (30 files), and the
+  countdown edits at most once every 10 s to avoid Telegram flood limits.
+
+### Changed
+- NSFW media is excluded from the delivery cache, so a cached adult file can
+  never bypass the temporary-media policy.
+
 ## [5.9.1] - 2026-10-31 · "Split Delivery"
 
 ### Changed

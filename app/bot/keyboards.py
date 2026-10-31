@@ -405,6 +405,13 @@ def settings_menu(lang: str, snap: dict) -> Kb:
         [Btn(text.t(lang, "set_links", v=snap["max_links_per_user"]), callback_data="a|edit|max_links_per_user")],
         [Btn(text.t(lang, "set_maintenance", flag=flag(snap["maintenance"])), callback_data="a|toggle|maintenance"),
          Btn(text.t(lang, "set_nsfw", flag=flag(snap["nsfw_enabled"])), callback_data="a|toggle|nsfw_enabled")],
+        # ── محافظت از ربات در برابر محتوای بزرگسال ──
+        [Btn(text.t(lang, "set_nsfw_delete", flag=flag(snap["nsfw_autodelete_enabled"])),
+             callback_data="a|toggle|nsfw_autodelete_enabled")],
+        [Btn(text.t(lang, "set_nsfw_seconds", v=snap["nsfw_autodelete_seconds"]),
+             callback_data="a|edit|nsfw_autodelete_seconds"),
+         Btn(text.t(lang, "set_nsfw_copy", flag=flag(snap["nsfw_autodelete_copy_dm"])),
+             callback_data="a|toggle|nsfw_autodelete_copy_dm")],
         [_btn(lang, "btn_admin_runtime", A_RUNTIME)],
     ])
 
