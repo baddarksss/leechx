@@ -5,11 +5,16 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import event, inspect, text
+import logging
+
+from sqlalchemy import Column, event, inspect, text
+from sqlalchemy.engine import Dialect
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import Config, get_config
 from app.db.models import Base
+
+log = logging.getLogger("leechx.db")
 
 _engine: AsyncEngine | None = None
 _factory: async_sessionmaker[AsyncSession] | None = None
@@ -80,6 +85,66 @@ def _migrate_user_language_selected(sync_conn) -> None:
         ))
 
 
+def _column_default_sql(column: Column, dialect: Dialect) -> str | None:
+    """مقدار پیش‌فرض ستون را به SQL قابل‌نوشتن تبدیل می‌کند (یا None)."""
+    if column.server_default is not None:
+        arg = getattr(column.server_default, "arg", None)
+        if arg is not None and not callable(arg):
+            return str(arg)
+    default = column.default
+    if default is None or not getattr(default, "is_scalar", False):
+        return None
+    value = default.arg
+    if callable(value):
+        return None
+    if isinstance(value, bool):
+        if dialect.name == "sqlite":
+            return "1" if value else "0"
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return "'" + value.replace("'", "''") + "'"
+    return None
+
+
+def _migrate_missing_columns(sync_conn) -> None:
+    """هر ستونی که در مدل هست ولی در جدولِ موجود نیست را اضافه می‌کند.
+
+    ``create_all`` فقط جدول‌های جدید را می‌سازد؛ ستون‌های تازه در جدول‌های قدیمی
+    باعث می‌شوند ربات بعد از هر آپدیتِ سورس بشکند. این تابع یک مایگریشن افزایشی
+    سبک است: فقط ADD COLUMN انجام می‌دهد و دادهٔ موجود را دست نمی‌زند.
+    """
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        present = {col["name"] for col in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in present or column.primary_key:
+                continue
+            ddl_type = column.type.compile(dialect=sync_conn.dialect)
+            default_sql = _column_default_sql(column, sync_conn.dialect)
+            statement = f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl_type}'
+            if default_sql is not None:
+                statement += f" DEFAULT {default_sql}"
+            if not column.nullable:
+                if default_sql is None:
+                    log.warning(
+                        "cannot add NOT NULL column %s.%s without a default; skipping",
+                        table.name,
+                        column.name,
+                    )
+                    continue
+                statement += " NOT NULL"
+            try:
+                sync_conn.execute(text(statement))
+                log.info("added missing column %s.%s", table.name, column.name)
+            except Exception:  # noqa: BLE001 — مایگریشن نباید ربات را بخواباند
+                log.warning("could not add column %s.%s", table.name, column.name, exc_info=True)
+
+
 async def init_db(cfg: Config | None = None) -> None:
     global _engine, _factory
     cfg = cfg or get_config()
@@ -90,6 +155,7 @@ async def init_db(cfg: Config | None = None) -> None:
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_user_language_selected)
+        await conn.run_sync(_migrate_missing_columns)
         # SQLite and PostgreSQL both support this atomic singleton bootstrap.
         await conn.execute(text(
             "INSERT INTO traffic_counters (id) VALUES (1) ON CONFLICT (id) DO NOTHING"

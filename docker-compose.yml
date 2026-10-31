@@ -12,6 +12,8 @@ services:
     volumes:
       # فایل‌های موقت و دیتابیس — با پاک‌شدن کانتینر از بین نمی‌روند
       - ./data:/app/data
+      # بسته‌های pip --user (مثل yt-dlp) — بعد از rebuild/restart هم می‌مانند
+      - ./data/pylocal:/home/leechx/.local
       # کوکی‌ها (اختیاری)
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]

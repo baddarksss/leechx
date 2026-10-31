@@ -30,12 +30,16 @@ COPY . .
 
 # کاربر غیر روت
 RUN useradd -m -u 10001 leechx \
- && mkdir -p /app/data/files /app/data/tmp /app/data/cookies \
- && chown -R leechx:leechx /app
+ && mkdir -p /app/data/files /app/data/tmp /app/data/cookies /home/leechx/.local/bin \
+ && chown -R leechx:leechx /app /home/leechx
 
 USER leechx
 
-ENV DATA_DIR=/app/data \
+# نصب‌های pip --user (مثل بروزرسانی yt-dlp از داخل ربات) در همین مسیر می‌نشینند
+# و در docker-compose به ./data/pylocal بایند می‌شوند تا بعد از rebuild بمانند.
+ENV PYTHONUSERBASE=/home/leechx/.local \
+    PATH=/home/leechx/.local/bin:$PATH \
+    DATA_DIR=/app/data \
     HOST=0.0.0.0 \
     PORT=8080
 

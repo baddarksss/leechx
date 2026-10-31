@@ -6,6 +6,13 @@
 * فقط فایل‌های «سورس» را خارج می‌کند (بدون ``.env``، ``data`` و دیتابیس).
 * ZIP ورودی را سخت اعتبارسنجی می‌کند (path traversal، حجم، تعداد فایل، symlink).
 * قبل از هر تغییر از سورس فعلی بکاپ ZIP می‌گیرد.
+* وابستگی‌های جدید را **قبل از** دست‌زدن به سورس نصب می‌کند (اگر
+  ``requirements.txt`` عوض شده باشد) تا آپدیتِ نیمه‌کاره رخ ندهد.
+* فایل‌های سورسی که در ZIP جدید نیستند را پاک می‌کند (حذف‌شدن درست است).
+* خروجی پایتون ZIP را قبل از اعمال بررسی می‌کند و در پایان ``__pycache__``
+  کهنه را پاک می‌کند.
+* یک اسنپ‌شات از سورسِ اعمال‌شده در ``data/updates`` می‌گذارد تا بعداً قابل
+  دانلود/کامیت به GitHub باشد.
 * فایل‌ها را جای‌گزین می‌کند و فقط در پایان، ری‌استارت را درخواست می‌دهد.
 
 اعمال سورس داخل همان فرآیند انجام می‌شود؛ ری‌استارت واقعی در
@@ -74,6 +81,12 @@ MAX_UNCOMPRESSED = 300 * 1024 * 1024
 VERSION_RE = re.compile(r'__version__\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"')
 
 KEEP_BACKUPS = 5
+KEEP_APPLIED = 3
+
+# اگر ZIP جدید کمتر از این نسبت از فایل‌های فعلی را داشته باشد، ناقص تلقی می‌شود.
+MIN_FILES_RATIO = 0.5
+PIP_TIMEOUT = 900.0
+COMPILE_TIMEOUT = 120.0
 
 
 @dataclass
@@ -99,7 +112,10 @@ class ApplyResult:
     reason: str = ""
     version: str = ""
     files: int = 0
+    removed: int = 0
+    deps: bool = False
     backup: Path | None = None
+    archive: Path | None = None
 
 
 class SourceUpdater:
@@ -281,10 +297,35 @@ class SourceUpdater:
             if not (staging / "main.py").is_file() or not (staging / "app" / "version.py").is_file():
                 return ApplyResult(False, "staged archive is incomplete")
 
+            staged = self._staged_files(staging)
+            current = len(self.source_files())
+            if current and len(staged) < max(3, int(current * MIN_FILES_RATIO)):
+                return ApplyResult(
+                    False,
+                    f"archive looks incomplete ({len(staged)} files vs {current} in the running source)",
+                )
+
+            # ۱) سلامت نحوی کد جدید — قبل از هر تغییری
+            ok, reason = self._compile_check(staging)
+            if not ok:
+                return ApplyResult(False, f"python syntax error: {reason}")
+
+            # ۲) وابستگی‌ها — قبل از جای‌گزینی سورس، تا خرابی نیمه‌کاره نداشته باشیم
+            deps = False
+            if self.requirements_changed(staging):
+                ok, reason = self._install_requirements(staging / "requirements.txt")
+                if not ok:
+                    return ApplyResult(False, f"dependency install failed: {reason}")
+                deps = True
+
+            # ۳) بکاپ، حذف فایل‌های منسوخ، نوشتن فایل‌های جدید
             backup = self.backup(reason="pre-update")
+            removed = self._remove_stale(staged)
             copied = 0
             for src in staging.rglob("*"):
                 if not src.is_file():
+                    continue
+                if "__pycache__" in src.parts or src.suffix in (".pyc", ".pyo"):
                     continue
                 rel = src.relative_to(staging)
                 target = self.root / rel
@@ -292,21 +333,176 @@ class SourceUpdater:
                 shutil.copy2(src, target)
                 copied += 1
 
-            self._write_last_update(preview.version, copied, backup)
+            self._purge_pycache()
+
+            # ۴) اسنپ‌شات سورس اعمال‌شده (برای دانلود/کامیت به GitHub)
+            archive: Path | None = None
+            try:
+                archive = self.export_zip(kind="applied", version=preview.version)
+                self._prune_applied()
+            except OSError:
+                log.warning("could not export applied source snapshot", exc_info=True)
+
+            self._write_last_update(
+                preview.version, copied, backup, removed=removed, deps=deps, archive=archive
+            )
         except (OSError, zipfile.BadZipFile) as exc:
             log.exception("source update failed")
             return ApplyResult(False, str(exc)[:160])
         finally:
             shutil.rmtree(staging, ignore_errors=True)
 
-        return ApplyResult(True, version=preview.version, files=copied, backup=backup)
+        return ApplyResult(
+            True,
+            version=preview.version,
+            files=copied,
+            removed=removed,
+            deps=deps,
+            backup=backup,
+            archive=archive,
+        )
 
-    def _write_last_update(self, version: str, files: int, backup: Path | None) -> None:
+    @staticmethod
+    def _staged_files(staging: Path) -> set[str]:
+        return {
+            path.relative_to(staging).as_posix()
+            for path in staging.rglob("*")
+            if path.is_file()
+        }
+
+    def _compile_check(self, staging: Path) -> tuple[bool, str]:
+        """کامپایل همهٔ فایل‌های پایتون ZIP؛ خطای نحوی = عدم اعمال."""
+        result: tuple[bool, str] = (True, "")
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "compileall", "-q", str(staging)],
+                capture_output=True,
+                text=True,
+                timeout=COMPILE_TIMEOUT,
+            )
+            if proc.returncode != 0:
+                tail = (proc.stdout + proc.stderr).strip().splitlines()[-3:]
+                result = (False, (" | ".join(tail) or "compileall failed")[:300])
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            log.warning("compile check skipped: %s", exc)
+        finally:
+            # compileall داخل staging پوشهٔ __pycache__ می‌سازد؛ نباید به سورس راه یابد.
+            for cache in staging.rglob("__pycache__"):
+                shutil.rmtree(cache, ignore_errors=True)
+        return result
+
+    def requirements_changed(self, staging: Path) -> bool:
+        """آیا ``requirements.txt`` نسبت به سورس فعلی عوض شده است؟"""
+        new_path = staging / "requirements.txt"
+        old_path = self.root / "requirements.txt"
+        if not new_path.is_file():
+            return False
+        try:
+            return self._parse_requirements(new_path) != self._parse_requirements(old_path)
+        except OSError:
+            return True
+
+    @staticmethod
+    def _parse_requirements(path: Path) -> set[str]:
+        if not path.is_file():
+            return set()
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return set()
+        lines = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            lines.append(line)
+        return set(lines)
+
+    def _install_requirements(self, requirements: Path) -> tuple[bool, str]:
+        args = [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--no-cache-dir",
+            "--disable-pip-version-check",
+            "-r",
+            str(requirements),
+        ]
+        if not self._site_packages_writable():
+            args.append("--user")
+        env = dict(os.environ)
+        env.setdefault("PIP_USER", "1")
+        try:
+            proc = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=PIP_TIMEOUT,
+                cwd=str(self.root),
+                env=env,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return False, str(exc)[:200]
+        if proc.returncode == 0:
+            log.info("dependencies installed from %s", requirements)
+            return True, ""
+        tail = (proc.stdout + proc.stderr).strip().splitlines()[-4:]
+        return False, (" | ".join(tail) or f"pip exited with {proc.returncode}")[:300]
+
+    def _remove_stale(self, staged: set[str]) -> int:
+        """فایل‌هایی که در سورس فعلی هستند ولی در ZIP جدید نیستند را حذف می‌کند."""
+        removed = 0
+        for old in self.source_files():
+            rel = old.relative_to(self.root).as_posix()
+            if rel in staged:
+                continue
+            try:
+                old.unlink()
+                removed += 1
+            except OSError:
+                log.warning("could not remove stale file %s", rel)
+        if removed:
+            log.info("removed %d stale source files", removed)
+        return removed
+
+    def _purge_pycache(self) -> None:
+        for path in self.root.rglob("__pycache__"):
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+
+    def applied_archives(self) -> list[Path]:
+        return sorted(
+            self.workdir.glob("leechx-applied-*.zip"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+
+    def _prune_applied(self) -> None:
+        for old in self.applied_archives()[KEEP_APPLIED:]:
+            try:
+                old.unlink()
+            except OSError:
+                continue
+
+    def _write_last_update(
+        self,
+        version: str,
+        files: int,
+        backup: Path | None,
+        *,
+        removed: int = 0,
+        deps: bool = False,
+        archive: Path | None = None,
+    ) -> None:
         payload = {
             "version": version,
             "at": int(time.time()),
             "files": files,
+            "removed": removed,
+            "deps": deps,
             "backup": backup.name if backup else "",
+            "archive": archive.name if archive else "",
         }
         try:
             (self.workdir / "last_update.json").write_text(
@@ -352,6 +548,20 @@ class SourceUpdater:
         except importlib.metadata.PackageNotFoundError:
             return "not installed"
 
+    @staticmethod
+    def ytdlp_location() -> str:
+        """مسیری که yt-dlp نصب شده؛ برای اطمینان از پایدار بودنش (volume)."""
+        try:
+            dist = importlib.metadata.distribution("yt-dlp")
+            return str(Path(dist.locate_file("")).resolve())
+        except Exception:  # noqa: BLE001
+            return ""
+
+    @staticmethod
+    def user_base() -> str:
+        override = os.environ.get("PYTHONUSERBASE", "").strip()
+        return override or str(Path.home() / ".local")
+
     async def upgrade_ytdlp(self, nightly: bool = False, timeout: float = 300.0) -> dict:
         before = self.ytdlp_version()
         args = [
@@ -387,6 +597,8 @@ class SourceUpdater:
             "before": before,
             "after": after,
             "changed": after != before,
+            "location": self.ytdlp_location(),
+            "user_base": self.user_base(),
         }
 
     @staticmethod

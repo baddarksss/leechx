@@ -63,8 +63,14 @@ class SiteIndex:
     def loaded(self) -> bool:
         return self._loaded
 
-    def build(self) -> None:
-        if self._loaded:
+    def build(self, force: bool = False) -> None:
+        """ایندکس را می‌سازد.
+
+        ``force=True`` باعث بازسازی حتی پس از اولین ساخت می‌شود؛ لازم است وقتی
+        نسخهٔ yt-dlp در همان فرآیند عوض می‌شود (دکمهٔ بروزرسانی) تا فهرست
+        سایت‌ها کهنه نماند.
+        """
+        if self._loaded and not force:
             return
         try:
             from yt_dlp.extractor import gen_extractor_classes

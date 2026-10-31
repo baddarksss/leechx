@@ -564,6 +564,8 @@ FA: dict[str, str] = {
     "btn_deploy_apply": "🚀 اعمال و ری‌استارت",
     "btn_deploy_cancel": "✖️ انصراف",
     "deploy_applied": "✅ سورس به <b>v{version}</b> بروزرسانی شد.\n♻️ ربات در چند ثانیه ری‌استارت می‌شود…",
+    "deploy_removed": "🧹 {count} فایل قدیمی که در ZIP نبود پاک شد.",
+    "deploy_deps": "📦 وابستگی‌های جدید نصب شدند.",
     "deploy_failed": "❌ اعمال سورس ناموفق بود: {reason}\nسورس فعلی دست‌نخورده ماند.",
     "btn_deploy_backup": "🗄 دانلود بکاپ آخر",
     "deploy_no_backup": "⚠️ هنوز بکاپی ساخته نشده است.",
@@ -575,15 +577,21 @@ FA: dict[str, str] = {
     "btn_deploy_ytdlp_nightly": "🌙 نسخهٔ nightly",
     "deploy_ytdlp_done": (
         "✅ yt-dlp بروزرسانی شد: <b>{before}</b> ← <b>{after}</b>\n"
-        "🌐 ایندکس سایت‌ها دوباره ساخته شد.\n"
-        "♻️ برای فعال‌شدن اکسترکتورهای جدید، ربات را ری‌استارت کن."
+        "🌐 فهرست سایت‌های پشتیبانی‌شده بازسازی شد."
+    ),
+    "deploy_ytdlp_restart": (
+        "♻️ ربات تا چند ثانیه ری‌استارت می‌شود تا اکسترکتورهای جدید واقعاً بار شوند "
+        "(آپدیت yt-dlp بدون ری‌استارت اثری ندارد)."
     ),
     "deploy_ytdlp_fail": "❌ بروزرسانی yt-dlp ناموفق بود: {reason}",
     "deploy_ytdlp_working": "⏳ در حال بروزرسانی yt-dlp…",
     "btn_deploy_version": "🔢 جزئیات نسخه",
     "deploy_update_note": (
-        "ℹ️ ZIP کامل بفرست؛ فایل‌های حذف‌شده خودکار پاک نمی‌شوند. <code>.env</code>/دیتابیس/داده‌ها "
-        "حفظ می‌شوند؛ وابستگی‌های جدید نصب و GitHub به‌روزرسانی نمی‌شود."
+        "ℹ️ ZIP کامل بفرست؛ فایل‌های منسوخ خودکار پاک می‌شوند و اگر "
+        "<code>requirements.txt</code> عوض شده باشد، وابستگی‌ها <b>قبل از</b> اعمال نصب "
+        "می‌شوند. <code>.env</code>، دیتابیس و <code>data</code> دست‌نخورده می‌مانند؛ "
+        "اسنپ‌شات سورس اعمال‌شده در <code>data/updates</code> ذخیره می‌شود "
+        "(GitHub خودکار آپدیت نمی‌شود)."
     ),
 
     # ── عیب‌یابی / توکن موقت ──
@@ -1185,6 +1193,8 @@ EN: dict[str, str] = {
     "btn_deploy_apply": "🚀 Apply & restart",
     "btn_deploy_cancel": "✖️ Cancel",
     "deploy_applied": "✅ Source updated to <b>v{version}</b>.\n♻️ Restarting in a few seconds…",
+    "deploy_removed": "🧹 Removed {count} stale files that were not in the ZIP.",
+    "deploy_deps": "📦 New dependencies were installed.",
     "deploy_failed": "❌ Update failed: {reason}\nThe current source was left untouched.",
     "btn_deploy_backup": "🗄 Download last backup",
     "deploy_no_backup": "⚠️ No backup has been created yet.",
@@ -1196,15 +1206,21 @@ EN: dict[str, str] = {
     "btn_deploy_ytdlp_nightly": "🌙 Nightly build",
     "deploy_ytdlp_done": (
         "✅ yt-dlp updated: <b>{before}</b> → <b>{after}</b>\n"
-        "🌐 Site index rebuilt.\n"
-        "♻️ Restart the bot to load the new extractors."
+        "🌐 Supported-site index rebuilt."
+    ),
+    "deploy_ytdlp_restart": (
+        "♻️ Restarting in a few seconds so the new extractors are actually loaded "
+        "(a yt-dlp update without a restart has no effect)."
     ),
     "deploy_ytdlp_fail": "❌ yt-dlp update failed: {reason}",
     "deploy_ytdlp_working": "⏳ Updating yt-dlp…",
     "btn_deploy_version": "🔢 Version details",
     "deploy_update_note": (
-        "ℹ️ Upload the full source ZIP; removed old files are not deleted. <code>.env</code>, "
-        "database and data stay safe; dependencies are not installed and GitHub is not updated."
+        "ℹ️ Upload the full source ZIP; obsolete files are deleted and, if "
+        "<code>requirements.txt</code> changed, dependencies are installed <b>before</b> "
+        "the switch. <code>.env</code>, database and data stay untouched; a snapshot of "
+        "the applied source is kept in <code>data/updates</code> (GitHub is not updated "
+        "automatically)."
     ),
 
     # ── Diagnostics / temporary token ──
@@ -1740,6 +1756,8 @@ RU: dict[str, str] = {
     "btn_deploy_apply": "🚀 Применить и перезапустить",
     "btn_deploy_cancel": "✖️ Отмена",
     "deploy_applied": "✅ Исходники обновлены до <b>v{version}</b>.\n♻️ Перезапуск через несколько секунд…",
+    "deploy_removed": "🧹 Удалено устаревших файлов: {count} — их не было в ZIP.",
+    "deploy_deps": "📦 Новые зависимости установлены.",
     "deploy_failed": "❌ Не удалось применить: {reason}\nТекущие исходники не изменены.",
     "btn_deploy_backup": "🗄 Скачать последний бэкап",
     "deploy_no_backup": "⚠️ Бэкапов пока нет.",
@@ -1749,11 +1767,12 @@ RU: dict[str, str] = {
     "deploy_restart_scheduled": "♻️ Перезапуск начат; вернётся через несколько секунд.",
     "btn_deploy_ytdlp": "🔄 Обновить yt-dlp",
     "btn_deploy_ytdlp_nightly": "🌙 Ночная сборка",
-    "deploy_ytdlp_done": "✅ yt-dlp обновлён: <b>{before}</b> → <b>{after}</b>\n🌐 Индекс сайтов пересобран.\n♻️ Перезапусти бота, чтобы загрузить новые экстракторы.",
+    "deploy_ytdlp_done": "✅ yt-dlp обновлён: <b>{before}</b> → <b>{after}</b>\n🌐 Индекс поддерживаемых сайтов пересобран.",
+    "deploy_ytdlp_restart": "♻️ Перезапуск через несколько секунд, чтобы новые экстракторы действительно загрузились (без перезапуска обновление yt-dlp не действует).",
     "deploy_ytdlp_fail": "❌ Не удалось обновить yt-dlp: {reason}",
     "deploy_ytdlp_working": "⏳ Обновляю yt-dlp…",
     "btn_deploy_version": "🔢 Детали версии",
-    "deploy_update_note": "ℹ️ Отправь полный ZIP; старые удалённые файлы не очищаются. <code>.env</code>, база и данные сохраняются; зависимости не устанавливаются, GitHub не обновляется.",
+    "deploy_update_note": "ℹ️ Отправь полный ZIP; устаревшие файлы удаляются, а новые зависимости ставятся <b>до</b> применения. <code>.env</code>, база и данные сохраняются; снимок применённых исходников лежит в <code>data/updates</code> (GitHub автоматически не обновляется).",
 
     # ── Диагностика / временный токен ──
     "btn_admin_debug": "🩺 Диагностика",

@@ -7,6 +7,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.5.0] - 2026-10-31 · "Durable Deploy"
+
+### Added
+- Deploy → **Update yt-dlp** now restarts the bot automatically when the version
+  really changed, so the new extractors are loaded and the site index is not stale.
+- Source ZIP deploy installs changed `requirements.txt` dependencies **before**
+  touching the running source, and aborts with the current source untouched if the
+  install fails.
+- Source ZIP deploy now runs a Python syntax check (`compileall`) on the staged
+  archive before applying it.
+- After a successful ZIP deploy a snapshot of the applied source is written to
+  `data/updates/leechx-applied-vX.Y.Z-*.zip`, so an in-bot update can still be
+  committed to GitHub later.
+- `~/.local` is mounted from `./data/pylocal` and `PYTHONUSERBASE` points there,
+  so `pip --user` installs (yt-dlp upgrades) survive `docker compose up --build`.
+- New database migration pass adds any column that exists in the models but is
+  missing from an existing table (additive `ALTER TABLE ... ADD COLUMN` only).
+
+### Fixed
+- `SiteIndex.build()` accepts `force=True`; previously it returned immediately
+  once loaded, so "site index rebuilt" after a yt-dlp upgrade was a no-op.
+- ZIP deploy deletes source files that are no longer part of the uploaded source
+  (previously deleted files stayed around forever) and clears stale `__pycache__`.
+- ZIP deploy rejects archives that look truncated (fewer than half of the current
+  source files) instead of wiping most of the tree.
+
 ## [5.4.4] - 2026-10-29 · "Persian Admin"
 
 ### Changed

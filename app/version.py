@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.4.4"
-CODENAME = "Persian Admin"
-RELEASE_DATE = "2026-10-29"
+__version__ = "5.5.0"
+CODENAME = "Durable Deploy"
+RELEASE_DATE = "2026-10-31"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.
 MIN_PYTHON = (3, 11)

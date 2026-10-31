@@ -689,10 +689,14 @@ async def _upgrade_ytdlp(update: Update, context: ContextTypes.DEFAULT_TYPE, msg
         result = await svc.updater.upgrade_ytdlp(nightly=nightly)
     except Exception as exc:  # noqa: BLE001
         result = {"ok": False, "error": str(exc)[:200], "before": "?", "after": "?"}
-    try:
-        await asyncio.to_thread(svc.sites.build)
-    except Exception:  # noqa: BLE001
-        log.warning("site index rebuild failed", exc_info=True)
+    changed = bool(result.get("ok") and result.get("changed"))
+    if changed:
+        # ماژول yt_dlp قبلاً import شده است؛ بازسازی ایندکس فقط وقتی معنا دارد
+        # که فرآیند دوباره بالا بیاید، ولی برای اطمینان از تازگی فهرست انجامش می‌دهیم.
+        try:
+            await asyncio.to_thread(svc.sites.build, True)
+        except Exception:  # noqa: BLE001
+            log.warning("site index rebuild failed", exc_info=True)
     if result.get("ok"):
         body = text.t(
             lang,
@@ -700,11 +704,22 @@ async def _upgrade_ytdlp(update: Update, context: ContextTypes.DEFAULT_TYPE, msg
             before=human.esc(str(result.get("before", "?"))),
             after=human.esc(str(result.get("after", "?"))),
         )
+        if changed:
+            body += "\n\n" + text.t(lang, "deploy_ytdlp_restart")
     else:
         body = text.t(lang, "deploy_ytdlp_fail", reason=human.esc(str(result.get("error") or "unknown")))
     await edit(msg, body, reply_markup=kb.admin_section_menu(lang, kb.SEC_DEPLOY))
-    await svc.admin_group.audit("system", "ytdlp_update", update.effective_user.id,
-                                f"ok={result.get('ok')}")
+    await svc.admin_group.audit(
+        "system",
+        "ytdlp_update",
+        update.effective_user.id,
+        f"ok={result.get('ok')}, changed={changed}, after={result.get('after')}, "
+        f"dir={result.get('location', '')}",
+    )
+    if changed:
+        # پیام اول برسد، بعد فرآیند نرم ری‌استارت شود تا اکسترکتورهای تازه بار شوند.
+        await asyncio.sleep(1.5)
+        svc.request_restart()
 
 
 # ── رندرها ─────────────────────────────────────────────────
@@ -1105,12 +1120,17 @@ async def _apply_staged(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
     await svc.admin_group.audit("system", "source_deployed", update.effective_user.id,
-                                f"version={result.version}, files={result.files}")
-    await panel(
-        update,
-        context,
-        text.t(lang, "deploy_applied", version=human.esc(result.version)),
-    )
+                                f"version={result.version}, files={result.files}, "
+                                f"removed={result.removed}, deps={result.deps}")
+    body = text.t(lang, "deploy_applied", version=human.esc(result.version))
+    details: list[str] = []
+    if result.removed:
+        details.append(text.t(lang, "deploy_removed", count=result.removed))
+    if result.deps:
+        details.append(text.t(lang, "deploy_deps"))
+    if details:
+        body += "\n" + "\n".join(details)
+    await panel(update, context, body)
     svc.request_restart()
 
 
