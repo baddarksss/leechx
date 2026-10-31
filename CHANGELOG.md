@@ -7,6 +7,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.8.1] - 2026-10-31 · "App Shelf"
+
+### Changed
+- Every progress message (Telegram file receive, download, upload) now shows the
+  **percentage on the line under the square bar** — e.g.
+  `🟩 🟩 🟩 ⬜ …` then `42%` — in all three languages. The value is floored, so
+  `100%` only appears once that step has actually finished.
+
 ## [5.8.0] - 2026-10-31 · "App Shelf"
 
 ### Added

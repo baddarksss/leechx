@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.8.0"
+__version__ = "5.8.1"
 CODENAME = "App Shelf"
 RELEASE_DATE = "2026-10-31"
 

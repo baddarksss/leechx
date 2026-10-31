@@ -651,7 +651,7 @@ class JobManager:
             return text.t(lang, "progress_stage_download", step=step) + "\n" + text.t(
                 lang,
                 "downloading",
-                bar=human.progress_bar(prog.pct),
+                bar=human.progress_bar(prog.pct, show_pct=True),
                 size=f"{human.human_bytes(prog.downloaded)} / {total}",
                 speed=human.human_speed(prog.speed),
                 eta=human.human_eta(prog.eta),
@@ -666,7 +666,7 @@ class JobManager:
             return stage + "\n" + text.t(
                 lang,
                 "uploading",
-                bar=human.progress_bar(prog.pct),
+                bar=human.progress_bar(prog.pct, show_pct=True),
                 size=f"{human.human_bytes(prog.uploaded)} / {human.human_bytes(prog.total)}",
             ) + ("\n" + text.t(lang, "upload_wait") if waiting
                   else f"\n{human.human_speed(speed)} · {human.human_eta(eta)}")

@@ -120,7 +120,7 @@ class FileLinkTransfers:
                 pct = min(99, int(received * 100 / expected))
                 body = text.t(
                     task.lang, "file_link_progress",
-                    bar=human.progress_bar(pct),
+                    bar=human.progress_bar(pct, show_pct=True),
                     size=f"{human.human_bytes(received)} / {human.human_bytes(expected)}",
                 )
             else:

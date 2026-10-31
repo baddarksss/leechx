@@ -113,8 +113,8 @@ def test_language_picker_screen_does_not_leave_persian_in_translated_view(code):
 
 
 @pytest.mark.parametrize("code", text.LANG_ORDER)
-def test_transfer_progress_is_localized_square_bar_without_percentage(code):
-    bar = progress_bar(40)
+def test_transfer_progress_is_localized_square_bar_with_percentage(code):
+    bar = progress_bar(40, show_pct=True)
     templates = {
         "file_link_progress": {"bar": bar, "size": "4 MB / 10 MB"},
         "downloading": {"bar": bar, "size": "4 MB / 10 MB", "speed": "1 MB/s", "eta": "6:00"},
@@ -124,14 +124,17 @@ def test_transfer_progress_is_localized_square_bar_without_percentage(code):
     }
     for key, values in templates.items():
         rendered = text.t(code, key, **values)
-        assert "%" not in rendered, f"percentage should be removed from {code}.{key}"
         if "bar" in values:
             assert bar in rendered
+            assert "40%" in rendered, f"percentage missing in {code}.{key}"
+            assert rendered.index("40%") > rendered.index("🟩"), (
+                f"percentage must sit under the bar in {code}.{key}"
+            )
     assert "🟩" in bar and "⬜" in bar
 
 
 @pytest.mark.parametrize("code", text.LANG_ORDER)
-def test_job_progress_uses_localized_square_stages_without_percent(code):
+def test_job_progress_uses_localized_square_stages_with_percent(code):
     manager = JobManager(None, None, None, None, None, None)
     task = JobTask(
         id="progress",
@@ -150,7 +153,7 @@ def test_job_progress_uses_localized_square_stages_without_percent(code):
     body = manager._progress_text(task)
     assert text.t(code, "progress_stage_download", step=download_step) in body
     assert "🟩" in body and "⬜" in body
-    assert "%" not in body
+    assert "50%" in body
 
     task.progress.stage = "uploading"
     task.progress.uploaded = 50
@@ -159,7 +162,7 @@ def test_job_progress_uses_localized_square_stages_without_percent(code):
     body = manager._progress_text(task)
     assert text.t(code, "progress_stage_upload", step=upload_step) in body
     assert "🟩" in body and "⬜" in body
-    assert "%" not in body
+    assert "50%" in body
 
 
 @pytest.mark.parametrize("code", text.LANG_ORDER)

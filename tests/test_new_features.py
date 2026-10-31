@@ -402,7 +402,11 @@ async def test_remote_telegram_attachment_stream_progress(db):
         assert Path(row.path).read_bytes() == payload
         progress_messages = [t for t in up.effective_message.texts if "⬜" in t or "🟩" in t]
         assert progress_messages
-        assert all("%" not in t for t in progress_messages)
+        # هر پیام نوار مربعی حالا درصد را هم دقیقاً زیر نوار دارد.
+        for message in progress_messages:
+            lines = message.splitlines()
+            bar_line = next(i for i, line in enumerate(lines) if "🟩" in line or "⬜" in line)
+            assert lines[bar_line + 1].strip().endswith("%")
         assert "🟩" in progress_messages[-1]
         assert "لینک مستقیم آماده" in up.effective_message.texts[-1]
 

@@ -42,12 +42,19 @@ def human_eta(seconds: float | int | None) -> str:
     return human_duration(seconds)
 
 
-def progress_bar(pct: float, width: int = 10) -> str:
-    """Green squares for completed steps and neutral squares for the remainder."""
+def progress_bar(pct: float, width: int = 10, show_pct: bool = False) -> str:
+    """Green squares for completed steps and neutral squares for the remainder.
+
+    با ``show_pct=True`` درصد هم زیر نوار مربع‌ها می‌آید (کف‌گیری می‌کنیم تا
+    «۱۰۰٪» فقط وقتی کار واقعاً تمام شده دیده شود).
+    """
     pct = max(0.0, min(100.0, float(pct or 0)))
     filled = int(width * pct / 100 + 0.5)
     cells = ["🟩"] * filled + ["⬜"] * (width - filled)
-    return " ".join(cells)
+    bar = " ".join(cells)
+    if show_pct:
+        return f"{bar}\n{int(pct)}%"
+    return bar
 
 
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')

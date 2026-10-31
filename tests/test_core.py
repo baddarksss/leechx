@@ -59,6 +59,10 @@ def test_human_helpers():
     assert progress_bar(0).split() == ["⬜"] * 10
     assert progress_bar(50).split() == ["🟩"] * 5 + ["⬜"] * 5
     assert progress_bar(100).split() == ["🟩"] * 10
+    bar = progress_bar(50, show_pct=True).split("\n")
+    assert bar[0].split() == ["🟩"] * 5 + ["⬜"] * 5
+    assert bar[1] == "50%"
+    assert progress_bar(99.9, show_pct=True).endswith("\n99%")
 
 
 def test_safe_filename():
