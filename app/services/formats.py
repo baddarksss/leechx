@@ -29,6 +29,8 @@ class FormatOption:
     # اگر پر باشد، دانلود مستقیم از همین آدرس انجام می‌شود (نسخه‌هایی که
     # اکسترکتور yt-dlp دوباره پیدا نمی‌کند، مثل AV1 اپورنر).
     media_url: str = ""
+    # KVS: آدرس امضاشده کوتاه‌عمر است؛ هنگام دانلود دوباره ساخته می‌شود.
+    kvs: bool = False
 
 
 AUDIO_MP3 = FormatOption(
@@ -129,15 +131,31 @@ def build_options(
             best[height] = fmt
 
     if not best:
-        # بعضی سایت‌ها ارتفاع نمی‌دهند → یک گزینهٔ «بهترین کیفیت»
+        # بعضی سایت‌ها ارتفاع نمی‌دهند → یک گزینهٔ «بهترین کیفیت».
+        candidates = [
+            fmt for fmt in formats
+            if isinstance(fmt, dict)
+            and fmt.get("ext") not in (None, "none", "mhtml")
+            and str(fmt.get("vcodec") or "").lower() != "none"
+        ]
+        fmt = max(candidates, key=_rank) if candidates else {}
+        codec = _codec_name(fmt) if fmt else ""
+        filesize = _size_of(fmt) if fmt else None
+        label = "Best" + (f" {codec}" if codec else "")
+        if filesize:
+            label += f" · {human.human_bytes(filesize)}"
         return [
             FormatOption(
                 kind="video",
                 code="best",
-                label="Best",
-                selector="bv*+ba/b",
-                height=0,
-                ext="mp4",
+                label=label,
+                selector=str(fmt.get("format_id") or "bv*+ba/b"),
+                height=int(fmt.get("height") or 0),
+                ext=(fmt.get("ext") or "mp4").lower(),
+                filesize=filesize,
+                codec=codec.lower(),
+                kvs=bool(fmt.get("kvs")),
+                media_url=(fmt.get("url") or "") if (fmt.get("synthetic") or fmt.get("kvs")) else "",
             )
         ]
 
@@ -147,17 +165,21 @@ def build_options(
         fmt = best[height]
         fps = _fps_of(fmt)
         filesize = _size_of(fmt)
+        kvs = bool(fmt.get("kvs"))
         options.append(
             FormatOption(
                 kind="video",
                 code=str(height),
                 label=_label_of(height, fps, filesize, _codec_name(fmt)),
-                selector=video_selector(height),
+                # KVS باید با همان کلید فرمت و مسیر مستقیم دانلود شود.
+                selector=str(fmt.get("format_id")) if kvs else video_selector(height),
                 height=height,
                 ext="mp4",
                 filesize=filesize,
                 fps=fps,
                 codec=_codec_name(fmt).lower() or "mp4",
+                kvs=kvs,
+                media_url=(fmt.get("url") or "") if (fmt.get("synthetic") or kvs) else "",
             )
         )
     return options
@@ -213,7 +235,9 @@ def _build_split_options(formats: list[dict], max_height: int) -> list[FormatOpt
                 fps=fps,
                 codec=codec.lower(),
                 # نسخه‌های ساخته‌شده (AV1) در استخراج دوم yt-dlp وجود ندارند.
-                media_url=(fmt.get("url") or "") if fmt.get("synthetic") else "",
+                media_url=(fmt.get("url") or "")
+                if (fmt.get("synthetic") or fmt.get("kvs")) else "",
+                kvs=bool(fmt.get("kvs")),
             )
         )
     return options

@@ -7,6 +7,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.6.5] - 2026-10-31 · "KVS Rescue"
+
+### Added
+- Direct fallback for Kernel Video Sharing (KVS) sites such as pornwex.tv.
+  yt-dlp's generic extractor currently fails with "Unable to extract
+  flashvars" when the site randomizes the flashvars variable name. The bot now
+  finds that object itself, rebuilds the signed media URL with yt-dlp's own KVS
+  algorithm, and reads the real file size via a ranged request.
+- KVS downloads re-read the page at download time, because the signed CDN URL
+  expires. Audio options (`MP3 192k` / `M4A`) work too: the file is downloaded
+  once and ffmpeg extracts the audio.
+- Pages without resolution metadata now show `Best MP4` (plus size) instead of
+  a bare `Best`, so the format is always visible.
+
 ## [5.6.4] - 2026-10-31 · "Format Labels"
 
 ### Changed

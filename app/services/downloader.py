@@ -9,10 +9,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import mimetypes
 import os
 import re
+import subprocess
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,7 +23,8 @@ from urllib.parse import unquote, urljoin
 
 import aiohttp
 import yt_dlp
-from yt_dlp.utils import DownloadError, ExtractorError
+from yt_dlp.extractor.generic import GenericIE
+from yt_dlp.utils import DownloadError, ExtractorError, js_to_json, parse_resolution
 
 from app.config import Config
 from app.core import errors, human, urlcheck
@@ -106,6 +109,145 @@ def with_av1_variants(formats: list[dict] | None) -> list[dict]:
         out.append(av1)
         existing.add(height)
     return out
+
+
+# ─── KVS (Kernel Video Sharing) ───────────────────────────────
+# بعضی سایت‌های KVS نام متغیر flashvars را تصادفی می‌کنند و اکسترکتور
+# عمومی yt-dlp («Unable to extract flashvars») شکست می‌خورد. اینجا خودمان
+# همان آبجکت را پیدا و آدرس‌ها را با الگوریتم رسمی KVS باز می‌کنیم.
+
+def is_kvs_error(reason: str | None) -> bool:
+    text = (reason or "").casefold()
+    return any(marker in text for marker in ("flashvars", "kt_player", "kvs player"))
+
+
+def _js_objects(html: str):
+    """همهٔ آبجکت‌های ``var x = {...};`` را با پرانتزهای متوازن برمی‌گرداند."""
+    for match in re.finditer(r"var\s+(\w+)\s*=\s*\{", html):
+        start = match.end() - 1
+        depth = 0
+        quote = ""
+        escaped = False
+        for index in range(start, len(html)):
+            char = html[index]
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = ""
+                continue
+            if char in "'\"":
+                quote = char
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    yield match.group(1), html[start:index + 1]
+                    break
+
+
+def _kvs_flashvars(html: str) -> dict | None:
+    for _name, block in _js_objects(html):
+        if "video_url" not in block or "license_code" not in block:
+            continue
+        try:
+            data = json.loads(js_to_json(block))
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict) and data.get("video_url") and data.get("license_code"):
+            return data
+    return None
+
+
+def _duration_seconds(raw: str | None) -> int | None:
+    text = (raw or "").strip()
+    if text.isdigit():
+        return int(text) or None
+    parts = text.split(":")
+    if 2 <= len(parts) <= 3 and all(p.isdigit() for p in parts):
+        seconds = 0
+        for part in parts:
+            seconds = seconds * 60 + int(part)
+        return seconds or None
+    return None
+
+
+def _html_title(html: str) -> str:
+    match = re.search(r"<title[^>]*>(.*?)</title>", html, re.S | re.I)
+    return re.sub(r"\s+", " ", match.group(1)).strip() if match else ""
+
+
+def parse_kvs(html: str, url: str) -> MediaInfo | None:
+    """صفحهٔ KVS را به MediaInfo تبدیل می‌کند؛ اگر KVS نبود ``None``."""
+    flashvars = _kvs_flashvars(html)
+    if flashvars is None:
+        return None
+
+    license_code = str(flashvars.get("license_code") or "")
+    formats: list[dict] = []
+    for key, value in flashvars.items():
+        if not re.fullmatch(r"video_(?:url|alt_url\d*)", key):
+            continue
+        if not isinstance(value, str) or "/get_file/" not in value:
+            continue
+        real = GenericIE._kvs_get_real_url(value, license_code)
+        label = str(flashvars.get(f"{key}_text") or key)
+        resolution = parse_resolution(label) or parse_resolution(value) or {}
+        fmt: dict = {
+            "format_id": label,
+            "url": urljoin(url, real),
+            "ext": "mp4",
+            "vcodec": None,
+            "http_headers": {"Referer": url},
+            "kvs": True,
+            **resolution,
+        }
+        formats.append(fmt)
+    if not formats:
+        return None
+
+    formats.sort(key=lambda f: (int(f.get("height") or 0), f["format_id"]))
+    thumbnail = str(flashvars.get("preview_url") or "")
+    og_image = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html)
+    if og_image:
+        thumbnail = og_image.group(1)
+    duration = _duration_seconds(str(flashvars.get("duration") or ""))
+    if duration is None:
+        duration = _duration_seconds(
+            (re.search(r"Duration:\s*(?:<[^>]+>)?\s*([\d:]+)", html) or [None, ""])[1]
+        )
+
+    return MediaInfo(
+        url=url,
+        title=human.safe_filename(
+            str(flashvars.get("video_title") or "").strip() or _html_title(html) or "media",
+            150,
+        ),
+        duration=duration,
+        thumbnail=urljoin(url, thumbnail) if thumbnail else None,
+        extractor="KVS",
+        formats=formats,
+        ext="mp4",
+    )
+
+
+def _kvs_pick(formats: list[dict], option: FormatOption) -> dict | None:
+    """فرمت KVS متناظر با گزینهٔ منو را پیدا می‌کند (یا بهترین را)."""
+    usable = [f for f in (formats or []) if f.get("url")]
+    if not usable:
+        return None
+    if option.selector:
+        for fmt in usable:
+            if fmt.get("format_id") == option.selector:
+                return fmt
+    if option.height:
+        same = [f for f in usable if int(f.get("height") or 0) == option.height]
+        if same:
+            return same[-1]
+    return max(usable, key=lambda f: int(f.get("height") or 0))
 
 MEDIA_MIME_PREFIXES = ("video/", "audio/", "image/")
 DIRECT_MIME_TYPES = {
@@ -386,9 +528,16 @@ class Downloader:
             if gallery.available() and gallery.supports(url):
                 log.info("yt-dlp probe failed (%s) for %s; trying gallery-dl", exc.key, url)
                 return await asyncio.to_thread(self._probe_gallery, url)
+            kvs = await self._kvs_fallback(url, exc)
+            if kvs is not None:
+                return kvs
             raise
         except (DownloadError, ExtractorError) as exc:
-            raise map_error(exc) from exc
+            mapped = map_error(exc)
+            kvs = await self._kvs_fallback(url, mapped)
+            if kvs is not None:
+                return kvs
+            raise mapped from exc
         except Exception as exc:  # noqa: BLE001 — هر خطای دیگری هم باید به کاربر برسد
             log.exception("probe failed for %s", url)
             raise map_error(exc) from exc
@@ -431,6 +580,56 @@ class Downloader:
             "filled sizes for %d/%d formats",
             sum(1 for f in targets if f.get("filesize")), len(targets),
         )
+
+    async def _kvs_fallback(self, url: str, exc: errors.LeechError):
+        """اگر خطا مربوط به KVS بود، خودمان صفحه را تفسیر می‌کنیم."""
+        if not is_kvs_error(exc.reason):
+            return None
+        try:
+            info = await self._probe_kvs(url)
+        except errors.LeechError:
+            raise
+        except Exception:  # noqa: BLE001 — بهتر است خطای اصلی به کاربر برسد
+            log.warning("KVS fallback failed for %s", url, exc_info=True)
+            return None
+        if info is not None:
+            log.info("parsed KVS page directly for %s (%d formats)", url, len(info.formats))
+        return info
+
+    async def _probe_kvs(self, url: str) -> MediaInfo | None:
+        """پارس صفحهٔ KVS و گرفتن حجم/دسترسی هر فرمت با Range 0-0."""
+        timeout = aiohttp.ClientTimeout(total=35)
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "identity",
+        }
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
+            async with safe_http_request(sess, "GET", url) as resp:
+                if resp.status >= 400:
+                    return None
+                html = await resp.text(errors="replace")
+            info = parse_kvs(html, url)
+            if info is None:
+                return None
+            for fmt in info.formats:
+                try:
+                    async with safe_http_request(
+                        sess, "GET", str(fmt["url"]),
+                        headers={"Referer": url, "Range": "bytes=0-0"},
+                    ) as media:
+                        if media.status not in (200, 206):
+                            continue
+                        total = (
+                            media.headers.get("Content-Range", "").rpartition("/")[2]
+                            or media.headers.get("Content-Length")
+                        )
+                        if total and str(total).isdigit():
+                            fmt["filesize"] = int(total)
+                except (errors.LeechError, aiohttp.ClientError, TimeoutError, OSError):
+                    continue
+        return info
 
     def _probe_gallery(self, url: str) -> MediaInfo:
         """بررسی سبک لینک گالری؛ بدون درخواست شبکه تا لینک سریع پاسخ بگیرد."""
@@ -553,6 +752,13 @@ class Downloader:
 
         if info is not None and info.direct:
             return await self._download_direct(url, workdir, progress, cancel, info)
+
+        if option.kvs or (info is not None and info.extractor == "KVS" and option.kind == "audio"):
+            # KVS: هر بار آدرس امضاشده را تازه می‌سازیم (کوتاه‌عمر است).
+            return await self._download_kvs(
+                url, option, workdir, progress, cancel,
+                info or MediaInfo(url=url, title=""),
+            )
 
         if option.media_url:
             # نسخه‌هایی مثل AV1 اپورنر در استخراج دوبارهٔ yt-dlp نیستند؛
@@ -791,3 +997,112 @@ class Downloader:
             size=size,
             is_audio=mime.startswith("audio/"),
         )
+
+    async def _download_kvs(
+        self,
+        page_url: str,
+        option: FormatOption,
+        workdir: Path,
+        progress: Progress,
+        cancel: asyncio.Event,
+        info: MediaInfo,
+    ) -> DownloadResult:
+        """KVS: صفحه را تازه می‌خواند، آدرس امضاشده را می‌سازد و مستقیم می‌گیرد."""
+        progress.reset_download()
+        timeout = aiohttp.ClientTimeout(total=None, sock_read=120, connect=30)
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "identity",
+        }
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
+            async with safe_http_request(sess, "GET", page_url) as resp:
+                if resp.status >= 400:
+                    raise errors.UnsupportedUrl(f"HTTP {resp.status}")
+                html = await resp.text(errors="replace")
+            fresh = parse_kvs(html, page_url)
+            if fresh is None:
+                raise errors.UnsupportedUrl("KVS metadata missing")
+            fmt = _kvs_pick(fresh.formats, option)
+            if fmt is None:
+                raise errors.UnsupportedUrl("KVS format missing")
+
+            name = _variant_filename(fresh.title or info.title, option)
+            dest = workdir / human.safe_filename(name, 150)
+            try:
+                async with safe_http_request(
+                    sess, "GET", str(fmt["url"]), headers={"Referer": page_url},
+                ) as media:
+                    if not await urlcheck.is_safe_public_url(str(media.url)):
+                        raise errors.UnsupportedUrl("Unsafe redirect destination")
+                    if media.status in (401, 403):
+                        raise errors.AccessDenied(str(media.status))
+                    if media.status == 404:
+                        raise errors.ResourceNotFound("404")
+                    if media.status >= 400:
+                        raise errors.UnsupportedUrl(f"HTTP {media.status}")
+                    total = int(media.headers.get("Content-Length") or 0)
+                    progress.total = total
+                    with dest.open("wb") as fh:
+                        async for chunk in media.content.iter_chunked(1024 * 512):
+                            if cancel.is_set():
+                                raise errors.JobCancelled()
+                            fh.write(chunk)
+                            progress.downloaded += len(chunk)
+                            progress.downloaded_bytes_total += len(chunk)
+                            if total:
+                                progress.pct = min(99.9, progress.downloaded * 100.0 / total)
+                    if not progress.downloaded or (total and progress.downloaded != total):
+                        raise errors.IncompleteDownload(
+                            f"expected {total} bytes, received {progress.downloaded}"
+                        )
+            except errors.LeechError:
+                raise
+            except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+                raise map_error(exc) from exc
+
+        if cancel.is_set():
+            raise errors.JobCancelled()
+        progress.pct = 100.0
+
+        source = dest
+        if option.kind == "audio":
+            dest = await self._extract_audio(source, option.code, workdir)
+            try:
+                source.unlink()
+            except OSError:
+                pass
+
+        size = dest.stat().st_size
+        mime = _mime_for(dest)
+        return DownloadResult(
+            path=dest,
+            title=human.safe_filename(fresh.title or info.title or dest.stem, 150),
+            mime=mime,
+            size=size,
+            is_audio=option.kind == "audio" or mime.startswith("audio/"),
+        )
+
+    async def _extract_audio(self, source: Path, code: str, workdir: Path) -> Path:
+        """استخراج صدا از فایل KVS با ffmpeg (mp3 192k یا m4a بدون تبدیل)."""
+        ext = "mp3" if code == "mp3" else "m4a"
+        dest = workdir / human.safe_filename(f"{source.stem}.{ext}", 150)
+        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(source), "-vn"]
+        if ext == "mp3":
+            cmd += ["-c:a", "libmp3lame", "-b:a", "192k"]
+        else:
+            cmd += ["-c:a", "copy"]
+        cmd.append(str(dest))
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            status = await proc.wait()
+        except FileNotFoundError as exc:
+            raise errors.UnsupportedUrl("ffmpeg missing") from exc
+        if status != 0 or not dest.is_file() or dest.stat().st_size == 0:
+            raise errors.UnsupportedUrl("audio extraction failed")
+        return dest
