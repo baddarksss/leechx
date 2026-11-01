@@ -33,6 +33,15 @@ def test_build_app_registers_handlers(cfg):
     assert {"start", "help", "sites", "me", "cancel", "admin"} <= commands
 
 
+def test_build_app_uses_long_upload_timeouts(cfg):
+    """سرور Bot API محلی دیر جواب می‌دهد؛ تایم‌اوت ۵ ثانیه‌ای فایل را «شکست‌خورده» می‌کرد."""
+    from app.bot.app import API_READ_TIMEOUT, build_app
+
+    app = build_app(cfg)
+    assert app.bot.request.read_timeout == API_READ_TIMEOUT
+    assert API_READ_TIMEOUT >= 300
+
+
 def test_config_validation(cfg):
     assert cfg.validate_runtime() == []
     assert cfg.files_dir.exists()

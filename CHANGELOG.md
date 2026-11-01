@@ -7,6 +7,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.11.2] - 2026-11-01 — "Quiet Reports"
+
+### Fixed
+- **False "crash: Timed out" reports after a successful delivery.** The Bot API
+  client used python-telegram-bot's 5-second default read/write timeout, but the
+  local Bot API server only answers after it has forwarded the whole file to
+  Telegram (minutes for big videos). The upload was actually delivered while the
+  bot marked the job as failed and filed an error report. Uploads now wait up to
+  300 s for a response (600 s for the request body), and a network timeout is no
+  longer retried as a document — that retry could send a second copy of the same
+  file. Only an explicit `BadRequest` (e.g. unsupported codec) falls back to
+  document delivery.
+- **No more owner DMs for reports.** Job failures and user contact messages are
+  sent only to the admin group's 🚨 reports topic; when no admin group is
+  configured they stay in the admin panel, logs and stats instead of arriving as
+  a private message. Contact messages now confirm as received once they are
+  stored, even without a configured group.
+
 ## [5.11.1] - 2026-11-01 — "Sharp Frame"
 
 ### Fixed

@@ -107,9 +107,8 @@ class AdminGroup:
             await self.settings.set(f"topic_{key}", "")
 
     # ── ارسال ──────────────────────────────────────────────
-    async def send(self, topic: str, body: str, reply_markup=None, *,
-                   direct_fallback: bool = False) -> bool:
-        """پیام را در تاپیک می‌فرستد؛ در صورت شکست (اختیاری) به مالکان DM می‌کند."""
+    async def send(self, topic: str, body: str, reply_markup=None) -> bool:
+        """پیام را فقط در تاپیک گروه ادمین می‌فرستد؛ هرگز به DM مالکان نه."""
         chat_id = self.chat_id
         if self.bot is None:
             return False
@@ -127,26 +126,9 @@ class AdminGroup:
                 log.warning("admin group topic send failed (%s): %s", topic, exc)
         elif chat_id is not None:
             log.warning("cannot send %s without a configured topic", topic)
-        return await self._send_owners(body, reply_markup) if direct_fallback else False
-
-    async def _send_owners(self, body: str, reply_markup=None) -> bool:
-        """پیام مهم را مستقیم برای مالکان می‌فرستد (گروه تنظیم/در دسترس نیست)."""
-        sent = False
-        for owner in self.cfg.owners:
-            try:
-                await self.bot.send_message(
-                    owner,
-                    body,
-                    reply_markup=reply_markup,
-                    parse_mode=ParseMode.HTML,
-                    disable_web_page_preview=True,
-                )
-                sent = True
-            except TelegramError as exc:
-                log.warning("owner DM fallback failed for %s: %s", owner, exc)
-            except Exception:  # noqa: BLE001 — یک مالک نباید بقیه را متوقف کند
-                log.exception("owner DM fallback crashed for %s", owner)
-        return sent
+        else:
+            log.debug("admin group is not configured; %s kept in logs only", topic)
+        return False
 
     async def cache_event(self, component: str, action: str, summary: str) -> bool:
         """Diagnostics without sending user URLs, secrets or file bodies."""
@@ -256,7 +238,11 @@ class AdminGroup:
 
     # ── گزارش‌ها ────────────────────────────────────────────
     async def notify_report(self, report) -> bool:
-        """گزارش/پیام کاربر را به تاپیک گزارش‌ها می‌فرستد؛ در نبود گروه، به مالکان."""
+        """گزارش را به تاپیک گزارش‌های گروه ادمین می‌فرستد (بدون DM به مالکان).
+
+        اگر گروه تنظیم نشده باشد چیزی فرستاده نمی‌شود؛ گزارش در پنل ادمین و
+        آمار باقی می‌ماند.
+        """
         try:
             label = {
                 "contact": "✉️ پیام کاربر به ادمین",
@@ -272,7 +258,7 @@ class AdminGroup:
             if report.text:
                 parts += ["", f"📝 {human.esc(human.truncate(report.text, 1500))}"]
             parts += ["", f"🆔 گزارش: <code>#{report.id}</code>"]
-            return await self.send("reports", "\n".join(parts), direct_fallback=True)
+            return await self.send("reports", "\n".join(parts))
         except Exception:  # noqa: BLE001
             log.exception("report notification failed")
             return False

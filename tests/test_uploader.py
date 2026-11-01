@@ -4,6 +4,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from telegram.error import BadRequest, TimedOut
 
 from app.services.downloader import DownloadResult, Progress
 from app.services.uploader import Uploader
@@ -105,3 +106,50 @@ async def test_non_playable_video_goes_as_document(tmp_path):
     )
 
     assert bot.calls[0][0] == "document"
+
+
+class TimeoutBot(FakeBot):
+    async def send_video(self, **kwargs):
+        self.calls.append(("video", kwargs))
+        raise TimedOut()
+
+
+class RejectingBot(FakeBot):
+    async def send_video(self, **kwargs):
+        self.calls.append(("video", kwargs))
+        raise BadRequest("Wrong file type")
+
+
+@pytest.mark.asyncio
+async def test_upload_timeout_is_not_retried_as_document(tmp_path):
+    """تایم‌اوت شبکه یعنی شاید فایل تحویل شده باشد؛ نسخهٔ دوم نمی‌فرستیم."""
+    bot = TimeoutBot()
+    result = make_result(tmp_path)
+
+    with pytest.raises(TimedOut):
+        await make_uploader().send(
+            bot,
+            chat_id=1,
+            result=result,
+            progress=Progress(),
+            filename=result.path.name,
+        )
+
+    assert [kind for kind, _ in bot.calls] == ["video"]
+
+
+@pytest.mark.asyncio
+async def test_rejected_video_falls_back_to_document(tmp_path):
+    bot = RejectingBot()
+    result = make_result(tmp_path)
+
+    message = await make_uploader().send(
+        bot,
+        chat_id=1,
+        result=result,
+        progress=Progress(),
+        filename=result.path.name,
+    )
+
+    assert [kind for kind, _ in bot.calls] == ["video", "document"]
+    assert message.message_id == 2

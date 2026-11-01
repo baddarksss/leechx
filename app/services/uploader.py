@@ -21,7 +21,7 @@ from typing import BinaryIO
 
 from telegram import InputFile, InputMediaPhoto, Message
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
+from telegram.error import BadRequest, TelegramError
 
 from app.config import Config
 from app.core import caption as caption_mod
@@ -230,9 +230,12 @@ class Uploader:
                         **extra,
                         **common,
                     )
-                except TelegramError as exc:
+                except BadRequest as exc:
                     # بعضی کدک‌ها را تلگرام به‌عنوان ویدیو قبول نمی‌کند؛
                     # همان فایل را به‌صورت document می‌فرستیم تا کار شکست نخورد.
+                    # فقط رد شدنِ درخواست (BadRequest) اینجا می‌آید: خطای شبکه یا
+                    # تایم‌اوت یعنی شاید فایل واقعاً تحویل شده باشد و تلاش دوباره
+                    # یک نسخهٔ تکراری در چت کاربر می‌سازد.
                     if "too big" in str(exc).lower():
                         raise
                     log.info("video upload rejected (%s); retrying as document", exc)

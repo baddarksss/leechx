@@ -308,7 +308,7 @@ class ReportBot:
 
 
 @pytest.mark.asyncio
-async def test_report_falls_back_to_owner_direct_message(db):
+async def test_report_never_dms_owners_when_group_fails(db):
     settings = RuntimeSettings(db)
     await settings.load()
     hub = AdminGroup(db, settings)
@@ -319,9 +319,24 @@ async def test_report_falls_back_to_owner_direct_message(db):
         kind="contact", user_id=42, username="u", first_name="U",
         url="", text="please help", id=7,
     )
-    assert await hub.notify_report(report) is True
-    assert bot.sent and bot.sent[-1][0] == 1
-    assert "please help" in bot.sent[-1][1]
+    # گزارش فقط در تاپیک گروه می‌رود؛ اگر گروه در دسترس نباشد DM نمی‌فرستیم.
+    assert await hub.notify_report(report) is False
+    assert bot.sent == []
+
+
+@pytest.mark.asyncio
+async def test_report_without_admin_group_is_silent(db):
+    settings = RuntimeSettings(db)
+    await settings.load()
+    hub = AdminGroup(db, settings)
+    bot = ReportBot()
+    hub.attach(bot)
+    report = SimpleNamespace(
+        kind="unsupported", user_id=42, username="u", first_name="U",
+        url="https://example.com/v", text="crash: Timed out", id=8,
+    )
+    assert await hub.notify_report(report) is False
+    assert bot.sent == []  # نه DM، نه پیام گروه
 
 
 @pytest.mark.asyncio

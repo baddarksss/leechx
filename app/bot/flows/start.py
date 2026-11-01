@@ -413,14 +413,14 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     hub = getattr(svc, "admin_group", None)
-    delivered = False
     if hub is not None:
         try:
-            delivered = bool(await hub.notify_report(report))
+            await hub.notify_report(report)
         except Exception:  # noqa: BLE001
             log.exception("could not forward contact message")
-    # تأیید باید پیام تازه باشد؛ پیام پنل قبلی دست‌نخورده می‌ماند.
-    await reply(update, text.t(lang, "contact_sent" if delivered else "contact_failed"))
+    # گزارش در پنل ادمین ذخیره شد؛ تحویل به تاپیک گروه اختیاری است و اگر گروه
+    # تنظیم نشده باشد چیزی به DM مالکان نمی‌رود.
+    await reply(update, text.t(lang, "contact_sent"))
     await drop_user_input(update)
 
 

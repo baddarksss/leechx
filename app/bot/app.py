@@ -17,6 +17,7 @@ from telegram.ext import (
     TypeHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 from app.bot import keyboards as kb
 from app.bot.common import drop_user_input, lang_of, panel, reply, safe_answer
@@ -222,11 +223,45 @@ def _join_targets(targets) -> str:
 
 
 # ── ساخت اپلیکیشن ───────────────────────────────────────────
+# سرور Bot API محلی فایل را اول کامل می‌گیرد و بعد برای تلگرام می‌فرستد؛
+# پاسخِ یک فایل چند صد مگابایتی می‌تواند چند دقیقه طول بکشد. تایم‌اوت
+# پیش‌فرض PTB (۵ ثانیه) باعث می‌شد فایل واقعاً تحویل شود ولی ربات
+# «Timed out» بگیرد، کار را شکست‌خورده اعلام کند و نسخهٔ تکراری بفرستد.
+API_CONNECT_TIMEOUT = 15.0
+API_READ_TIMEOUT = 300.0
+API_WRITE_TIMEOUT = 300.0
+API_MEDIA_WRITE_TIMEOUT = 600.0
+API_POOL_TIMEOUT = 30.0
+UPDATES_READ_TIMEOUT = 60.0
+
+
+def _api_request() -> HTTPXRequest:
+    return HTTPXRequest(
+        connect_timeout=API_CONNECT_TIMEOUT,
+        read_timeout=API_READ_TIMEOUT,
+        write_timeout=API_WRITE_TIMEOUT,
+        media_write_timeout=API_MEDIA_WRITE_TIMEOUT,
+        pool_timeout=API_POOL_TIMEOUT,
+    )
+
+
+def _updates_request() -> HTTPXRequest:
+    """دریافت آپدیت‌ها به تایم‌اوت کوتاه‌تر نیاز دارد (long polling خودش دارد)."""
+    return HTTPXRequest(
+        connect_timeout=API_CONNECT_TIMEOUT,
+        read_timeout=UPDATES_READ_TIMEOUT,
+        write_timeout=30.0,
+        pool_timeout=10.0,
+    )
+
+
 def build_app(cfg: Config) -> Application:
     builder = (
         Application.builder()
         .token(cfg.bot_token)
         .defaults(Defaults(parse_mode=ParseMode.HTML, tzinfo=UTC))
+        .request(_api_request())
+        .get_updates_request(_updates_request())
         .concurrent_updates(UserOrderedUpdateProcessor(48))
         .post_init(post_init)
         .post_shutdown(post_shutdown)
