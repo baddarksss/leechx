@@ -16,7 +16,7 @@ per-user concurrency limits, automatic disk cleanup and a modular design.
 | 🎚 **Quality buttons** | video `144p`–`2160p` + `MP3 192k` / `M4A` |
 | 📤 **Delivery menu** | before upload choose **video**, **document**, **direct link** or **rename** |
 | 🍪 **Cookies** | upload/paste `cookies.txt` (Netscape or JSON) from the admin panel for YouTube/Instagram |
-| 🏷 **Captions + hashtags** | title, source link and automatic hashtags on the media message itself |
+| 🏷 **Clickable caption** | the title is a link to the source page: tapping the caption opens the video |
 | 📁 **File → direct link** | signed URL, `Range` support, 6h TTL by default |
 | 🔞 **NSFW auto-delete** | adult media gets a countdown and is removed from the chat (default 30 s, off by default); the admin archive keeps the file as before |
 | 🖼 **Thumbnail picker** | 10 random frames of every video are offered as an album; reply to one to make it the cover, or skip — auto-upload after the admin-set wait |

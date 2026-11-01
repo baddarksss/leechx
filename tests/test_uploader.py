@@ -60,10 +60,8 @@ async def test_video_caption_is_attached_to_media_message(tmp_path):
 
     kind, kwargs = bot.calls[0]
     assert kind == "video"
-    assert kwargs["caption"].startswith("<b>Real Title</b>")
-    assert "#YouTube" in kwargs["caption"]
-    assert "#Video" in kwargs["caption"]
-    assert 'href="https://youtu.be/abc"' in kwargs["caption"]
+    # کپشن فقط عنوان است و خودِ عنوان به آدرس همان ویدیو لینک شده است
+    assert kwargs["caption"] == '<a href="https://youtu.be/abc"><b>Real Title</b></a>'
     assert kwargs["parse_mode"] == "HTML"
 
 

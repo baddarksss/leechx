@@ -175,7 +175,7 @@ async def test_gallery_images_are_sent_as_media_groups(tmp_path):
     assert [len(group) for group in bot.groups] == [10, 2]
     assert bot.documents == []
     caption = bot.groups[0][0].caption or ""
-    assert caption.startswith("<b>Album</b>")
+    assert caption == '<a href="https://insta/p/1"><b>Album</b></a>'
     assert all(item.caption is None for item in bot.groups[0][1:])
     assert progress.pct == 100.0
 

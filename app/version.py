@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.11.2"
-CODENAME = "Quiet Reports"
+__version__ = "5.11.3"
+CODENAME = "Caption Link"
 RELEASE_DATE = "2026-11-01"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.

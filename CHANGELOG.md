@@ -7,6 +7,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.11.3] - 2026-11-01 — "Caption Link"
+
+### Changed
+- **The caption itself is the link.** Media captions no longer carry the
+  `🔗 Source` label or hashtags: the title is rendered as a Telegram HTML link
+  (`<a href="URL"><b>Title</b></a>`), so tapping the caption opens the original
+  page of that video. The title stays bold and is truncated so the whole caption
+  fits Telegram's 1024-character limit — truncation happens before escaping, so
+  an HTML entity is never cut in half. If the URL alone is too long to leave room
+  for a title, the caption falls back to the plain bold title.
+
 ## [5.11.2] - 2026-11-01 — "Quiet Reports"
 
 ### Fixed

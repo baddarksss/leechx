@@ -1,8 +1,8 @@
-"""ساخت کپشن رسانه: عنوان + منبع + هشتگ.
+"""ساخت کپشن رسانه: عنوان، لینک‌شده به آدرس همان ویدیو.
 
 کپشن بخشی از همان پیام رسانه است (نه پیام جدا) و سقف تلگرام ۱۰۲۴ کاراکتر
-دارد؛ پس ابتدا دنباله (منبع/هشتگ) ساخته می‌شود و عنوان در فضای باقی‌مانده
-کوتاه می‌شود.
+دارد. کل کپشن یک لینک است: با زدن روی عنوان، آدرس سایت باز می‌شود. هیچ متن
+اضافه‌ای (برچسب «Source» یا هشتگ) به کپشن اضافه نمی‌شود.
 """
 from __future__ import annotations
 
@@ -13,6 +13,10 @@ from app.core import human
 from app.core.urlcheck import host_of
 
 CAPTION_LIMIT = 1024
+
+# هزینهٔ تگ‌های ثابت اطراف عنوان: ``<a href="">`` + ``</a>`` + ``<b>`` + ``</b>``
+_LINK_OVERHEAD = 22
+_BOLD_OVERHEAD = 7
 
 _BRAND_TAGS: tuple[tuple[str, str], ...] = (
     ("youtu.be", "YouTube"),
@@ -100,34 +104,47 @@ def hashtags_for(url: str | None, kind: str = "video", extra: str = "") -> str:
     return " ".join(unique)
 
 
+def _fit_escaped(text: str, room: int) -> str:
+    """متن خام را طوری کوتاه می‌کند که نسخهٔ escape‌شده در ``room`` جا شود.
+
+    escape می‌تواند طول را زیاد کند (``&`` ← ``&amp;``)؛ کوتاه‌کردن بعد از
+    escape کردن ممکن است یک entity را نصف کند و HTML تلگرام را خراب کند.
+    """
+    if room <= 1:
+        return ""
+    kept: list[str] = []
+    used = 0
+    for char in text:
+        piece = human.esc(char)
+        if used + len(piece) > room - 1:  # یک کاراکتر هم برای «…» نگه می‌داریم
+            return "".join(kept).rstrip() + "…"
+        kept.append(char)
+        used += len(piece)
+    return "".join(kept)
+
+
 def build_caption(
     title: str,
     source_url: str = "",
     kind: str = "video",
     extra_tags: str = "",
 ) -> str:
-    """کپشن HTML آماده برای ``caption`` تلگرام."""
-    tags = hashtags_for(source_url, kind, extra_tags)
-    tail: list[str] = []
-    if source_url:
-        href = escape(source_url, quote=True)
-        tail.append(f'<a href="{href}">🔗 Source</a>')
-    if tags:
-        tail.append(human.esc(tags))
-    tail_text = "\n".join(tail)
+    """کپشن HTML آماده برای ``caption`` تلگرام.
 
-    room = CAPTION_LIMIT - len(tail_text) - (1 if tail_text else 0)
-    if room < 40 and source_url:
-        # عنوان مهم‌تر از لینک منبع است؛ لینک را کنار می‌گذاریم.
-        tail = [human.esc(tags)] if tags else []
-        tail_text = "\n".join(tail)
-        room = CAPTION_LIMIT - len(tail_text) - (1 if tail_text else 0)
+    عنوان بولد می‌شود و اگر آدرس منبع داشته باشیم، خودِ عنوان لینک همان آدرس
+    است؛ پس با زدن روی کپشن، سایت باز می‌شود. ``kind`` و ``extra_tags`` برای
+    سازگاری با فراخوانی‌های قبلی نگه داشته شده‌اند و هشتگی اضافه نمی‌کنند.
+    """
+    label = (title or "").strip() or host_of(source_url or "") or "media"
+    if not source_url:
+        return f"<b>{human.esc(_fit_escaped(label, CAPTION_LIMIT - _BOLD_OVERHEAD))}</b>"
 
-    title_html = ""
-    if title:
-        if len(title) > max(1, room - 7):
-            title = human.truncate(title, max(8, room - 7))
-        title_html = f"<b>{human.esc(title)}</b>"
+    href = escape(source_url, quote=True)
+    room = CAPTION_LIMIT - len(href) - _LINK_OVERHEAD
+    if room < 8:
+        # آدرس به‌تنهایی تقریباً کل سقف را پر می‌کند؛ لینک را کنار می‌گذاریم
+        # تا عنوان قابل خواندن بماند.
+        return f"<b>{human.esc(_fit_escaped(label, CAPTION_LIMIT - _BOLD_OVERHEAD))}</b>"
+    fitted = human.esc(_fit_escaped(label, room))
+    return f'<a href="{href}"><b>{fitted}</b></a>'
 
-    body = f"{title_html}\n{tail_text}".strip()
-    return body[:CAPTION_LIMIT]
