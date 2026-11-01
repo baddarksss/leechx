@@ -13,10 +13,11 @@ from types import SimpleNamespace
 import pytest
 
 from app.bot.flows import link as link_flow
-from app.services import downloader, thumbs
+from app.services import downloader, thumbs, uploader
 from app.services.downloader import Progress
 from app.services.drafts import Draft
 from app.services.formats import FormatOption
+from app.services.jobs import JobManager, JobTask
 from app.services.runtime_settings import RuntimeSettings
 
 
@@ -171,6 +172,42 @@ def test_downloader_passes_connection_count(cfg, monkeypatch):
     assert "--max-connection-per-server=12" in opts["external_downloader_args"]["aria2c"]
     # بدون تنظیمات، پیش‌فرض قبلی (۸) حفظ می‌شود.
     assert downloader.Downloader(cfg).connections is None
+
+
+# ── مرحلهٔ آپلود به تلگرام (hop دوم) ─────────────────
+def test_dc_speed_learns_from_real_uploads(monkeypatch):
+    monkeypatch.setattr(uploader, "_DC_SPEED", 1 * 1024 * 1024)
+    for _ in range(6):
+        uploader.note_dc_speed(50 * 1024 * 1024, 5.0)  # ۱۰ MiB/s
+    # میانگین متحرک به نمونهٔ واقعی نزدیک می‌شود.
+    assert uploader.dc_speed() > 9 * 1024 * 1024
+    before = uploader.dc_speed()
+    uploader.note_dc_speed(0, 5)  # نمونهٔ نامعتبر نادیده گرفته می‌شود
+    assert uploader.dc_speed() == before
+
+
+def test_waiting_upload_shows_estimated_progress(monkeypatch):
+    monkeypatch.setattr(uploader, "_DC_SPEED", 10 * 1024 * 1024)
+    manager = JobManager(
+        cfg=SimpleNamespace(), settings=SimpleNamespace(), store=SimpleNamespace(),
+        downloader=None, uploader=None, limiter=SimpleNamespace(),
+    )
+    task = JobTask(
+        id="j1", user_id=7, chat_id=7,
+        url="https://example.com/v",
+        option=SimpleNamespace(selector="", label="720"),
+        title="clip", lang="fa",
+    )
+    task.progress.stage = "uploading"
+    task.progress.total = 100 * 1024 * 1024
+    task.progress.uploaded = 100 * 1024 * 1024  # بایت‌ها به Local API رسیده‌اند
+    task.upload_started = time.monotonic() - 4
+
+    body = manager._progress_text(task)
+    assert "ارسال به سرور تلگرام" in body
+    assert "%" in body
+    # نوار باید حرکت کند، نه اینکه روی ۹۹٪ بی‌حرکت بماند
+    assert "100%" not in body
 
 
 def test_external_downloader_detected(monkeypatch):

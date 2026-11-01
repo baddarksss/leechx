@@ -7,6 +7,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.12.1] - 2026-11-01 — "Honest Progress"
+
+### Changed
+- **The upload phase now shows real progress towards Telegram.** Measured on
+  the production server: our process hands a 300 MB file to the local Bot API
+  server in **1.4 s**, then the server needs **17.5 s** to forward it to
+  Telegram — and that second hop reports nothing back, so the message sat on
+  `99% / ⏳ waiting for Telegram` and looked frozen. The status line now shows
+  `📤 Uploading to Telegram servers` with a bar, speed and ETA estimated from
+  the throughput this server actually achieves (a rolling average learned from
+  real uploads, ~14 MB/s here).
+
+### Notes
+- The wait itself cannot be removed: the file really does have to reach
+  Telegram's datacenter. On this machine the server's own uplink is ~640 Mbps
+  while the route to Telegram tops out at ~110 Mbps (13.7 MiB/s, constant for
+  100 MB and 400 MB), and routing the API server through WARP measured slower
+  (12.0 MB/s), so ~14 MB/s is the ceiling here — 400 MB is ~29 s.
+
 ## [5.12.0] - 2026-11-01 — "Tuned Connections"
 
 ### Added

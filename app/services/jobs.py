@@ -33,7 +33,13 @@ from app.services.formats import FormatOption
 from app.services.linktoken import make_token
 from app.services.ratelimit import RateLimiter
 from app.services.runtime_settings import RuntimeSettings
-from app.services.uploader import PLAYABLE_VIDEO_EXT, Uploader, media_kind, upload_limit
+from app.services.uploader import (
+    PLAYABLE_VIDEO_EXT,
+    Uploader,
+    dc_speed,
+    media_kind,
+    upload_limit,
+)
 
 log = logging.getLogger("leechx.jobs")
 
@@ -1054,17 +1060,31 @@ class JobManager:
                 part_line = text.t(
                     lang, "split_part_line", part=prog.part, parts=prog.parts
                 ) + "\n"
+            if waiting:
+                # بایت‌ها به Local API رسیدند؛ از اینجا خودِ سرور فایل را به
+                # تلگرام می‌فرستد و ما فقط پاسخ را می‌بینیم. درصد و زمان
+                # باقی‌مانده را با سرعتِ آموخته‌شدهٔ همین سرور تخمین می‌زنیم تا
+                # کاربر یک نوار ثابت روی ۹۹٪ نبیند.
+                estimated = dc_speed()
+                estimated_total = (prog.total / estimated) if prog.total else 0.0
+                pct = min(99.0, elapsed / estimated_total * 100) if estimated_total else 0.0
+                left = (
+                    max(0.0, estimated_total - elapsed) if estimated_total else None
+                )
+                return stage + "\n" + part_line + text.t(
+                    lang,
+                    "uploading_dc",
+                    bar=human.progress_bar(pct, show_pct=True),
+                    size=human.human_bytes(prog.total or prog.uploaded),
+                    speed=human.human_speed(estimated),
+                    eta=human.human_eta(left),
+                )
             return stage + "\n" + part_line + text.t(
                 lang,
                 "uploading",
                 bar=human.progress_bar(prog.pct, show_pct=True),
                 size=f"{human.human_bytes(prog.uploaded)} / {human.human_bytes(prog.total)}",
-            ) + (
-                "\n" + text.t(
-                    lang, "upload_wait_elapsed", elapsed=human.human_duration(elapsed)
-                )
-                if waiting else f"\n{human.human_speed(speed)} · {human.human_eta(eta)}"
-            )
+            ) + f"\n{human.human_speed(speed)} · {human.human_eta(eta)}"
         return text.t(lang, "processing")
 
     async def _edit_progress(self, task: JobTask, force: bool = False) -> None:

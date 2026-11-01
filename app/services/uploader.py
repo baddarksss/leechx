@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import mimetypes
+import time
 from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
@@ -37,6 +38,31 @@ ALBUM_CHUNK = 10                 # حداکثر آیتم در هر media group
 
 # فرمت‌هایی که تلگرام به‌عنوان ویدیو قابل پخش می‌داند
 PLAYABLE_VIDEO_EXT = {".mp4", ".m4v", ".mov"}
+
+
+# سرعت واقعیِ آپلود از سرور به دیتاسنتر تلگرام.
+#
+# Bot API محلی فایل را از ما می‌گیرد و بعد خودش به تلگرام می‌فرستد (دومین
+# hop). آن hop هیچ سیگنال بایتی به ما نمی‌دهد، پس سرعتش را یاد می‌گیریم تا
+# در پیام وضعیت یک نوار پیشرفت و زمان باقی‌ماندهٔ واقع‌گرایانه نشان دهیم.
+DC_SPEED_DEFAULT = 12 * 1024 * 1024  # بایت بر ثانیه
+_DC_SPEED = DC_SPEED_DEFAULT
+
+
+def dc_speed() -> float:
+    """میانگین متحرک سرعت آپلود سمت تلگرام (بایت بر ثانیه)."""
+    return max(512 * 1024, _DC_SPEED)
+
+
+def note_dc_speed(size: int, seconds: float) -> None:
+    """یک نمونهٔ واقعی از سرعت آپلود سمت تلگرام ثبت می‌کند."""
+    global _DC_SPEED
+    if size <= 0 or seconds <= 0:
+        return
+    sample = size / seconds
+    if sample <= 0:
+        return
+    _DC_SPEED = 0.6 * _DC_SPEED + 0.4 * sample
 
 
 def upload_limit(cfg: Config, settings: RuntimeSettings) -> int:
@@ -136,6 +162,7 @@ class Uploader:
         spoiler: bool = False,
     ) -> Message:
         self._check_size(result.size)
+        started = time.monotonic()
         if reset_progress:
             progress.stage = "uploading"
             progress.pct = 0.0
@@ -254,6 +281,8 @@ class Uploader:
             if sent is not None and message is not None:
                 # برای حذف زمان‌بندی‌شدهٔ NSFW به شناسهٔ همهٔ پارت‌ها نیاز داریم.
                 sent.append(message)
+            # این عدد شامل هر دو hop است و برای تخمین در پیام وضعیت به کار می‌رود.
+            note_dc_speed(result.size, time.monotonic() - started)
             return message
         except TelegramError as exc:
             msg = str(exc)

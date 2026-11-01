@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.12.0"
-CODENAME = "Tuned Connections"
+__version__ = "5.12.1"
+CODENAME = "Honest Progress"
 RELEASE_DATE = "2026-11-01"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.
