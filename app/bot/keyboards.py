@@ -420,6 +420,8 @@ def settings_menu(lang: str, snap: dict) -> Kb:
              callback_data="a|edit|nsfw_autodelete_seconds")],
         [Btn(text.t(lang, "set_thumb_wait", v=snap["thumb_wait_seconds"]),
              callback_data="a|edit|thumb_wait_seconds")],
+        [Btn(text.t(lang, "set_aria2c_conn", v=snap["aria2c_connections"]),
+             callback_data="a|edit|aria2c_connections")],
         [_btn(lang, "btn_admin_runtime", A_RUNTIME)],
     ])
 

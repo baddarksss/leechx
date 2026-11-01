@@ -16,6 +16,7 @@ import logging
 import random
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from telegram import InputMediaPhoto
@@ -45,16 +46,35 @@ _SHOT_FILTER = (
 NATIVE_PROTOCOLS = {"m3u8", "m3u8_native", "mhtml", "ism", "dash", "http_dash_segments"}
 
 
-def aria2c_opts() -> dict[str, object]:
+# تعداد اتصال همزمان aria2c برای هر فایل. ادمین از پنل عوضش می‌کند؛
+# کمتر از ۱ معنی ندارد و بالای ۳۲ معمولاً CDN را به rate-limit می‌اندازد.
+ARIA2C_DEFAULT = 8
+ARIA2C_MIN = 1
+ARIA2C_MAX = 32
+
+
+def aria2c_connections(value: int | None = None) -> int:
+    """تعداد اتصال معتبر (همیشه بین ARIA2C_MIN و ARIA2C_MAX)."""
+    try:
+        count = int(value) if value is not None else 0
+    except (TypeError, ValueError):
+        count = 0
+    if count <= 0:
+        count = ARIA2C_DEFAULT
+    return max(ARIA2C_MIN, min(ARIA2C_MAX, count))
+
+
+def aria2c_opts(connections: int | None = None) -> dict[str, object]:
     """گزینه‌های دانلود چندتکهٔ aria2c؛ اگر نصب نبود خالی."""
     if shutil.which("aria2c") is None:
         return {}
+    count = str(aria2c_connections(connections))
     return {
         "external_downloader": {p: "native" for p in NATIVE_PROTOCOLS}
         | {"default": "aria2c"},
         "external_downloader_args": {"aria2c": [
-            "-x", "8", "-s", "8", "-k", "4M",
-            "--max-connection-per-server=8",
+            "-x", count, "-s", count, "-k", "4M",
+            f"--max-connection-per-server={count}",
             "--file-allocation=none",
             "--summary-interval=0",
             "--console-log-level=warn",
@@ -79,6 +99,10 @@ def shot_times(duration: float, count: int = SHOTS) -> list[float]:
     for i in range(count):
         start = max(0.05, i * step + 0.05)
         end = min(duration - 0.05, (i + 1) * step - 0.05)
+        if picks and step >= _MIN_GAP:
+            # دو قاب همیشه حداقل ``_MIN_GAP`` ثانیه فاصله دارند؛ بدون این
+            # محدودیت، دو تصادفیِ مجاور می‌توانستند تقریباً یکی شوند.
+            start = max(start, picks[-1] + _MIN_GAP)
         if end <= start:
             end = start
         picks.append(random.uniform(start, end))
@@ -219,8 +243,53 @@ def display_size(stream: dict) -> tuple[int, int] | None:
     return max(1, round(shown_w)), max(1, round(shown_h))
 
 
-async def probe_display_size(video: Path) -> tuple[int, int] | None:
-    """ابعاد واقعیِ نمایش ویدیو با ffprobe؛ در نبود ffprobe/خطا ``None``."""
+@dataclass(frozen=True)
+class MediaMeta:
+    """مشخصات واقعیِ فایل که تلگرام لازم دارد: ابعاد نمایشی و مدت‌زمان."""
+
+    width: int | None = None
+    height: int | None = None
+    duration: int | None = None
+
+
+def media_meta(data: dict) -> MediaMeta | None:
+    """خروجی JSON ``ffprobe`` را به ``MediaMeta`` تبدیل می‌کند.
+
+    سایت‌هایی که از اکسترکتور عمومی می‌آیند (مثل fpo.xxx و porntrex) مدت‌زمان
+    را در متادیتا ندارند؛ بدون عدد درست، تلگرام ویدیو را با «00:00» و بدون
+    پیش‌نمایش نشان می‌دهد و مرحلهٔ انتخاب تامبنیل هم اجرا نمی‌شود.
+    """
+    if not isinstance(data, dict):
+        return None
+    duration: int | None = None
+    fmt = data.get("format")
+    raw = fmt.get("duration") if isinstance(fmt, dict) else None
+    try:
+        seconds = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        seconds = 0.0
+    if seconds > 0:
+        duration = int(round(seconds))
+
+    width = height = None
+    streams = data.get("streams")
+    if isinstance(streams, list):
+        for stream in streams:
+            if not isinstance(stream, dict):
+                continue
+            if (stream.get("codec_type") or "video") != "video":
+                continue
+            size = display_size(stream)
+            if size is not None:
+                width, height = size
+                break
+    if width is None and duration is None:
+        return None
+    return MediaMeta(width=width, height=height, duration=duration)
+
+
+async def probe_media(video: Path) -> MediaMeta | None:
+    """ابعاد نمایشی و مدت‌زمان واقعی فایل با یک فراخوانی ffprobe."""
     if shutil.which("ffprobe") is None:
         return None
     proc = None
@@ -229,10 +298,9 @@ async def probe_display_size(video: Path) -> tuple[int, int] | None:
             "ffprobe",
             "-v",
             "error",
-            "-select_streams",
-            "v:0",
             "-show_entries",
-            "stream=width,height,sample_aspect_ratio,display_aspect_ratio"
+            "format=duration:"
+            "stream=codec_type,width,height,sample_aspect_ratio,display_aspect_ratio"
             ":stream_tags=rotate:stream_side_data=rotation",
             "-of",
             "json",
@@ -254,16 +322,18 @@ async def probe_display_size(video: Path) -> tuple[int, int] | None:
         data = json.loads(stdout.decode("utf-8", "replace"))
     except ValueError:
         return None
-    streams = data.get("streams") if isinstance(data, dict) else None
-    if not isinstance(streams, list) or not streams:
-        return None
-    stream = streams[0]
-    if not isinstance(stream, dict):
-        return None
-    size = display_size(stream)
-    if size is None:
+    meta = media_meta(data)
+    if meta is None or meta.width is None:
         log.debug("could not derive display size for %s", video)
-    return size
+    return meta
+
+
+async def probe_display_size(video: Path) -> tuple[int, int] | None:
+    """ابعاد واقعیِ نمایش ویدیو با ffprobe؛ در نبود ffprobe/خطا ``None``."""
+    meta = await probe_media(video)
+    if meta is None or meta.width is None or meta.height is None:
+        return None
+    return meta.width, meta.height
 
 
 async def send_picker_album(

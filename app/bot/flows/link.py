@@ -147,9 +147,10 @@ def can_send_as_video(draft: Draft) -> bool:
     option = draft.option
     if option is None or option.kind not in {"video", "direct"}:
         return False
-    # تلگرام AV1 را به‌عنوان ویدیو پخش نمی‌کند؛ بهتر است فایل فرستاده شود.
-    if (option.codec or "").casefold() == "av1":
-        return False
+    # AV1 هم مثل بقیهٔ MP4ها به‌صورت ویدیو فرستاده می‌شود: سرور تلگرام آن را
+    # قبول می‌کند (تست واقعی: sendVideo با AV1 → ok). اگر کلاینتی کدک را پخش
+    # نکند، فایل همچنان دانلود/پخش می‌شود؛ و اگر تلگرام رد کند، ``uploader``
+    # همان فایل را به‌صورت سند می‌فرستد تا کار شکست نخورد.
     extension = (option.ext or Path(urlsplit(draft.url).path).suffix).lower()
     if extension and not extension.startswith("."):
         extension = "." + extension

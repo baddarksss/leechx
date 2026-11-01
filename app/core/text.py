@@ -97,6 +97,7 @@ FA: dict[str, str] = {
     "file_link_progress": "📥 دریافت فایل از تلگرام\n{bar}\n{size}",
     "file_link_wait": "📥 دریافت فایل از تلگرام… حجم دریافت‌شده: {size}",
     "upload_wait": "⏳ منتظر تأیید نهایی تلگرام…",
+    "upload_wait_elapsed": "⏳ منتظر تأیید نهایی تلگرام… ({elapsed})",
     "canceled": "✖️ لغو شد.",
     "cancel_nothing": "ℹ️ هیچ عملیات یا فرم فعالی برای لغو وجود ندارد.",
     "not_found": "🔎 فایل یا صفحه پیدا نشد (۴۰۴). لینک را بررسی کن.",
@@ -306,6 +307,7 @@ FA: dict[str, str] = {
     "set_nsfw_delete": "🔞 حذف خودکار NSFW {flag}",
     "set_nsfw_seconds": "⏱ ثانیهٔ حذف NSFW: {v}",
     "set_thumb_wait": "⏱ ثانیهٔ صبر تامبنیل: {v}",
+    "set_aria2c_conn": "🔌 تعداد اتصال دانلود (۱ تا ۳۲): {v}",
     "admin_settings_nsfw_hint": (
         "🔞 حذف خودکار NSFW روشن است ({seconds} ثانیه). فایل فقط از چت حذف "
         "می‌شود و آرشیو گروه ادمین مثل قبل می‌ماند. در گروه/کانال ربات باید "
@@ -314,6 +316,7 @@ FA: dict[str, str] = {
     "run_nsfw_autodelete_enabled": "حذف خودکار فایل بزرگسال",
     "run_nsfw_autodelete_seconds": "زمان حذف فایل بزرگسال (ثانیه)",
     "run_thumb_wait_seconds": "ثانیهٔ صبر انتخاب تامبنیل",
+    "run_aria2c_connections": "تعداد اتصال دانلود (۱ تا ۳۲)",
     "admin_limit_reached": "⛔️ سقف ادمین‌ها ({max}) پر است.",
     "admin_env_admin": "این کاربر در ADMIN_IDS تنظیمات است؛ از env حذفش کن.",
 
@@ -823,6 +826,7 @@ EN: dict[str, str] = {
     "file_link_progress": "📥 Receiving Telegram file\n{bar}\n{size}",
     "file_link_wait": "📥 Receiving file from Telegram… received: {size}",
     "upload_wait": "⏳ Waiting for Telegram confirmation…",
+    "upload_wait_elapsed": "⏳ Waiting for Telegram confirmation… ({elapsed})",
     "canceled": "✖️ Canceled.",
     "cancel_nothing": "ℹ️ No active operation or form to cancel.",
     "not_found": "🔎 File or page not found (404). Check the URL.",
@@ -1024,6 +1028,7 @@ EN: dict[str, str] = {
     "set_nsfw_delete": "🔞 NSFW auto-delete {flag}",
     "set_nsfw_seconds": "⏱ NSFW delete delay: {v}s",
     "set_thumb_wait": "⏱ Thumbnail wait: {v}s",
+    "set_aria2c_conn": "🔌 Download connections (1–32): {v}",
     "admin_settings_nsfw_hint": (
         "🔞 NSFW auto-delete is ON ({seconds} s). Only the chat copy is "
         "removed; the admin archive keeps the file as before. In "
@@ -1032,6 +1037,7 @@ EN: dict[str, str] = {
     "run_nsfw_autodelete_enabled": "NSFW auto-delete",
     "run_nsfw_autodelete_seconds": "NSFW delete delay (seconds)",
     "run_thumb_wait_seconds": "Thumbnail wait (seconds)",
+    "run_aria2c_connections": "Download connections (1–32)",
     "admin_limit_reached": "⛔️ Admin limit reached ({max}).",
     "admin_env_admin": "This user is listed in ADMIN_IDS; remove them from env.",
     "status": (
@@ -1525,6 +1531,7 @@ RU: dict[str, str] = {
     "file_link_progress": "📥 Получение файла из Telegram\n{bar}\n{size}",
     "file_link_wait": "📥 Получение файла из Telegram… получено: {size}",
     "upload_wait": "⏳ Жду подтверждения Telegram…",
+    "upload_wait_elapsed": "⏳ Жду подтверждения Telegram… ({elapsed})",
     "canceled": "✖️ Отменено.",
     "cancel_nothing": "ℹ️ Нет активной операции или формы для отмены.",
     "not_found": "🔎 Файл или страница не найдены (404). Проверь ссылку.",
@@ -1712,6 +1719,7 @@ RU: dict[str, str] = {
     "set_nsfw_delete": "🔞 Автоудаление NSFW {flag}",
     "set_nsfw_seconds": "⏱ Задержка удаления NSFW: {v} с",
     "set_thumb_wait": "⏱ Ожидание миниатюры: {v} с",
+    "set_aria2c_conn": "🔌 Соединений загрузки (1–32): {v}",
     "admin_settings_nsfw_hint": (
         "🔞 Автоудаление NSFW включено ({seconds} с). Удаляется только копия "
         "в чате, архив в группе админов остаётся как раньше. В группах/каналах "
@@ -1720,6 +1728,7 @@ RU: dict[str, str] = {
     "run_nsfw_autodelete_enabled": "Автоудаление взрослых файлов",
     "run_nsfw_autodelete_seconds": "Задержка удаления взрослых файлов (с)",
     "run_thumb_wait_seconds": "Ожидание выбора миниатюры (с)",
+    "run_aria2c_connections": "Соединений загрузки (1–32)",
     "admin_limit_reached": "⛔️ Достигнут лимит админов ({max}).",
     "admin_env_admin": "Этот пользователь указан в ADMIN_IDS; удали его из env.",
 

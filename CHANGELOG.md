@@ -7,6 +7,56 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.12.0] - 2026-11-01 — "Tuned Connections"
+
+### Added
+- **Tunable download connections.** The number of parallel `aria2c`
+  connections for progressive downloads is now an admin setting
+  (`aria2c_connections`, default **8**). In the admin panel: Settings →
+  `🔌 Download connections (1–32): N`. Useful range is 1–32: a single
+  connection is throttled by most CDNs (~0.1–1 MB/s measured), 8 already
+  reaches ~10–30 MB/s, and above ~16 the extra sockets are often dropped or
+  rate-limited per IP while the 2-core VPS spends more CPU on `aria2c`.
+  Out-of-range values are clamped to the nearest limit and the saved value is
+  shown in the confirmation and on the button.
+
+## [5.11.4] - 2026-11-01 — "Real Progress"
+
+### Fixed
+- **Stuck download progress (0% / `0 B / ?`).** v5.11.0 handed progressive
+  MP4 downloads to `aria2c`, which reports nothing back to yt-dlp: the progress
+  hooks never fired, so the message stayed at `0%` for the whole download even
+  while the file was arriving at ~27 MB/s. `downloader.watch_disk_progress`
+  now reads the real byte count from the files on disk (`st_blocks`, so
+  aria2c's sparse pre-allocation is not counted as downloaded data) and fills
+  percent, speed and ETA. Direct/KVS downloads (`advance_progress`) now report
+  speed and ETA too, instead of `— · —`.
+- **Videos delivered with `00:00` duration.** Sites reached through yt-dlp's
+  generic extractor (fpo.xxx, porntrex, …) have no duration in their metadata;
+  Telegram then shows `00:00` (it does not probe large files itself). The
+  downloaded file is now probed with `ffprobe` (`thumbs.probe_media`) and its
+  real duration — plus the display width/height — is sent with the upload;
+  split parts are probed individually.
+- **Thumbnail picker skipped.** The 「Frame Pick」 album needs the duration to
+  pick frame times; with `duration = 0` it silently fell back to the default
+  cover. The same `ffprobe` probe fixes it, so the picker appears for those
+  sites again.
+- **AV1 delivered as a plain file.** Selecting an AV1 quality forced document
+  mode. Telegram accepts AV1 MP4 as `sendVideo` (verified: `ok: true`), so AV1
+  now arrives as a video; if Telegram ever refuses it, the uploader still
+  falls back to a document instead of failing.
+- **`Untitled` captions.** Eporner pages are downloaded through the embed URL,
+  whose metadata has no title, so the caption and file name became
+  `Untitled [id].mp4`. The download result now uses the same slug-based
+  fallback title as the probe.
+- **`AttributeError: 'NoneType' object has no attribute 'get'`** in
+  `common.lang_of` when `context.user_data` is `None` (channel posts / anonymous
+  admins) — no longer crashes the file handler.
+
+### Changed
+- While Telegram is still confirming an upload, the status line shows the
+  elapsed time so a long server-side confirmation no longer looks frozen.
+
 ## [5.11.3] - 2026-11-01 — "Caption Link"
 
 ### Changed

@@ -11,6 +11,7 @@ from app.config import Config
 from app.core import text
 from app.core.human import parse_bool, parse_float, parse_int
 from app.db import repo
+from app.services import thumbs
 
 # کلید → (نوع، برچسب فارسی)
 SCHEMA: dict[str, tuple[str, str]] = {
@@ -26,6 +27,10 @@ SCHEMA: dict[str, tuple[str, str]] = {
     "nsfw_autodelete_enabled": ("bool", "حذف خودکار فایل بزرگسال"),
     "nsfw_autodelete_seconds": ("int", "زمان حذف فایل بزرگسال (ثانیه)"),
     "thumb_wait_seconds": ("int", "ثانیهٔ صبر انتخاب تامبنیل"),
+    "aria2c_connections": (
+        "int",
+        f"تعداد اتصال دانلود ({thumbs.ARIA2C_MIN} تا {thumbs.ARIA2C_MAX})",
+    ),
     # ── مقادیر متنی که ادمین از خود ربات وارد می‌کند ──
     "public_base_url": ("text", "آدرس عمومی لینک‌ها"),
     "proxy": ("text", "پروکسی دانلود"),
@@ -93,6 +98,7 @@ class RuntimeSettings:
             "nsfw_autodelete_enabled": False,
             "nsfw_autodelete_seconds": 30,
             "thumb_wait_seconds": 30,
+            "aria2c_connections": thumbs.ARIA2C_DEFAULT,
             "public_base_url": self.cfg.public_base_url,
             "proxy": self.cfg.proxy,
             "telegram_api_url": self.cfg.telegram_api_url,
@@ -218,6 +224,11 @@ class RuntimeSettings:
         return max(0, min(600, self.get_int("thumb_wait_seconds") or 0))
 
     @property
+    def aria2c_connections(self) -> int:
+        """تعداد اتصال همزمان دانلود؛ همیشه در بازهٔ ARIA2C_MIN..ARIA2C_MAX."""
+        return thumbs.aria2c_connections(self.get_int("aria2c_connections"))
+
+    @property
     def force_join_enabled(self) -> bool:
         return self.get_bool("force_join_enabled")
 
@@ -272,4 +283,5 @@ class RuntimeSettings:
             "nsfw_autodelete_enabled": self.nsfw_autodelete,
             "nsfw_autodelete_seconds": self.nsfw_autodelete_seconds,
             "thumb_wait_seconds": self.thumb_wait_seconds,
+            "aria2c_connections": self.aria2c_connections,
         }

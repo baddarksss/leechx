@@ -16,7 +16,8 @@ import os
 import re
 import shutil
 import subprocess
-from contextlib import asynccontextmanager
+import time
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -732,7 +733,12 @@ def _cookie_file(cfg: Config, url: str) -> Path | None:
     return None
 
 
-def _base_opts(cfg: Config, url: str, cookie: Path | None = None) -> dict[str, Any]:
+def _base_opts(
+    cfg: Config,
+    url: str,
+    cookie: Path | None = None,
+    connections: int | None = None,
+) -> dict[str, Any]:
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
@@ -749,14 +755,100 @@ def _base_opts(cfg: Config, url: str, cookie: Path | None = None) -> dict[str, A
         "trim_file_name": 120,
     }
     # mp4های پیشرونده با aria2c چندکاناله دانلود می‌شوند؛ استریم‌های HLS/DASH
-    # با دانلودر داخلی و ۸ فرگمنت همزمان. سریع‌تر از یک رشتهٔ واحد.
-    opts.update(thumbs.aria2c_opts())
+    # با دانلودر داخلی و ۸ فرگمنت همزمان. تعداد اتصال از تنظیمات ادمین می‌آید.
+    opts.update(thumbs.aria2c_opts(connections))
     cookie = cookie or _cookie_file(cfg, url)
     if cookie:
         opts["cookiefile"] = str(cookie)
     if cfg.proxy.strip():
         opts["proxy"] = cfg.proxy.strip()
     return opts
+
+
+def advance_progress(progress: Progress, size: int, started: float) -> None:
+    """شمارنده، سرعت و زمان باقی‌مانده برای دانلودهای مستقیم/aiohttp.
+
+    بدون این تابع پیام وضعیت تا آخر «0 B / ? • — • —» می‌ماند، چون این
+    مسیرها هیچ‌وقت ``progress.speed``/``eta`` را پر نمی‌کردند.
+    """
+    progress.downloaded += size
+    progress.downloaded_bytes_total += size
+    elapsed = max(1e-3, time.monotonic() - started)
+    progress.speed = progress.downloaded / elapsed
+    if progress.total:
+        progress.pct = min(99.9, progress.downloaded * 100.0 / progress.total)
+        remaining = max(0, progress.total - progress.downloaded)
+        progress.eta = int(remaining / progress.speed) if progress.speed else None
+
+
+def uses_external_downloader() -> bool:
+    """آیا دانلود پیشرونده به دانلودر بیرونی (aria2c) سپرده می‌شود؟"""
+    return "default" in (thumbs.aria2c_opts().get("external_downloader") or {})
+
+
+def disk_progress(workdir: Path) -> tuple[int, int]:
+    """(بایت‌های واقعاً نوشته‌شده، بزرگ‌ترین طول فایل) در پوشهٔ کار.
+
+    aria2c فایل را sparse می‌سازد: ``st_size`` کل طول را نشان می‌دهد ولی
+    ``st_blocks`` فقط بلوک‌هایی را می‌شمارد که داده دارند؛ پس درصد پیشرفت
+    باید از روی بلوک‌ها حساب شود.
+    """
+    written = 0
+    span = 0
+    for path in workdir.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix == ".aria2" or path.name.startswith("thumb"):
+            continue
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        written += info.st_blocks * 512 if info.st_blocks else info.st_size
+        span = max(span, info.st_size)
+    return written, span
+
+
+async def watch_disk_progress(
+    workdir: Path,
+    progress: Progress,
+    cancel: asyncio.Event,
+    total_hint: int | None = None,
+    interval: float = 1.5,
+    grace: float = 3.0,
+) -> None:
+    """درصد دانلود را از روی فایل‌های روی دیسک گزارش می‌کند.
+
+    دانلودر بیرونی (aria2c) هیچ progress hook ای به yt-dlp نمی‌دهد، پس بدون
+    این تابع کاربر تا آخر دانلود «۰٪ / 0 B» می‌دید و کار را «گیرکرده»
+    تصور می‌کرد.
+    """
+    await asyncio.sleep(grace)
+    if progress.downloaded:  # خود yt-dlp گزارش می‌دهد؛ کاری لازم نیست
+        return
+    loop = asyncio.get_running_loop()
+    last_bytes = 0
+    last_at = loop.time()
+    total = int(total_hint or progress.total or 0)
+    while not cancel.is_set():
+        written, span = disk_progress(workdir)
+        now = loop.time()
+        if written > last_bytes:
+            speed = (written - last_bytes) / max(1e-3, now - last_at)
+            total = max(total, span)
+            progress.stage = "downloading"
+            progress.downloaded = written
+            progress.downloaded_bytes_total = max(
+                progress.downloaded_bytes_total, written
+            )
+            progress.speed = speed
+            progress.total = total
+            if total:
+                progress.pct = min(99.9, written * 100.0 / total)
+                progress.eta = int(max(0, total - written) / speed) if speed > 0 else None
+            last_bytes = written
+            last_at = now
+        await asyncio.sleep(interval)
 
 
 def _pick_output(workdir: Path, candidates: list[str]) -> Path | None:
@@ -775,6 +867,28 @@ def _pick_output(workdir: Path, candidates: list[str]) -> Path | None:
     if not files:
         return None
     return max(files, key=lambda p: p.stat().st_mtime)
+
+
+def _rename_generic_output(path: Path, title: str, video_id: str | None) -> Path:
+    """نام فایل‌های «Untitled» را از عنوان واقعی می‌سازد.
+
+    صفحهٔ امبد عنوان ندارد و yt-dlp فایل را ``Untitled [id].mp4`` ذخیره
+    می‌کند؛ همان ناشناس‌بودن در نام فایل تحویل‌شده هم دیده می‌شد.
+    """
+    if not title or not path.stem.casefold().startswith("untitled"):
+        return path
+    stem = human.safe_filename(title, 100)
+    if not stem or stem.casefold().startswith("untitled"):
+        return path
+    tag = f" [{video_id}]" if video_id else ""
+    target = path.with_name(f"{stem}{tag}{path.suffix}")
+    if target == path or target.exists():
+        return path
+    try:
+        path.rename(target)
+    except OSError:
+        return path
+    return target
 
 
 def _mime_for(path: Path) -> str:
@@ -936,9 +1050,23 @@ async def _thumbnail_to_jpeg(source: Path, dest: Path) -> bool:
 #  دانلودر
 # ─────────────────────────────────────────────────────────────
 class Downloader:
-    def __init__(self, cfg: Config, cookies: CookieStore | None = None) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        cookies: CookieStore | None = None,
+        settings: object | None = None,
+    ) -> None:
         self.cfg = cfg
+        # تنظیمات زمان اجرا (اگر بود) — مثلاً تعداد اتصال aria2c.
+        self.settings = settings
         self.cookies = cookies
+
+    @property
+    def connections(self) -> int | None:
+        """تعداد اتصال aria2c از تنظیمات ادمین (``None`` = پیش‌فرض)."""
+        if self.settings is None:
+            return None
+        return getattr(self.settings, "aria2c_connections", None)
 
     def cookie_for(self, url: str) -> Path | None:
         """فایل کوکی مناسب این لینک (اگر ادمین آپلود کرده باشد)."""
@@ -1357,7 +1485,9 @@ class Downloader:
 
     def _probe_blocking(self, url: str) -> MediaInfo:
         target = extractor_url(url)
-        opts = _base_opts(self.cfg, target, self.cookie_for(target))
+        opts = _base_opts(
+            self.cfg, target, self.cookie_for(target), self.connections
+        )
         opts.update({"skip_download": True, "extract_flat": False})
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(target, download=False)
@@ -1503,6 +1633,15 @@ class Downloader:
         target = url
         if info is not None and info.extractor == "VK" and info.embed_url:
             target = info.embed_url
+        watcher: asyncio.Task | None = None
+        if uses_external_downloader():
+            # دانلودر بیرونی هیچ hook ای صدا نمی‌زند؛ درصد را از دیسک بخوان.
+            watcher = asyncio.create_task(
+                watch_disk_progress(
+                    workdir, progress, cancel, getattr(option, "filesize", None)
+                ),
+                name="download-progress",
+            )
         try:
             return await asyncio.to_thread(
                 self._download_blocking, target, option, workdir, progress, cancel
@@ -1515,6 +1654,11 @@ class Downloader:
                     url, workdir, progress, cancel, info or MediaInfo(url=url, title="")
                 )
             raise
+        finally:
+            if watcher is not None:
+                watcher.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await watcher
 
     async def _download_gallery(
         self,
@@ -1590,7 +1734,9 @@ class Downloader:
                 if filename:
                     finished.append(filename)
 
-        opts = _base_opts(self.cfg, target, self.cookie_for(target))
+        opts = _base_opts(
+            self.cfg, target, self.cookie_for(target), self.connections
+        )
         opts.update(
             {
                 "format": option.selector,
@@ -1645,6 +1791,13 @@ class Downloader:
         if output is None:
             raise errors.UnsupportedUrl("Download produced no file")
 
+        # عنوان امبد/صفحهٔ بدون متادیتا «Untitled» است؛ از اسلاگ آدرس عنوان
+        # خوانا بساز تا هم کپشن و هم نام فایل درست باشد.
+        title = human.safe_filename(
+            fallback_title(url, info.get("title") or output.stem), 150
+        )
+        output = _rename_generic_output(output, title, info.get("id"))
+
         size = output.stat().st_size
         width = info.get("width")
         height = info.get("height")
@@ -1653,7 +1806,7 @@ class Downloader:
 
         return DownloadResult(
             path=output,
-            title=human.safe_filename(info.get("title") or output.stem, 150),
+            title=title,
             duration=int(info["duration"]) if info.get("duration") else None,
             width=int(width) if width else None,
             height=int(height) if height else None,
@@ -1695,15 +1848,13 @@ class Downloader:
                         raise errors.UnsupportedUrl(f"HTTP {resp.status}")
                     total = int(resp.headers.get("Content-Length") or 0)
                     progress.total = total
+                    started_at = time.monotonic()
                     with dest.open("wb") as fh:
                         async for chunk in resp.content.iter_chunked(1024 * 512):
                             if cancel.is_set():
                                 raise errors.JobCancelled()
                             fh.write(chunk)
-                            progress.downloaded += len(chunk)
-                            progress.downloaded_bytes_total += len(chunk)
-                            if total:
-                                progress.pct = min(99.9, progress.downloaded * 100.0 / total)
+                            advance_progress(progress, len(chunk), started_at)
                     if not progress.downloaded or (total and progress.downloaded != total):
                         raise errors.IncompleteDownload(
                             f"expected {total} bytes, received {progress.downloaded}"
@@ -1805,18 +1956,14 @@ class Downloader:
 
                 total = int(resp.headers.get("Content-Length") or 0)
                 progress.total = total
+                started_at = time.monotonic()
                 try:
                     with dest.open("wb") as fh:
                         async for chunk in resp.content.iter_chunked(1024 * 512):
                             if cancel.is_set():
                                 raise errors.JobCancelled()
                             fh.write(chunk)
-                            progress.downloaded += len(chunk)
-                            progress.downloaded_bytes_total += len(chunk)
-                            if total:
-                                progress.pct = min(
-                                    99.9, progress.downloaded * 100.0 / total
-                                )
+                            advance_progress(progress, len(chunk), started_at)
                 finally:
                     resp.release()
 
@@ -1895,15 +2042,13 @@ class Downloader:
                         raise errors.UnsupportedUrl(f"HTTP {media.status}")
                     total = int(media.headers.get("Content-Length") or 0)
                     progress.total = total
+                    started_at = time.monotonic()
                     with dest.open("wb") as fh:
                         async for chunk in media.content.iter_chunked(1024 * 512):
                             if cancel.is_set():
                                 raise errors.JobCancelled()
                             fh.write(chunk)
-                            progress.downloaded += len(chunk)
-                            progress.downloaded_bytes_total += len(chunk)
-                            if total:
-                                progress.pct = min(99.9, progress.downloaded * 100.0 / total)
+                            advance_progress(progress, len(chunk), started_at)
                     if not progress.downloaded or (total and progress.downloaded != total):
                         raise errors.IncompleteDownload(
                             f"expected {total} bytes, received {progress.downloaded}"

@@ -1366,6 +1366,10 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
         await svc.settings.set(key, value)
         await _audit_soon(context, "security", "setting_updated",
                                     update.effective_user.id, f"key={key} (value hidden)")
+        if key == "aria2c_connections":
+            # مقدار خارج از بازه به نزدیک‌ترین حد مجاز محدود می‌شود؛ همان را
+            # هم به ادمین نشان بدهیم تا بداند واقعاً چه چیزی ذخیره شد.
+            value = svc.settings.aria2c_connections
         svc.limiter.set_interval(svc.settings.rate_limit_seconds)
         await panel(
             update,

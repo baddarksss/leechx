@@ -62,7 +62,7 @@ class Services:
         settings = RuntimeSettings(cfg)
         store = FileStore(cfg.files_dir, cfg.tmp_dir)
         cookies = CookieStore(cfg.cookies_dir)
-        downloader = Downloader(cfg, cookies)
+        downloader = Downloader(cfg, cookies, settings)
         uploader = Uploader(cfg, settings)
         limiter = RateLimiter(cfg.rate_limit_seconds)
         admin_group = AdminGroup(cfg, settings)

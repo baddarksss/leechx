@@ -42,7 +42,12 @@ def services(context: ContextTypes.DEFAULT_TYPE) -> Services:
 
 
 def lang_of(context: ContextTypes.DEFAULT_TYPE) -> str:
-    return context.user_data.get("lang") or text.DEFAULT_LANG
+    # ``user_data`` برای پست‌های کانال/ادمین ناشناس ``None`` است؛ در آن حالت
+    # نباید هندلر با AttributeError بترکد.
+    data = context.user_data
+    if not data:
+        return text.DEFAULT_LANG
+    return data.get("lang") or text.DEFAULT_LANG
 
 
 def fmt_ts(ts: int | None) -> str:

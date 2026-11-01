@@ -385,15 +385,21 @@ class JobManager:
                             )
                             source_traffic_recorded += thumbnail_bytes
 
-                # ابعاد واقعیِ نمایش ویدیو (چرخش/SAR) را از خود فایل بگیریم تا
-                # تلگرام دسکتاپ تامبنیل را به نسبت اشتباه نکشد.
-                if media_kind(result) == "video" and not getattr(result, "gallery", False):
+                # مشخصات واقعیِ فایل را از خود فایل بگیریم:
+                # * سایت‌هایی که از اکسترکتور عمومی می‌آیند مدت‌زمان ندارند و
+                #   تلگرام ویدیو را «00:00» و بدون قاب نشان می‌دهد،
+                # * بدون مدت، مرحلهٔ انتخاب تامبنیل هم اجرا نمی‌شد.
+                kind = media_kind(result)
+                if kind in ("video", "audio") and not getattr(result, "gallery", False):
                     try:
-                        size = await thumbs.probe_display_size(result.path)
-                    except Exception:  # noqa: BLE001 — ابعاد فقط تزئینی است
-                        size = None
-                    if size is not None:
-                        result.width, result.height = size
+                        meta = await thumbs.probe_media(result.path)
+                    except Exception:  # noqa: BLE001 — این متادیتا فقط تزئینی است
+                        meta = None
+                    if meta is not None:
+                        if meta.width and meta.height:
+                            result.width, result.height = meta.width, meta.height
+                        if meta.duration:
+                            result.duration = meta.duration
                 # تامبنیل: قاب‌های ویدیو برای انتخاب کاربر + یک قاب پیشفرض معتبر
                 try:
                     await self._maybe_pick_thumbnail(task, result, workdir)
@@ -824,6 +830,10 @@ class JobManager:
                 if task.cancel.is_set():
                     raise errors.JobCancelled()
                 part = self.uploader.part_result(result, path)
+                # مدت هر پارت را از خودش بگیریم؛ وگرنه تلگرام «00:00» نشان می‌دهد.
+                meta = await thumbs.probe_media(path)
+                if meta is not None and meta.duration:
+                    part.duration = meta.duration
                 task.progress.stage = "uploading"
                 task.progress.part = index
                 task.progress.pct = 0.0
@@ -1049,8 +1059,12 @@ class JobManager:
                 "uploading",
                 bar=human.progress_bar(prog.pct, show_pct=True),
                 size=f"{human.human_bytes(prog.uploaded)} / {human.human_bytes(prog.total)}",
-            ) + ("\n" + text.t(lang, "upload_wait") if waiting
-                  else f"\n{human.human_speed(speed)} · {human.human_eta(eta)}")
+            ) + (
+                "\n" + text.t(
+                    lang, "upload_wait_elapsed", elapsed=human.human_duration(elapsed)
+                )
+                if waiting else f"\n{human.human_speed(speed)} · {human.human_eta(eta)}"
+            )
         return text.t(lang, "processing")
 
     async def _edit_progress(self, task: JobTask, force: bool = False) -> None:
