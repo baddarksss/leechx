@@ -385,6 +385,15 @@ class JobManager:
                             )
                             source_traffic_recorded += thumbnail_bytes
 
+                # ابعاد واقعیِ نمایش ویدیو (چرخش/SAR) را از خود فایل بگیریم تا
+                # تلگرام دسکتاپ تامبنیل را به نسبت اشتباه نکشد.
+                if media_kind(result) == "video" and not getattr(result, "gallery", False):
+                    try:
+                        size = await thumbs.probe_display_size(result.path)
+                    except Exception:  # noqa: BLE001 — ابعاد فقط تزئینی است
+                        size = None
+                    if size is not None:
+                        result.width, result.height = size
                 # تامبنیل: قاب‌های ویدیو برای انتخاب کاربر + یک قاب پیشفرض معتبر
                 try:
                     await self._maybe_pick_thumbnail(task, result, workdir)

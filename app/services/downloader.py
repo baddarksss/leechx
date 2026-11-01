@@ -868,6 +868,14 @@ async def fetch_thumbnail(url: str | None, dest: Path, proxy: str = "") -> Path 
 MAX_THUMB_BYTES = 10 * 1024 * 1024
 THUMB_MAX_SIDE = 320
 THUMB_MAX_BYTES = 200 * 1024
+# کیفیت‌های JPEG از بهترین به ضعیف‌ترین؛ اول با q:v 2 تا تامبنیل روی دسکتاپ
+# تار نشود، و اگر از ۲۰۰ کیلوبایت رد شد کیفیت را کم می‌کنیم.
+_THUMB_QUALITIES = (2, 4, 6, 8)
+_THUMB_FILTER = (
+    f"scale={THUMB_MAX_SIDE}:{THUMB_MAX_SIDE}:"
+    "force_original_aspect_ratio=decrease:force_divisible_by=2:"
+    "flags=lanczos,setsar=1"
+)
 
 
 def _looks_complete_image(data: bytes) -> bool:
@@ -881,41 +889,47 @@ def _looks_complete_image(data: bytes) -> bool:
 
 async def _thumbnail_to_jpeg(source: Path, dest: Path) -> bool:
     """تبدیل کاور به JPEG سالم و کوچک با ffmpeg؛ در نبود ffmpeg ``False``."""
-    proc = None
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-y",
-            "-nostdin",
-            "-loglevel",
-            "error",
-            "-i",
-            str(source),
-            "-frames:v",
-            "1",
-            "-vf",
-            f"scale={THUMB_MAX_SIDE}:{THUMB_MAX_SIDE}:"
-            "force_original_aspect_ratio=decrease",
-            "-q:v",
-            "3",
-            str(dest),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        await asyncio.wait_for(proc.wait(), timeout=20)
-    except (TimeoutError, FileNotFoundError, OSError):
-        if proc is not None and proc.returncode is None:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-        return False
-    if proc.returncode != 0:
-        return False
-    try:
-        return 0 < dest.stat().st_size <= THUMB_MAX_BYTES
-    except OSError:
-        return False
+    for quality in _THUMB_QUALITIES:
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-y",
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source),
+                "-frames:v",
+                "1",
+                "-vf",
+                _THUMB_FILTER,
+                "-q:v",
+                str(quality),
+                str(dest),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=20)
+        except (TimeoutError, FileNotFoundError, OSError):
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            dest.unlink(missing_ok=True)
+            return False
+        if proc.returncode != 0:
+            dest.unlink(missing_ok=True)
+            return False
+        try:
+            size = dest.stat().st_size
+        except OSError:
+            return False
+        if 0 < size <= THUMB_MAX_BYTES:
+            return True
+        dest.unlink(missing_ok=True)
+    return False
 
 
 # ─────────────────────────────────────────────────────────────

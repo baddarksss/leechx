@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import shutil
@@ -26,6 +27,18 @@ SHOT_MAX_SIDE = 320
 SHOT_MAX_BYTES = 200 * 1024  # سقف تلگرام برای تامبنیل
 _SHOT_TIMEOUT = 25  # ثانیه به‌ازای هر قاب
 _MIN_GAP = 1.0      # حداقل فاصلهٔ منطقی بین دو قاب (ثانیه)
+# کیفیت‌های JPEG از بهترین به ضعیف‌ترین؛ تا وقتی حجم زیر سقف تلگرام بیاید
+# از q:v 2 شروع می‌کنیم تا تامبنیل روی تلگرام دسکتاپ (که آن را بزرگ‌نمایی
+# می‌کند) تار و کش‌دار دیده نشود.
+_SHOT_QUALITIES = (2, 4, 6, 8)
+_PROBE_TIMEOUT = 15
+# مقیاس با lanczos + حذف SAR غیرمربعی: نسبت تصویر قاب دقیقاً همان چیزی
+# می‌ماند که تلگرام برای ویدیو اعلام می‌کند، پس دسکتاپ آن را نمی‌کشد.
+_SHOT_FILTER = (
+    f"scale={SHOT_MAX_SIDE}:{SHOT_MAX_SIDE}:"
+    "force_original_aspect_ratio=decrease:force_divisible_by=2:"
+    "flags=lanczos,setsar=1,unsharp=5:5:0.4"
+)
 
 # همهٔ پروتکل‌های استریمی به دانلودر داخلی سپرده می‌شوند؛ بقیه (مثل mp4
 # پیشرونده) می‌توانند با aria2c چندکاناله شوند.
@@ -90,6 +103,14 @@ async def extract_shots(
         if cancel is not None and cancel.is_set():
             break
         out = workdir / f"shot-{index:02d}.jpg"
+        if await _grab_frame(video, when, out):
+            shots.append(out)
+    return shots
+
+
+async def _grab_frame(video: Path, when: float, out: Path) -> bool:
+    """یک قاب در ``when`` می‌گیرد؛ اگر از سقف حجم رد شد کیفیت را کم می‌کند."""
+    for quality in _SHOT_QUALITIES:
         proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -105,10 +126,9 @@ async def extract_shots(
                 "-frames:v",
                 "1",
                 "-vf",
-                f"scale={SHOT_MAX_SIDE}:{SHOT_MAX_SIDE}:"
-                "force_original_aspect_ratio=decrease",
+                _SHOT_FILTER,
                 "-q:v",
-                "4",
+                str(quality),
                 str(out),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -120,13 +140,130 @@ async def extract_shots(
                     proc.kill()
                 except ProcessLookupError:
                     pass
-        if out.is_file() and out.stat().st_size <= SHOT_MAX_BYTES:
-            shots.append(out)
-    return shots
+            out.unlink(missing_ok=True)
+            return False
+        if proc.returncode != 0:
+            out.unlink(missing_ok=True)
+            return False
+        try:
+            size = out.stat().st_size
+        except OSError:
+            return False
+        if 0 < size <= SHOT_MAX_BYTES:
+            return True
+        out.unlink(missing_ok=True)
+    return False
 
 
 def chunk(items: list[Path], size: int = SHOTS) -> list[list[Path]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def _ratio(text: str | None) -> tuple[int, int] | None:
+    """«16:9» یا «1:1» را به جفت صحیح تبدیل می‌کند؛ «0:1»/«N/A» یعنی نامعلوم."""
+    if not text or not isinstance(text, str):
+        return None
+    left, _, right = text.partition(":")
+    try:
+        num, den = int(left), int(right)
+    except (TypeError, ValueError):
+        return None
+    if num <= 0 or den <= 0:
+        return None
+    return num, den
+
+
+def _rotation(stream: dict) -> int:
+    """زاویهٔ چرخش متادیتا (۰..۳۵۹)؛ ffmpeg آن را منفی هم می‌نویسد."""
+    raw = None
+    side_data = stream.get("side_data_list") or stream.get("stream_side_data")
+    if isinstance(side_data, list):
+        for item in side_data:
+            if isinstance(item, dict) and item.get("rotation") is not None:
+                raw = item["rotation"]
+                break
+    if raw is None:
+        tags = stream.get("tags")
+        if isinstance(tags, dict):
+            raw = tags.get("rotate")
+    try:
+        return int(round(float(raw))) % 360
+    except (TypeError, ValueError):
+        return 0
+
+
+def display_size(stream: dict) -> tuple[int, int] | None:
+    """ابعاد نمایشیِ یک استریم ویدیو: چرخش و SAR را هم حساب می‌کند.
+
+    تلگرام دسکتاپ تامبنیل را به نسبت ابعادِ اعلام‌شدهٔ ویدیو می‌کشد؛ پس اگر
+    عرض/ارتفاع را از خود فایل (و نه متادیتای yt-dlp) بگیریم، تصویر کش نمی‌آید.
+    """
+    try:
+        width = int(stream.get("width") or 0)
+        height = int(stream.get("height") or 0)
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    sar = _ratio(stream.get("sample_aspect_ratio"))
+    dar = _ratio(stream.get("display_aspect_ratio"))
+    if sar is not None:
+        shown_w = width * sar[0] / sar[1]
+    elif dar is not None:
+        shown_w = height * dar[0] / dar[1]
+    else:
+        shown_w = float(width)
+    shown_h = float(height)
+    if _rotation(stream) % 180 == 90:
+        shown_w, shown_h = shown_h, shown_w
+    return max(1, round(shown_w)), max(1, round(shown_h))
+
+
+async def probe_display_size(video: Path) -> tuple[int, int] | None:
+    """ابعاد واقعیِ نمایش ویدیو با ffprobe؛ در نبود ffprobe/خطا ``None``."""
+    if shutil.which("ffprobe") is None:
+        return None
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,sample_aspect_ratio,display_aspect_ratio"
+            ":stream_tags=rotate:stream_side_data=rotation",
+            "-of",
+            "json",
+            str(video),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_PROBE_TIMEOUT)
+    except (TimeoutError, FileNotFoundError, OSError):
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        return None
+    if proc.returncode != 0 or not stdout:
+        return None
+    try:
+        data = json.loads(stdout.decode("utf-8", "replace"))
+    except ValueError:
+        return None
+    streams = data.get("streams") if isinstance(data, dict) else None
+    if not isinstance(streams, list) or not streams:
+        return None
+    stream = streams[0]
+    if not isinstance(stream, dict):
+        return None
+    size = display_size(stream)
+    if size is None:
+        log.debug("could not derive display size for %s", video)
+    return size
 
 
 async def send_picker_album(

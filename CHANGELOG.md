@@ -7,6 +7,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.11.1] - 2026-11-01 — "Sharp Frame"
+
+### Fixed
+- **Stretched / blurry thumbnails on Telegram Desktop.** The video's declared
+  width/height are now read from the downloaded file with `ffprobe` (rotation
+  and non-square pixels included), so the aspect ratio Telegram Desktop uses to
+  draw the cover matches the real video and the image is no longer stretched.
+  Frames and site covers are also encoded at `-q:v 2` with Lanczos scaling,
+  `setsar=1` and a light sharpen pass (quality is stepped down only if a file
+  would exceed Telegram's 200 KB limit), so the upscaled desktop preview looks
+  sharp instead of blurry.
+
 ## [5.11.0] - 2026-10-31 — "Frame Pick"
 
 ### Added

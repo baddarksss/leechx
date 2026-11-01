@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.11.0"
-CODENAME = "Frame Pick"
-RELEASE_DATE = "2026-10-31"
+__version__ = "5.11.1"
+CODENAME = "Sharp Frame"
+RELEASE_DATE = "2026-11-01"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.
 MIN_PYTHON = (3, 11)

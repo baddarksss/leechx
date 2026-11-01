@@ -262,3 +262,45 @@ async def test_wait_zero_builds_only_default_cover(tmp_path: Path):
 
     assert bot.albums == []  # آلبومی فرستاده نشده
     assert task.custom_thumbnail is not None  # قاب پیشفرض ساخته شد
+
+
+# ── ابعاد نمایشی ویدیو (تامبنیل روی دسکتاپ کش نیاید) ────────
+def test_display_size_plain_and_rotated():
+    assert thumbs.display_size({"width": 1920, "height": 1080}) == (1920, 1080)
+    rotated = {"width": 1920, "height": 1080, "side_data_list": [{"rotation": -90}]}
+    assert thumbs.display_size(rotated) == (1080, 1920)
+    tagged = {"width": 1080, "height": 1920, "tags": {"rotate": "90"}}
+    assert thumbs.display_size(tagged) == (1920, 1080)
+
+
+def test_display_size_applies_sample_aspect_ratio():
+    stream = {"width": 720, "height": 576, "sample_aspect_ratio": "16:11"}
+    assert thumbs.display_size(stream) == (round(720 * 16 / 11), 576)
+
+
+def test_display_size_falls_back_to_dar():
+    stream = {"width": 720, "height": 576, "display_aspect_ratio": "16:9"}
+    assert thumbs.display_size(stream) == (1024, 576)
+
+
+def test_display_size_rotation_with_sar_swaps_displayed_axes():
+    stream = {
+        "width": 720,
+        "height": 576,
+        "sample_aspect_ratio": "16:11",
+        "side_data_list": [{"rotation": 90}],
+    }
+    assert thumbs.display_size(stream) == (576, round(720 * 16 / 11))
+
+
+def test_display_size_rejects_bad_streams():
+    assert thumbs.display_size({}) is None
+    assert thumbs.display_size({"width": 0, "height": 10}) is None
+    assert thumbs.display_size({"width": "x", "height": 10}) is None
+
+
+@pytest.mark.asyncio
+async def test_probe_display_size_without_ffprobe(monkeypatch):
+    monkeypatch.setattr(thumbs.shutil, "which", lambda name: None)
+    assert await thumbs.probe_display_size(Path("missing.mp4")) is None
+
