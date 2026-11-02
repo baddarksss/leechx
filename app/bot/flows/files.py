@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes
 
 from app.bot.common import drop_user_input, lang_of, panel, reply, services
 from app.bot.flows import link as link_flow
-from app.bot.guards import require_admin
+from app.bot.guards import require_admin, unlimited
 from app.bot.states import ST_COOKIE_ADD, ST_DEPLOY_ZIP, ST_THUMBNAIL, clear_state, get_state
 from app.core import human, text
 from app.services.cookies import MAX_COOKIE_BYTES, CookieError
@@ -195,13 +195,15 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if svc.file_transfers.tasks_for_user(user.id):
         await reply(update, text.t(lang, "too_many_active"))
         return
+    # ادمین/مالک و کاربر ویژه از سقف لینک و «حالت آهسته» معاف‌اند.
+    admin = unlimited(context)
     limit, used = await link_flow.link_quota_used(context, user.id)
     if limit and used >= limit:
         await reply(update, text.t(lang, "link_quota_full", limit=limit))
         return
 
     # فاصلهٔ بین درخواست‌ها فقط همین‌جا (پردازش فایل) مصرف می‌شود، نه برای دکمه‌ها.
-    wait = svc.limiter.hit(user.id)
+    wait = 0.0 if admin else svc.limiter.hit(user.id)
     if wait > 0:
         await reply(update, text.t(lang, "rate_limited", seconds=f"{wait:g}"))
         return

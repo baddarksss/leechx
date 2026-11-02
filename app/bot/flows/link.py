@@ -19,18 +19,19 @@ from telegram.ext import ContextTypes
 
 from app.bot import keyboards as kb
 from app.bot.common import DRAFT_SLOT, drop_user_input, edit, lang_of, panel, reply, services
+from app.bot.guards import unlimited
 from app.bot.states import ST_RENAME, ST_THUMBNAIL, clear_state, get_data, set_state
 from app.core import errors, human, text
 from app.db import repo
-from app.services import apkstore
+from app.services import apkstore, torrent
 from app.services.drafts import Draft
 from app.services.formats import FormatOption, all_options
-from app.services.uploader import BOT_API_LIMIT, upload_limit
+from app.services.uploader import BOT_API_LIMIT, PLAYABLE_VIDEO_EXT, upload_limit
 
 log = logging.getLogger("leechx.link")
 
-# پسوندهایی که اگر انتهای عنوان بودند، با پسوند کیفیت انتخاب‌شده جایگزین می‌شوند
-_PLAYABLE_VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov"}
+# پسوندهایی که تلگرام به‌صورت ویدیو می‌پذیرد (MKV هم شامل است — با fallback)
+_PLAYABLE_VIDEO_EXTENSIONS = PLAYABLE_VIDEO_EXT
 MAX_THUMBNAIL_BYTES = 200 * 1024
 MAX_THUMBNAIL_DIMENSION = 320
 
@@ -71,6 +72,10 @@ def new_job_id() -> str:
 
 async def _quota_left(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     svc = services(context)
+    if unlimited(context):
+        # سهمیهٔ روزانه ابزار محافظت از ربات در برابر کاربران است؛ ادمین و
+        # کاربر ویژه از آن معاف‌اند.
+        return True
     quota = svc.settings.daily_quota
     if quota <= 0:
         return True
@@ -177,6 +182,7 @@ async def apply_user_preferences(draft: Draft) -> None:
     destination = getattr(user, "default_destination", "telegram") if user is not None else "telegram"
     draft.send_as = mode if mode in {"video", "document"} else "video"
     draft.destination = destination if destination in {"telegram", "link"} else "telegram"
+    draft.thumb_picker = bool(getattr(user, "thumb_picker", False)) if user is not None else False
     normalize_delivery_mode(draft)
 
 
@@ -292,6 +298,9 @@ async def link_quota_used(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> t
     ``limit == 0`` یعنی ادمین این محدودیت را خاموش کرده است.
     """
     svc = services(context)
+    if unlimited(context):
+        # سقف لینک همزمان هم فقط برای کاربران عادی است.
+        return 0, 0
     limit = max(0, svc.settings.max_links_per_user)
     if limit <= 0:
         return 0, 0
@@ -303,7 +312,10 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
     lang = lang_of(context)
     user = update.effective_user
 
-    if not svc.limiter.has_slot(user.id, svc.cfg.per_user_concurrency):
+    # ادمین/مالک از «حالت آهسته» (فاصلهٔ پردازش)، سهمیه و سقف کار همزمان معاف
+    # است؛ این‌ها فقط برای کاربران است. در حالت پیش‌نمایش، ادمین مثل کاربر است.
+    admin = unlimited(context)
+    if not admin and not svc.limiter.has_slot(user.id, svc.cfg.per_user_concurrency):
         await reply(update, text.t(lang, "too_many_active"))
         return
 
@@ -317,13 +329,18 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
 
     # فاصلهٔ بین درخواست‌ها فقط به پردازش لینک/فایل مربوط است؛ دکمه‌ها و
     # منوها هرگز این تایمر را مصرف نمی‌کنند.
-    wait = svc.limiter.hit(user.id)
+    wait = 0.0 if admin else svc.limiter.hit(user.id)
     if wait > 0:
         await reply(update, text.t(lang, "rate_limited", seconds=f"{wait:g}"))
         return
 
     status = await reply(update, text.t(lang, "probing"))
     if status is None:
+        return
+
+    # ── مگنت/تورنت: probe ندارد، مستقیم به صفحهٔ تحویل ─────────
+    if torrent.is_magnet(url):
+        await _start_magnet(update, context, status, url)
         return
 
     # ── لینک Play Store: نسخه‌های APK/XAPK از APKPure ──────────
@@ -464,6 +481,50 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
     svc.drafts.put(draft)
     note = text.t(lang, "playlist_detected") if info.playlist else ""
     await edit(status, quality_text(lang, draft, note), reply_markup=kb.quality_menu(lang, draft))
+
+
+async def _start_magnet(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    status,
+    url: str,
+) -> None:
+    """مگنت → صفحهٔ تحویل (ویدیو/فایل) بدون probe؛ حجم بعد از دانلود معلوم می‌شود."""
+    svc = services(context)
+    lang = lang_of(context)
+    user = update.effective_user
+    option = FormatOption(
+        kind="video",
+        code="magnet",
+        label=text.t(lang, "quality_auto"),
+        selector="",
+        ext="mp4",
+    )
+    draft = Draft(
+        id=svc.drafts.new_id(),
+        user_id=user.id,
+        chat_id=update.effective_chat.id,
+        url=url,
+        title=torrent.display_name(url) or "torrent",
+        options=[option],
+        option=option,
+        duration=None,
+        thumbnail=None,
+        uploader=None,
+        extractor="aria2c",
+        kind="torrent",
+        auto_quality=True,
+        lang=lang,
+    )
+    await apply_user_preferences(draft)
+    svc.drafts.put(draft)
+    await edit(
+        status,
+        delivery_text(lang, draft, svc.settings.ttl_hours)
+        + "\n\n"
+        + text.t(lang, "torrent_note"),
+        reply_markup=kb.delivery_menu(lang, draft),
+    )
 
 
 async def _start_apk(
@@ -664,6 +725,7 @@ async def enqueue(
         mode=mode,
         custom_name=draft.custom_name,
         custom_thumbnail=draft.custom_thumbnail,
+        thumb_picker=draft.thumb_picker,
     )
     position = await svc.jobs.submit(task)
     await edit(

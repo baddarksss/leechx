@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +27,7 @@ from app.services.link_server import LinkServer
 from app.services.ratelimit import RateLimiter
 from app.services.runtime_settings import RuntimeSettings
 from app.services.sites import sites
-from app.services.telegram_transfers import FileLinkTransfers
+from app.services.telegram_transfers import FileLinkTransfers, bot_api_cache_state
 from app.services.updater import SourceUpdater
 from app.services.uploader import Uploader
 from app.version import __version__
@@ -55,6 +56,8 @@ class Services:
     sites: object = sites
     application: object | None = None
     started_at: float = field(default_factory=time.time)
+    # ok / unreadable / missing / off — وضعیت خواندن کش Local Bot API
+    media_cache_state: str = "off"
     _cleanup: asyncio.Task | None = None
 
     @classmethod
@@ -103,6 +106,19 @@ class Services:
         self.settings.apply_to_config()
         self.admin_group.attach(bot)
         self.limiter.set_interval(self.settings.rate_limit_seconds)
+        self.media_cache_state = await asyncio.to_thread(
+            bot_api_cache_state, self.cfg
+        )
+        if self.media_cache_state == "unreadable":
+            log.warning(
+                "Local Bot API cache is not readable by uid %s: file links, "
+                "thumbnails and cookie uploads will fail with HTTP 404. Fix inside "
+                "the API container: chgrp -R %s /var/lib/telegram-bot-api && "
+                "chmod -R g+rX /var/lib/telegram-bot-api",
+                os.getuid(),
+                os.getuid(),
+            )
+        self.server.cache_state = self.media_cache_state
         await asyncio.to_thread(self.sites.build)
         await self.server.start()
         await self.jobs.start(bot)
@@ -172,6 +188,13 @@ class Services:
             await repo.purge_debug_tokens()
         except Exception:  # noqa: BLE001
             log.debug("debug token purge failed", exc_info=True)
+        try:
+            # بدون این پاک‌سازی، جدول رویدادهای آماری بی‌نهایت رشد می‌کند.
+            purged_events = await repo.purge_events(90)
+            if purged_events:
+                log.debug("purged %d old stat events", purged_events)
+        except Exception:  # noqa: BLE001
+            log.debug("event purge failed", exc_info=True)
         if removed and self.admin_group is not None:
             await self.admin_group.audit("system", "cleanup", details=f"removed={removed}, bytes={freed}")
         if self.cache is not None:

@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.12.1"
-CODENAME = "Honest Progress"
-RELEASE_DATE = "2026-11-01"
+__version__ = "5.14.1"
+CODENAME = "Tidy"
+RELEASE_DATE = "2026-11-02"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.
 MIN_PYTHON = (3, 11)

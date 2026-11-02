@@ -73,6 +73,8 @@ class LinkServer:
         self.debug = debug
         self._access_logged: dict[str, float] = {}
         self._runner: web.AppRunner | None = None
+        # وضعیت خواندنی‌بودن کش Local Bot API (در container.setup ست می‌شود).
+        self.cache_state = "off"
 
     # ── ساخت اپلیکیشن ──────────────────────────────────────
     def build_app(self) -> web.Application:
@@ -126,6 +128,7 @@ class LinkServer:
             "time": int(time.time()),
             "shared_files": await repo.count_shared(),
             "disk_free": self.store.disk_free(),
+            "bot_api_cache": self.cache_state,
         }
         return web.json_response(payload, status=200 if db_ok else 503)
 
@@ -146,21 +149,25 @@ class LinkServer:
 
         path = Path(row.path)
         try:
-            resolved = path.resolve()
-            if not resolved.is_relative_to(self.store.links.resolve()):
+            # کار با دیسک داخل thread تا درخواست‌های همزمان حلقهٔ asyncio را قفل نکنند.
+            resolved = await asyncio.to_thread(path.resolve)
+            links_root = await asyncio.to_thread(self.store.links.resolve)
+            if not resolved.is_relative_to(links_root):
                 log.warning("path traversal attempt: %s", row.path)
                 return web.Response(status=403, text="Forbidden.\n")
         except OSError:
             return web.Response(status=404, text="File not found.\n")
 
-        if not resolved.is_file():
+        if not await asyncio.to_thread(resolved.is_file):
             await self._drop(row.id, row.path)
             return web.Response(status=404, text="File not found.\n")
 
-        size = resolved.stat().st_size
+        size = (await asyncio.to_thread(resolved.stat)).st_size
         if size <= 0 or size != row.size:
+            # فایل خراب/جابه‌جا شده است؛ لینک نباید تا ابد 503 بماند.
             log.warning("link file size mismatch %s: expected %s, got %s", row.id, row.size, size)
-            return web.Response(status=503, text="File unavailable or incomplete.\n")
+            await self._drop(row.id, row.path)
+            return web.Response(status=410, text="Link unavailable; create a new one.\n")
         ctype = row.mime or mimetypes.guess_type(row.name)[0] or "application/octet-stream"
         inline = ctype.startswith(("video/", "audio/", "image/"))
         rng = _parse_range(request.headers.get("Range"), size)

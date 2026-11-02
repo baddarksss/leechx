@@ -82,18 +82,19 @@ class CacheHub:
             if self._inflight.get(key) is task:
                 self._inflight.pop(key, None)
 
-    async def cached_delivery(self, bot, task) -> bool:
+    async def cached_delivery(self, bot, task) -> int | None:
+        """حجم فایلِ تحویل‌شده از کش، یا ``None`` اگر نسخهٔ کش‌شده‌ای نبود."""
         group_id = self.group.chat_id
         if not group_id or not self.group.topic_id("cache"):
-            return False
+            return None
         key = fingerprint(
             task.user_id, task.url, task.option.selector, task.mode, task.custom_name
         )
         row = await repo.get_media_cache(key, task.user_id, group_id)
         if row is None:
-            return False
+            return None
         if task.cancel.is_set():
-            return False
+            return None
         try:
             from app.core import human
             from app.core.caption import build_caption
@@ -111,18 +112,18 @@ class CacheHub:
             log.info("cache copy failed; redownload: %s", exc)
             await repo.delete_media_cache(key)
             await self.group.cache_event("media", "STALE", key[:12])
-            return False
+            return None
         if task.cancel.is_set():
             try:
                 await bot.delete_message(task.chat_id, copied.message_id)
             except TelegramError:
                 pass
-            return False
+            return None
         try:
             await self.group.cache_event("media", "HIT", key[:12])
         except Exception:
             log.debug("cache-hit logging failed", exc_info=True)
-        return row.size
+        return int(row.size)
 
     async def record_delivery(self, bot, task, result, uploaded_message) -> None:
         group_id = self.group.chat_id

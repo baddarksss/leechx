@@ -90,6 +90,26 @@ async def test_document_mode_forces_send_document(tmp_path):
 async def test_non_playable_video_goes_as_document(tmp_path):
     bot = FakeBot()
     result = make_result(tmp_path)
+    result.path = result.path.with_suffix(".webm")
+    result.path.write_bytes(b"webm-bytes" * 100)
+    result.size = result.path.stat().st_size
+    result.mime = "video/webm"
+
+    await make_uploader().send(
+        bot,
+        chat_id=1,
+        result=result,
+        progress=Progress(),
+        filename=result.path.name,
+    )
+
+    assert bot.calls[0][0] == "document"
+
+
+@pytest.mark.asyncio
+async def test_mkv_is_sent_as_video(tmp_path):
+    bot = FakeBot()
+    result = make_result(tmp_path)
     result.path = result.path.with_suffix(".mkv")
     result.path.write_bytes(b"matroska" * 100)
     result.size = result.path.stat().st_size
@@ -103,7 +123,27 @@ async def test_non_playable_video_goes_as_document(tmp_path):
         filename=result.path.name,
     )
 
-    assert bot.calls[0][0] == "document"
+    assert bot.calls[0][0] == "video"
+
+
+@pytest.mark.asyncio
+async def test_mkv_with_generic_mime_is_still_a_video(tmp_path):
+    bot = FakeBot()
+    result = make_result(tmp_path)
+    result.path = result.path.with_suffix(".mkv")
+    result.path.write_bytes(b"matroska" * 100)
+    result.size = result.path.stat().st_size
+    result.mime = "application/octet-stream"
+
+    await make_uploader().send(
+        bot,
+        chat_id=1,
+        result=result,
+        progress=Progress(),
+        filename=result.path.name,
+    )
+
+    assert bot.calls[0][0] == "video"
 
 
 class TimeoutBot(FakeBot):

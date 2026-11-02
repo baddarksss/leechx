@@ -7,6 +7,125 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.14.1] - 2026-11-02 — "Tidy"
+
+### Fixed
+- The users section showed **two** «🔎 Find user» buttons: the page renderer
+  added its own copy on top of the section menu. The list and the empty state
+  now rely on the section menu only.
+## [5.14.0] - 2026-11-02 — "VIP"
+
+### Added
+- **VIP users (`users.vip`).** A user marked as VIP skips every per-user limit:
+  the slow-mode interval, the daily quota, `max_links_per_user` and the
+  per-user concurrency slot. VIP is **not** an admin right: the admin panel and
+  admin-only actions stay closed (`guards.unlimited()` is used only by the
+  limit checks; `current_admin()` and `require_admin()` are untouched).
+- **«⭐ کاربران ویژه» section.** Admin → «👥 کاربران» → «⭐ کاربران ویژه» lists
+  VIP users (paginated) with a one-tap «✕» removal; users are added from the
+  user card («⭐ ویژه کن»). The member list marks VIPs with ⭐.
+
+### Changed
+- Tapping a name in the member list now opens the user card instead of banning
+  immediately; ban/unban and VIP live inside the card, so a mistap cannot lock
+  somebody out.
+
+### Verified
+- 470 tests green, `ruff` clean; deployed to `3.150.178.157` (v5.14.0, health ok).
+## [5.13.0] - 2026-11-02 — "Magnet"
+
+### Added
+- **Magnet / torrent support.** `magnet:?xt=urn:btih:...` links are accepted as
+  a source and downloaded with the `aria2c` binary that already ships in the
+  image (no extra service): `--seed-time=0`, DHT enabled, progress from the
+  bytes on disk, and the largest file of the torrent is delivered. Because the
+  real container is only known after the download, the bot skips the quality
+  probe and shows the delivery screen immediately: pick **Video** and a playable
+  video is sent, pick **File** and it arrives as a document. Multi-file torrents
+  deliver their largest file; the rest is removed with the job directory.
+- **Per-user cover picker (`thumb_picker`).** The 10-frame album from v5.11.0 is
+  now **off by default for everyone** and is enabled per user from
+  «⚙️ تنظیمات» → «🖼 انتخاب کاور از فریم‌های ویدیو». A new admin setting
+  **`thumb_shots`** (4–10, default 10) controls how many frames are extracted.
+- **Full cleanup in stats.** «🧹 پاک‌سازی» now clears the whole history in one
+  press: jobs, stat events, reports, logs, and it zeroes the lifetime traffic
+  counters. No more deleting section by section.
+- **User list instead of numeric IDs.** The «👥 کاربران» section opens a
+  paginated member list (name, @username, id, ban flag) where every row is a
+  ban/unban button, plus a search box that matches name, username or id.
+
+### Fixed
+- Nothing yet reported against the previous release; this release is additive.
+## [5.12.3] - 2026-11-02 — "Hardened"
+
+### Added
+- **Retry button on failures.** Every failed job message now carries
+  `Retry` (`talash dobare`): it re-runs the same source URL through the normal
+  flow (probe -> quality/delivery -> queue). The callback verifies that the job
+  belongs to the caller and that it really failed.
+- **Disk-space guard before downloading.** When the source size is known, a job
+  is rejected with the new `disk_full` message if the server would drop below
+  `size x 1.1 + 512 MB` free space. Previously only the splitter checked space,
+  so one large download could fill the disk and break SQLite for everybody.
+- **Local Bot API cache health.** Startup checks whether the bot user can read
+  `/var/lib/telegram-bot-api/<token>` and logs an actionable warning otherwise;
+  the state (`ok` / `unreadable` / `missing` / `off`) is exposed as
+  `bot_api_cache` in `/health`.
+
+### Fixed
+- **Stat events were never purged.** `repo.purge_events()` existed but had no
+  caller, so the `events` table grew without limit; the cleanup loop now purges
+  events older than 90 days.
+- **Upload statistics double-counted after a video->document fallback.** The
+  retry reset the progress percentage but not `uploaded_bytes_total`, so the
+  first attempt's bytes stayed in the traffic counters; the upload-speed sample
+  now also restarts at the retry.
+- **A corrupt link file returned 503 forever.** On a size mismatch the link row
+  and its file are removed and the request returns `410` instead of a
+  permanently broken URL.
+- **Zero-byte cache entries were treated as misses.** `cached_delivery` returns
+  `int | None`, so a 0-byte archived file is still a valid cache hit.
+- **Untracked background tasks in the queue.** `_finish_canceled` runs through a
+  tracked task set with error logging, so a failing DB write can no longer leave
+  a job stuck in `running`.
+- **Blocking filesystem calls in the HTTP handler.** `stat`/`resolve`/`is_file`
+  for link downloads run in a worker thread, so concurrent downloads no longer
+  stall the event loop.
+- **`shell=True` for the operator restart command.** The restart command is now
+  split with `shlex` and executed without a shell.
+
+### Tests
+- `test_upload_cancel_aborts_task_and_keeps_cancel_button` waited only 3 s for
+  the job to settle, which fails under coverage instrumentation; the budget is
+  15 s now.
+- New `tests/test_v5123_hardening.py` covers the disk guard, cache-state probe,
+  retry keyboard/callback ownership and the `None` cache contract.
+
+## [5.12.2] - 2026-11-02 — "Full Delivery"
+
+### Fixed
+- **Forwarded file → direct link failed with `Telegram file server HTTP 404`.**
+  With the local Bot API (`--local`), `getFile` returns an absolute path
+  (`/var/lib/telegram-bot-api/<token>/documents/…`). The bot process (uid 10001)
+  cannot traverse that folder (owner uid 101, mode 750), so PTB could not treat it
+  as a local file and rewrote it as
+  `…/file/bot<token>/var/lib/telegram-bot-api/<token>/documents/…`, which the API
+  answers with **404**. The transfer now keeps only the media-relative part of
+  the path and requests `…/file/bot<token>/documents/…` (built from
+  `TELEGRAM_API_FILE_URL`), falling back to the PTB URL only as a second
+  candidate — so a forwarded file becomes a link on the first try. The Bot API
+  cache folder is additionally made readable for the bot user, which repairs the
+  same 404 for custom thumbnails, `cookies.txt` uploads and source-ZIP deploys.
+- **MKV videos arrived as documents.** `PLAYABLE_VIDEO_EXT` only allowed
+  `.mp4/.m4v/.mov`, so `.mkv` was forced into document mode both in the delivery
+  panel (`can_send_as_video`) and in the uploader. MKV is now delivered as a
+  video, keeping the existing automatic fallback to a document when Telegram
+  rejects the codec, and a video container served with a generic
+  `application/octet-stream` MIME is recognised by its extension too.
+- **Slow mode, daily quota and the concurrent-link cap also hit admins.** These
+  limits now skip the owner/admins (`current_admin`) and still apply to every
+  normal user; an admin in preview mode is treated as a normal user again.
+
 ## [5.12.1] - 2026-11-01 — "Honest Progress"
 
 ### Changed

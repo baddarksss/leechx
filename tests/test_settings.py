@@ -63,6 +63,7 @@ async def test_snapshot(db):
         "nsfw_autodelete_enabled",
         "nsfw_autodelete_seconds",
         "thumb_wait_seconds",
+        "thumb_shots",
         "aria2c_connections",
     }
 

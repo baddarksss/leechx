@@ -36,6 +36,7 @@ from app.bot.states import (
     ST_LOOKUP_USER,
     ST_RUNTIME_VALUE,
     ST_SET_VALUE,
+    ST_USER_SEARCH,
     clear_state,
     get_data,
     get_state,
@@ -142,8 +143,8 @@ async def show_section(update: Update, context: ContextTypes.DEFAULT_TYPE, secti
         body = await _render_stats(context)
         markup = kb.admin_section_menu(lang, kb.SEC_STATS)
     elif section == kb.SEC_USERS:
-        body = text.t(lang, "admin_cat_users")
-        markup = kb.admin_section_menu(lang, kb.SEC_USERS)
+        await _render_users(update, context, 0)
+        return
     elif section == kb.SEC_SETTINGS:
         body = _render_settings(context)
         markup = kb.settings_menu(lang, svc.settings.snapshot())
@@ -217,15 +218,67 @@ async def on_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, action: s
     if action == "clean":
         await safe_answer(query)
         removed, freed = await svc.cleanup_once()
+        # v5.13.0: «پاک‌سازی» کل تاریخچه را هم صفر می‌کند تا لازم نباشد بخش‌به‌بخش
+        # حذف کنی (کارها، رویدادها، گزارش‌ها، لاگ‌ها و شمارنده‌های ترافیک).
+        cleared = await repo.reset_history()
+        _STATS_CACHE.clear()
+        await _audit_soon(
+            context, "admin", "history_cleared", update.effective_user.id,
+            f"jobs={cleared['jobs']}, events={cleared['events']}",
+        )
         await panel(
             update,
             context,
-            text.t(lang, "admin_cleanup_done", files=removed, size=human.human_bytes(freed)),
+            text.t(
+                lang,
+                "admin_cleanup_full",
+                files=removed,
+                size=human.human_bytes(freed),
+                jobs=cleared["jobs"],
+                events=cleared["events"],
+                reports=cleared["reports"],
+            ),
             reply_markup=kb.admin_section_menu(lang, kb.SEC_STATS),
         )
         return
 
     # ── کاربران ──
+    if action == "uinfo" and _int_arg(args) is not None:
+        await safe_answer(query)
+        await _show_user(update, context, _int_arg(args))
+        return
+
+    if action in ("vip", "unvip") and _int_arg(args) is not None:
+        uid = _int_arg(args)
+        await repo.set_vip(uid, action == "vip")
+        await _audit_soon(
+            context, "security", f"user_{action}", update.effective_user.id, f"target={uid}"
+        )
+        await safe_answer(
+            query,
+            text.t(lang, "admin_vip_on" if action == "vip" else "admin_vip_off"),
+        )
+        await _show_user(update, context, uid)
+        return
+
+    if action == "vips":
+        await safe_answer(query)
+        page = int(args[0]) if args and str(args[0]).lstrip("-").isdigit() else 0
+        await _render_vips(update, context, max(0, page))
+        return
+
+    if action == "ulist":
+        await safe_answer(query)
+        page = int(args[0]) if args and str(args[0]).lstrip("-").isdigit() else 0
+        await _render_users(update, context, max(0, page))
+        return
+
+    if action == "usearch":
+        await safe_answer(query)
+        set_state(context, ST_USER_SEARCH)
+        await panel(update, context, text.t(lang, "users_search_prompt"))
+        return
+
     if action == "admins":
         await safe_answer(query)
         await _render_admins(update, context)
@@ -831,6 +884,103 @@ async def _render_jobs(lang: str = "fa") -> str:
     return text.t(lang, "admin_jobs", list="\n".join(lines))
 
 
+USERS_PAGE = 8
+
+
+async def _render_users(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    page: int = 0,
+) -> None:
+    """فهرست کاربران با دکمهٔ بن/آنبن و صفحه‌بندی (بدون نیاز به ID عددی)."""
+    lang = lang_of(context)
+    query = str(context.user_data.get("users_query", "") or "")
+    total = await repo.count_users_filtered(query)
+    pages = max(1, (total + USERS_PAGE - 1) // USERS_PAGE)
+    page = max(0, min(page, pages - 1))
+    rows = await repo.list_users(USERS_PAGE, page * USERS_PAGE, query)
+    if not rows:
+        # دکمهٔ جست‌وجو در منوی همین بخش هست؛ اینجا تکرار نمی‌شود.
+        markup = kb.Kb([*kb.admin_section_menu(lang, kb.SEC_USERS).inline_keyboard])
+        await panel(update, context, text.t(lang, "admin_users_empty"), markup)
+        return
+    lines: list[str] = []
+    buttons: list[list] = []
+    for index, row in enumerate(rows, start=page * USERS_PAGE + 1):
+        name = human.truncate(row.first_name or "—", 22)
+        handle = f"@{row.username}" if row.username else "—"
+        flag = "🚫 " if row.is_banned else ""
+        lines.append(
+            f"{index}. {flag}<b>{human.esc(name)}</b> · {human.esc(handle)} · "
+            f"<code>{row.id}</code>"
+        )
+        icons = ""
+        if getattr(row, "vip", False):
+            icons += "⭐ "
+        if row.is_banned:
+            icons += "🚫 "
+        # دکمه کارت کاربر را باز می‌کند (بن/ویژه از داخل کارت) تا لمس اشتباهی
+        # کسی را بن نکند.
+        buttons.append([kb.Btn(f"{icons}{name}", callback_data=f"a|uinfo|{row.id}")])
+    body = text.t(lang, "admin_users_list", total=total, list="\n".join(lines))
+    nav = []
+    if page > 0:
+        nav.append(kb.Btn("‹", callback_data=f"a|ulist|{page - 1}"))
+    nav.append(kb.Btn(f"{page + 1}/{pages}", callback_data="a|ulist|0"))
+    if page < pages - 1:
+        nav.append(kb.Btn("›", callback_data=f"a|ulist|{page + 1}"))
+    markup = kb.Kb([
+        *buttons,
+        nav,
+        *kb.admin_section_menu(lang, kb.SEC_USERS).inline_keyboard,
+    ])
+    await panel(update, context, body, markup)
+
+
+async def _render_vips(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    page: int = 0,
+) -> None:
+    """⭢ فهرست کاربران ویژه؛ حذف با یک دکمه."""
+    lang = lang_of(context)
+    total = await repo.count_vips()
+    pages = max(1, (total + USERS_PAGE - 1) // USERS_PAGE)
+    page = max(0, min(page, pages - 1))
+    rows = await repo.list_vips(USERS_PAGE, page * USERS_PAGE)
+    if not rows:
+        markup = kb.Kb([*kb.admin_section_menu(lang, kb.SEC_USERS).inline_keyboard])
+        await panel(update, context, text.t(lang, "admin_vips_empty"), markup)
+        return
+    lines: list[str] = []
+    buttons: list[list] = []
+    for index, row in enumerate(rows, start=page * USERS_PAGE + 1):
+        name = human.truncate(row.first_name or "—", 22)
+        handle = f"@{row.username}" if row.username else "—"
+        lines.append(
+            f"{index}. ⭐ <b>{human.esc(name)}</b> · {human.esc(handle)} · "
+            f"<code>{row.id}</code>"
+        )
+        buttons.append([kb.Btn(f"✕ {name}", callback_data=f"a|unvip|{row.id}")])
+    nav = []
+    if page > 0:
+        nav.append(kb.Btn("‹", callback_data=f"a|vips|{page - 1}"))
+    nav.append(kb.Btn(f"{page + 1}/{pages}", callback_data="a|vips|0"))
+    if page < pages - 1:
+        nav.append(kb.Btn("›", callback_data=f"a|vips|{page + 1}"))
+    markup = kb.Kb([
+        *buttons,
+        nav,
+        *kb.admin_section_menu(lang, kb.SEC_USERS).inline_keyboard,
+    ])
+    await panel(
+        update,
+        context,
+        text.t(lang, "admin_vips_list", total=total, list="\n".join(lines)),
+        markup,
+    )
+
+
 async def _render_admins(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     svc = services(context)
     lang = lang_of(context)
@@ -1298,8 +1448,12 @@ async def _show_user(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: in
     )
     action = "unban" if user.is_banned else "ban"
     label = text.t(lang, "btn_unban" if user.is_banned else "btn_ban")
+    vip = bool(getattr(user, "vip", False))
+    vip_label = text.t(lang, "btn_vip_remove" if vip else "btn_vip_add")
+    vip_action = "unvip" if vip else "vip"
     markup = kb.Kb([
         [kb.Btn(label, callback_data=f"a|{action}|{uid}")],
+        [kb.Btn(vip_label, callback_data=f"a|{vip_action}|{uid}")],
         *(kb.admin_section_menu(lang, kb.SEC_USERS).inline_keyboard),
     ])
     await panel(update, context, body, markup)
@@ -1395,6 +1549,12 @@ async def handle_state(update: Update, context: ContextTypes.DEFAULT_TYPE, state
             await panel(update, context, text.t(lang, "admin_add_fail"))
             return
         await _show_user(update, context, user.id)
+        return
+
+    if state == ST_USER_SEARCH:
+        clear_state(context)
+        context.user_data["users_query"] = raw.strip().lstrip("@")
+        await _render_users(update, context, 0)
         return
 
     if state == ST_GROUP_ID:

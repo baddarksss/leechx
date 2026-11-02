@@ -164,7 +164,9 @@ async def test_link_file_size_integrity_and_invalid_range(db):
         assert invalid.headers["Content-Range"]=="bytes */8"
         path.write_bytes(b"1234")
         corrupt=await client.get(f"/f/{token}")
-        assert corrupt.status==503
+        assert corrupt.status==410
+        # لینک خراب پاک می‌شود تا تا ابد 503 نماند
+        assert await repo.get_shared("repair1") is None
 
 
 @pytest.mark.asyncio

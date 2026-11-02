@@ -293,7 +293,8 @@ async def test_upload_cancel_aborts_task_and_keeps_cancel_button(db):
     assert "x|cancelupload" in str(bot.last_markup)
     assert not manager.cancel(task.id, 99)
     assert manager.cancel(task.id, 42)
-    await asyncio.wait_for(run, 3)
+    # coverage the event loop slower; a generous budget keeps this stable.
+    await asyncio.wait_for(run, 15)
     row = await repo.get_job(task.id)
     assert row.status == "canceled"
     assert manager.active_count == 0

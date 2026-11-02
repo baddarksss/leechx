@@ -133,6 +133,14 @@ def _user_settings_body(lang: str, row) -> tuple[str, str, str]:
     return body, mode, destination
 
 
+async def _render_user_settings(update: Update, context: ContextTypes.DEFAULT_TYPE, row) -> None:
+    """پنل تنظیمات کاربر با وضعیت انتخاب کاور از فریم‌ها."""
+    lang = lang_of(context)
+    body, mode, destination = _user_settings_body(lang, row)
+    thumb = bool(getattr(row, "thumb_picker", False))
+    await panel(update, context, body, kb.user_settings_menu(lang, mode, destination, thumb))
+
+
 def _welcome(lang: str, ttl_hours: float) -> str:
     return text.t(lang, "start", ttl=_fmt_hours(ttl_hours)) + "\n\n" + version_badge()
 
@@ -477,30 +485,32 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, action: st
             return
         await safe_answer(query)
         row = await repo.get_user(update.effective_user.id)
-        body, mode, destination = _user_settings_body(lang, row)
-        await panel(update, context, body, kb.user_settings_menu(lang, mode, destination))
+        await _render_user_settings(update, context, row)
         return
 
-    if action in {"prefmode", "prefdest"}:
+    if action in {"prefmode", "prefdest", "prefthumb"}:
         if admin:
             await safe_answer(query, text.t(lang, "admin_only"), alert=True)
             return
         user_id = update.effective_user.id
         row = await repo.get_user(user_id)
         mode, destination = _user_defaults(row)
+        thumb = bool(getattr(row, "thumb_picker", False))
         if action == "prefmode":
             mode = "document" if mode == "video" else "video"
-        else:
+        elif action == "prefdest":
             destination = "link" if destination == "telegram" else "telegram"
+        else:
+            thumb = not thumb
         await repo.set_user_preferences(
             user_id,
             default_mode=mode,
             default_destination=destination,
+            thumb_picker=thumb,
         )
         await safe_answer(query, text.t(lang, "delivery_choice_saved"))
         row = await repo.get_user(user_id)
-        body, mode, destination = _user_settings_body(lang, row)
-        await panel(update, context, body, kb.user_settings_menu(lang, mode, destination))
+        await _render_user_settings(update, context, row)
         return
 
     if action == "lang":

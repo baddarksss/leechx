@@ -27,6 +27,7 @@ SCHEMA: dict[str, tuple[str, str]] = {
     "nsfw_autodelete_enabled": ("bool", "حذف خودکار فایل بزرگسال"),
     "nsfw_autodelete_seconds": ("int", "زمان حذف فایل بزرگسال (ثانیه)"),
     "thumb_wait_seconds": ("int", "ثانیهٔ صبر انتخاب تامبنیل"),
+    "thumb_shots": ("int", "تعداد فریم‌های انتخاب تامبنیل (۴ تا ۱۰)"),
     "aria2c_connections": (
         "int",
         f"تعداد اتصال دانلود ({thumbs.ARIA2C_MIN} تا {thumbs.ARIA2C_MAX})",
@@ -98,6 +99,7 @@ class RuntimeSettings:
             "nsfw_autodelete_enabled": False,
             "nsfw_autodelete_seconds": 30,
             "thumb_wait_seconds": 30,
+            "thumb_shots": thumbs.SHOTS,
             "aria2c_connections": thumbs.ARIA2C_DEFAULT,
             "public_base_url": self.cfg.public_base_url,
             "proxy": self.cfg.proxy,
@@ -224,6 +226,11 @@ class RuntimeSettings:
         return max(0, min(600, self.get_int("thumb_wait_seconds") or 0))
 
     @property
+    def thumb_shots(self) -> int:
+        """تعداد فریم‌های آلبوم انتخاب کاور؛ همیشه بین ۴ و ۱۰."""
+        return max(4, min(thumbs.SHOTS, self.get_int("thumb_shots") or thumbs.SHOTS))
+
+    @property
     def aria2c_connections(self) -> int:
         """تعداد اتصال همزمان دانلود؛ همیشه در بازهٔ ARIA2C_MIN..ARIA2C_MAX."""
         return thumbs.aria2c_connections(self.get_int("aria2c_connections"))
@@ -283,5 +290,6 @@ class RuntimeSettings:
             "nsfw_autodelete_enabled": self.nsfw_autodelete,
             "nsfw_autodelete_seconds": self.nsfw_autodelete_seconds,
             "thumb_wait_seconds": self.thumb_wait_seconds,
+            "thumb_shots": self.thumb_shots,
             "aria2c_connections": self.aria2c_connections,
         }

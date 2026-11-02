@@ -115,6 +115,12 @@ FA: dict[str, str] = {
     "done": "✅ آماده شد",
     "cache_fast_delivery": "♻️ دریافت سریع از کش",
     "failed": "❌ خطا: {reason}",
+    "disk_full": (
+        "💾 فضای سرور برای این فایل کافی نیست ({need} لازم است، {free} آزاد). "
+        "کمی بعد دوباره تلاش کن؛ اگر تکرار شد به ادمین بگو."
+    ),
+    "retry_btn": "♻️ تلاش دوباره",
+    "retry_unavailable": "این کار دیگر قابل تکرار نیست؛ لینک را دوباره بفرست.",
     "expired_draft": "⌛ این انتخاب منقضی شده. لینک را دوباره بفرست.",
     "too_many_active": "⏳ یک کار دیگرت هنوز تمام نشده. کمی صبر کن.",
     "rate_limited": "🐢 کمی آهسته‌تر! برای پردازش لینک/فایل بعدی {seconds} ثانیه صبر کن.",
@@ -845,6 +851,12 @@ EN: dict[str, str] = {
     "done": "✅ Done",
     "cache_fast_delivery": "♻️ Delivered quickly from cache",
     "failed": "❌ Error: {reason}",
+    "disk_full": (
+        "💾 Not enough free space on the server ({need} needed, {free} free). "
+        "Try again later; tell an admin if it repeats."
+    ),
+    "retry_btn": "♻️ Retry",
+    "retry_unavailable": "This job can no longer be retried. Send the link again.",
     "expired_draft": "⌛ This selection expired. Send the link again.",
     "too_many_active": "⏳ Your other job is still running. Please wait.",
     "rate_limited": "🐢 Slow down! Wait {seconds}s before the next link/file.",
@@ -1551,6 +1563,12 @@ RU: dict[str, str] = {
     "done": "✅ Готово",
     "cache_fast_delivery": "♻️ Быстрая отправка из кэша",
     "failed": "❌ Ошибка: {reason}",
+    "disk_full": (
+        "💾 На сервере недостаточно свободного места ({need} нужно, {free} свободно). "
+        "Попробуй позже; если повторится — сообщи админу."
+    ),
+    "retry_btn": "♻️ Повторить",
+    "retry_unavailable": "Эту задачу больше нельзя повторить. Отправь ссылку снова.",
     "expired_draft": "⌛ Выбор устарел. Отправь ссылку снова.",
     "too_many_active": "⏳ Другая задача ещё выполняется. Подожди.",
     "rate_limited": "🐢 Помедленнее! Подожди {seconds} с. до следующей ссылки/файла.",
@@ -2096,6 +2114,107 @@ RU: dict[str, str] = {
     "btn_home_persistent": "🏠 Домой",
     "debug_token_button": "🔑 #{id} · {scopes} · ⏳ {expires}",
 }
+
+# ── v5.13.0 ── مگنت/تورنت، انتخاب کاور، پاک‌سازی کامل، لیست کاربران
+FA.update({
+    "settings_thumb_picker_btn": "🖼 انتخاب کاور از فریم‌های ویدیو: {value}",
+    "run_thumb_shots": "تعداد فریم‌های انتخاب تامبنیل (۴ تا ۱۰)",
+    "set_thumb_shots": "🖼 تعداد فریم‌ها: {v}",
+    "torrent_note": (
+        "🧲 این لینک مگنت/تورنت است و با aria2c دانلود می‌شود.\n"
+        "اگر فایل اصلی ویدیو باشد، «ویدیو» را انتخاب کن تا پخش‌شدنی بفرستیم؛ "
+        "در غیر این صورت «فایل» را بزن."
+    ),
+    "torrent_failed": "دانلود تورنت ناموفق بود: {reason}",
+    "torrent_unavailable": "ابزار دانلود تورنت روی سرور نصب نیست؛ فعلاً پشتیبانی نمی‌شود.",
+    "admin_cleanup_full": (
+        "🧹 پاک‌سازی کامل انجام شد.\n"
+        "🗑 فایل حذف‌شده: {files}\n"
+        "📦 فضای آزادشده: {size}\n"
+        "📉 تاریخچه: {jobs} کار، {events} رویداد، {reports} گزارش\n"
+        "📊 شمارنده‌های ترافیک صفر شد."
+    ),
+    "admin_users_list": "<b>👥 کاربران</b> — {total} نفر\n\n{list}",
+    "admin_users_empty": "کاربری پیدا نشد.",
+    "btn_admin_users_list": "👥 لیست کاربران",
+    "btn_users_search": "🔎 جست‌وجوی کاربر",
+    "users_search_prompt": "نام، یوزرنیم یا شناسهٔ عددی کاربر را بفرست:",
+})
+EN.update({
+    "settings_thumb_picker_btn": "🖼 Pick cover from video frames: {value}",
+    "run_thumb_shots": "Cover frames (4 to 10)",
+    "set_thumb_shots": "🖼 Frames: {v}",
+    "torrent_note": (
+        "🧲 This is a magnet/torrent link; it downloads with aria2c.\n"
+        "If the main file is a video, pick «Video» so it arrives playable; "
+        "otherwise pick «File»."
+    ),
+    "torrent_failed": "Torrent download failed: {reason}",
+    "torrent_unavailable": "The torrent tool is not installed on this server.",
+    "admin_cleanup_full": (
+        "🧹 Full cleanup done.\n"
+        "🗑 Deleted files: {files}\n"
+        "📦 Space freed: {size}\n"
+        "📉 History: {jobs} jobs, {events} events, {reports} reports\n"
+        "📊 Traffic counters reset."
+    ),
+    "admin_users_list": "<b>👥 Users</b> — {total}\n\n{list}",
+    "admin_users_empty": "No user found.",
+    "btn_admin_users_list": "👥 User list",
+    "btn_users_search": "🔎 Find user",
+    "users_search_prompt": "Send a name, username or numeric id:",
+})
+RU.update({
+    "settings_thumb_picker_btn": "🖼 Обложка из кадров видео: {value}",
+    "run_thumb_shots": "Кадров для обложки (4–10)",
+    "set_thumb_shots": "🖼 Кадров: {v}",
+    "torrent_note": (
+        "🧲 Это magnet/torrent-ссылка, загрузка идёт через aria2c.\n"
+        "Если основной файл — видео, выберите «Видео», иначе «Файл»."
+    ),
+    "torrent_failed": "Загрузка торрента не удалась: {reason}",
+    "torrent_unavailable": "Инструмент загрузки торрентов не установлен на сервере.",
+    "admin_cleanup_full": (
+        "🧹 Полная очистка выполнена.\n"
+        "🗑 Удалено файлов: {files}\n"
+        "📦 Освобождено: {size}\n"
+        "📉 История: {jobs} задач, {events} событий, {reports} жалоб\n"
+        "📊 Счётчики трафика обнулены."
+    ),
+    "admin_users_list": "<b>👥 Пользователи</b> — {total}\n\n{list}",
+    "admin_users_empty": "Пользователь не найден.",
+    "btn_admin_users_list": "👥 Список пользователей",
+    "btn_users_search": "🔎 Найти пользователя",
+    "users_search_prompt": "Отправьте имя, username или числовой ID:",
+})
+
+FA.update({
+    "btn_admin_vips": "⭐ کاربران ویژه",
+    "btn_vip_add": "⭐ ویژه کن (بدون محدودیت)",
+    "btn_vip_remove": "✕ حذف از ویژه",
+    "admin_vip_on": "⭐ کاربر ویژه شد: بدون سهمیه و محدودیت",
+    "admin_vip_off": "از کاربران ویژه حذف شد",
+    "admin_vips_list": "<b>⭐ کاربران ویژه</b> — {total} نفر\n\n{list}",
+    "admin_vips_empty": "هنوز کاربر ویژه‌ای نداری. از «👥 لیست کاربران» یک نفر را باز کن و «⭐ ویژه کن» را بزن.",
+})
+EN.update({
+    "btn_admin_vips": "⭐ VIP users",
+    "btn_vip_add": "⭐ Make VIP (no limits)",
+    "btn_vip_remove": "✕ Remove VIP",
+    "admin_vip_on": "⭐ VIP enabled: no quota or limits",
+    "admin_vip_off": "VIP removed",
+    "admin_vips_list": "<b>⭐ VIP users</b> — {total}\n\n{list}",
+    "admin_vips_empty": "No VIP users yet. Open someone in «👥 User list» and tap «⭐ Make VIP».",
+})
+RU.update({
+    "btn_admin_vips": "⭐ Особые пользователи",
+    "btn_vip_add": "⭐ Сделать особым (без лимитов)",
+    "btn_vip_remove": "✕ Убрать особый статус",
+    "admin_vip_on": "⭐ Особый статус включён: без квоты и лимитов",
+    "admin_vip_off": "Особый статус снят",
+    "admin_vips_list": "<b>⭐ Особые пользователи</b> — {total}\n\n{list}",
+    "admin_vips_empty": "Пока нет особых пользователей. Откройте кого-то в «👥 Список пользователей» и нажмите «⭐ Сделать особым».",
+})
 
 MESSAGES: dict[str, dict[str, str]] = {"fa": FA, "en": EN, "ru": RU}
 

@@ -46,6 +46,16 @@ def current_admin(context: ContextTypes.DEFAULT_TYPE) -> bool:
     return bool(context.user_data.get("is_admin")) and not in_preview(context)
 
 
+def is_vip(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """کاربر ویژه است؟ (پرچم در میان‌افزار روی هر آپدیت تازه می‌شود.)"""
+    return bool(context.user_data.get("is_vip"))
+
+
+def unlimited(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """معاف از محدودیت‌های کاربری: ادمین/مالک یا کاربر ویژه."""
+    return current_admin(context) or is_vip(context)
+
+
 async def require_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """اگر کاربر ادمین نباشد، پیام مناسب می‌فرستد و False برمی‌گرداند."""
     user = update.effective_user

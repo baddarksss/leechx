@@ -167,7 +167,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if state:
         clear_state(context)
 
-    urls = urlcheck.extract_urls(message.text)
+    magnet = urlcheck.extract_magnet(message.text)
+    urls = [magnet] if magnet else urlcheck.extract_urls(message.text)
     if not urls:
         lang = lang_of(context)
         await reply(update, text.t(lang, "send_link_or_file"))

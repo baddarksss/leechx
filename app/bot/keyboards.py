@@ -158,6 +158,7 @@ def user_settings_menu(
     lang: str,
     default_mode: str = "video",
     default_destination: str = "telegram",
+    thumb_picker: bool = False,
 ) -> Kb:
     """User settings: persistent default format and delivery destination."""
     mode_key = "delivery_mode_video" if default_mode == "video" else "delivery_mode_file"
@@ -170,6 +171,8 @@ def user_settings_menu(
     return Kb([
         [Btn(text.t(lang, "settings_default_mode_btn", value=mode), callback_data=M_PREF_MODE)],
         [Btn(text.t(lang, "settings_default_destination_btn", value=destination), callback_data=M_PREF_DEST)],
+        [Btn(text.t(lang, "settings_thumb_picker_btn", value="🟢" if thumb_picker else "🔴"),
+              callback_data="m|prefthumb")],
         [_btn(lang, "btn_lang", M_LANG)],
         [_btn(lang, "btn_back", M_HOME)],
     ])
@@ -235,6 +238,11 @@ def admin_persistent_menu(lang: str = text.DEFAULT_LANG) -> ReplyKeyboardMarkup:
 
 def cancel_job(lang: str, job_id: str) -> Kb:
     return Kb([[Btn(text.t(lang, "cancel_btn"), callback_data=f"x|{job_id}")]])
+
+
+def retry_job(lang: str, job_id: str) -> Kb:
+    """دکمهٔ «تلاش دوباره» روی پیام خطای یک کار."""
+    return Kb([[Btn(text.t(lang, "retry_btn"), callback_data=f"r|{job_id}")]])
 
 
 def thumb_picker_menu(lang: str, job_id: str) -> Kb:
@@ -328,6 +336,8 @@ def admin_section_menu(lang: str, section: str, *, debug_enabled: bool = False) 
         ]
     elif section == SEC_USERS:
         rows = [
+            [_btn(lang, "btn_admin_users_list", "a|ulist|0"), _btn(lang, "btn_users_search", "a|usearch")],
+            [_btn(lang, "btn_admin_vips", "a|vips|0")],
             [_btn(lang, "btn_admin_users", A_USER), _btn(lang, "btn_admin_ban", A_BAN)],
             [_btn(lang, "btn_admin_admins", A_ADMINS), _btn(lang, "btn_admin_broadcast", A_BC)],
         ]
@@ -420,6 +430,8 @@ def settings_menu(lang: str, snap: dict) -> Kb:
              callback_data="a|edit|nsfw_autodelete_seconds")],
         [Btn(text.t(lang, "set_thumb_wait", v=snap["thumb_wait_seconds"]),
              callback_data="a|edit|thumb_wait_seconds")],
+        [Btn(text.t(lang, "set_thumb_shots", v=snap.get("thumb_shots", 10)),
+             callback_data="a|edit|thumb_shots")],
         [Btn(text.t(lang, "set_aria2c_conn", v=snap["aria2c_connections"]),
              callback_data="a|edit|aria2c_connections")],
         [_btn(lang, "btn_admin_runtime", A_RUNTIME)],

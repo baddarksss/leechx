@@ -146,13 +146,13 @@ async def test_telegram_media_cache_roundtrip_and_owner_isolation(db, forum, tmp
     row = await repo.get_media_cache(key, task.user_id, hub.chat_id)
     assert row is not None and row.size == 32
     assert row.expires_at > int(time.time())
-    assert await cache.cached_delivery(bot, make_task(user_id=11)) is False
+    assert await cache.cached_delivery(bot, make_task(user_id=11)) is None
     assert len(bot.copied) == 1
-    assert await cache.cached_delivery(bot, make_task(mode="document")) is False
+    assert await cache.cached_delivery(bot, make_task(mode="document")) is None
     assert len(bot.copied) == 1
-    assert await cache.cached_delivery(bot, make_task(name="Custom filename")) is False
+    assert await cache.cached_delivery(bot, make_task(name="Custom filename")) is None
     assert len(bot.copied) == 1
-    assert await cache.cached_delivery(bot, task)
+    assert await cache.cached_delivery(bot, task) == 32
     assert len(bot.copied) == 2
     assert bot.copied[-1]["from_chat_id"] == hub.chat_id
     assert bot.copied[-1]["chat_id"] == task.chat_id
@@ -271,7 +271,7 @@ async def test_cache_error_falls_back_without_throwing(db, forum):
     async def missing_copy(**kwargs):
         raise BadRequest("Message to copy not found")
     bot.copy_message=missing_copy
-    assert await cache.cached_delivery(bot,task) is False
+    assert await cache.cached_delivery(bot,task) is None
     assert await repo.get_media_cache(key,task.user_id,hub.chat_id) is None
 
 

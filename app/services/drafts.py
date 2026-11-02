@@ -38,6 +38,8 @@ class Draft:
     send_as: str = "video"  # per-link override, initialized from the user's preference
     destination: str = "telegram"  # telegram | link
     custom_thumbnail: bytes | None = None  # bounded Telegram photo bytes, kept only in memory
+    # per-user preference: pick the cover from extracted video frames
+    thumb_picker: bool = False
     auto_quality: bool = False  # Instagram/TikTok skip manual quality selection
     pending_mode: str = ""  # mode chosen on the split-offer screen, consumed by the split button
     created_at: float = field(default_factory=time.time)

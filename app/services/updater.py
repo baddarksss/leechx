@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -529,9 +530,14 @@ class SourceUpdater:
         if command:
             log.info("restarting with operator command: %s", command)
             try:
-                subprocess.Popen(command, shell=True, cwd=str(self.root))
+                # بدون shell: فرمان اپراتور به‌صورت argv اجرا می‌شود تا هیچ
+                # کاراکتر خاصی در shell تفسیر نشود.
+                argv = shlex.split(command)
+                if not argv:
+                    raise OSError("empty restart command")
+                subprocess.Popen(argv, cwd=str(self.root))
                 return
-            except OSError:
+            except (OSError, ValueError):
                 log.exception("restart command failed; falling back to execv")
         log.info("restarting in place with execv")
         try:

@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db.base import session
@@ -155,6 +155,7 @@ async def set_user_preferences(
     *,
     default_mode: str,
     default_destination: str,
+    thumb_picker: bool | None = None,
 ) -> None:
     if default_mode not in {"video", "document"}:
         raise ValueError("default_mode must be 'video' or 'document'")
@@ -167,17 +168,91 @@ async def set_user_preferences(
                 id=user_id,
                 default_mode=default_mode,
                 default_destination=default_destination,
+                thumb_picker=bool(thumb_picker),
             )
             s.add(user)
         else:
             user.default_mode = default_mode
             user.default_destination = default_destination
+            if thumb_picker is not None:
+                user.thumb_picker = bool(thumb_picker)
         await s.commit()
 
 
 async def count_users() -> int:
     async with session() as s:
         return int((await s.scalar(select(func.count()).select_from(User))) or 0)
+
+
+async def list_users(
+    limit: int = 10, offset: int = 0, query: str = ""
+) -> Sequence[User]:
+    """فهرست کاربران برای پنل ادمین؛ جست‌وجو روی نام/یوزرنیم/شناسه."""
+    handle = (query or "").strip().lstrip("@")
+    async with session() as s:
+        stmt = select(User)
+        if handle:
+            like = f"%{handle}%"
+            conditions = [
+                User.username.ilike(like),
+                User.first_name.ilike(like),
+            ]
+            if handle.isdigit():
+                conditions.append(User.id == int(handle))
+            stmt = stmt.where(or_(*conditions))
+        stmt = stmt.order_by(User.last_seen.desc()).limit(max(1, limit)).offset(max(0, offset))
+        return (await s.scalars(stmt)).all()
+
+
+async def count_users_filtered(query: str = "") -> int:
+    handle = (query or "").strip().lstrip("@")
+    async with session() as s:
+        stmt = select(func.count()).select_from(User)
+        if handle:
+            like = f"%{handle}%"
+            conditions = [
+                User.username.ilike(like),
+                User.first_name.ilike(like),
+            ]
+            if handle.isdigit():
+                conditions.append(User.id == int(handle))
+            stmt = stmt.where(or_(*conditions))
+        return int((await s.scalar(stmt)) or 0)
+
+
+async def set_vip(user_id: int, vip: bool) -> None:
+    """کاربر ویژه: از سهمیه/فاصلهٔ پردازش/سقف لینک معاف می‌شود."""
+    async with session() as s:
+        user = await s.get(User, user_id)
+        if user is None:
+            s.add(User(id=user_id, vip=bool(vip)))
+        else:
+            user.vip = bool(vip)
+        await s.commit()
+
+
+async def list_vips(limit: int = 10, offset: int = 0) -> Sequence[User]:
+    async with session() as s:
+        stmt = (
+            select(User)
+            .where(User.vip.is_(True))
+            .order_by(User.last_seen.desc())
+            .limit(max(1, limit))
+            .offset(max(0, offset))
+        )
+        return (await s.scalars(stmt)).all()
+
+
+async def count_vips() -> int:
+    async with session() as s:
+        return int(
+            (
+                await s.scalar(
+                    select(func.count()).select_from(User).where(User.vip.is_(True))
+                )
+            )
+            or 0
+        )
 
 
 async def all_user_ids() -> list[int]:
@@ -541,6 +616,31 @@ async def purge_events(older_than_days: int = 90) -> int:
         res = await s.execute(delete(StatEvent).where(StatEvent.created_at < cutoff))
         await s.commit()
         return int(res.rowcount or 0)
+
+
+async def reset_history() -> dict[str, int]:
+    """کل تاریخچهٔ آمار را پاک می‌کند (کارها، رویدادها، گزارش‌ها، لاگ‌ها) و
+    شمارنده‌های تجمعی ترافیک را صفر می‌کند. کاربران و لینک‌ها دست نمی‌خورند."""
+    async with session() as s:
+        jobs = await s.execute(delete(Job))
+        events = await s.execute(delete(StatEvent))
+        reports = await s.execute(delete(Report))
+        logs = await s.execute(delete(LogEntry))
+        await s.execute(
+            update(TrafficCounter).values(
+                source_download_bytes=0,
+                telegram_receive_bytes=0,
+                telegram_upload_bytes=0,
+                direct_link_serve_bytes=0,
+            )
+        )
+        await s.commit()
+    return {
+        "jobs": int(jobs.rowcount or 0),
+        "events": int(events.rowcount or 0),
+        "reports": int(reports.rowcount or 0),
+        "logs": int(logs.rowcount or 0),
+    }
 
 
 async def count_active_users(days: int = 7) -> int:

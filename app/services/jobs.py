@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 import shutil
 import time
 import zipfile
@@ -26,8 +27,14 @@ from app.bot import keyboards as kb
 from app.config import Config
 from app.core import errors, human, text
 from app.db import repo
-from app.services import nsfwguard, splitter, thumbs
-from app.services.downloader import Downloader, MediaInfo, Progress, fetch_thumbnail
+from app.services import nsfwguard, splitter, thumbs, torrent
+from app.services.downloader import (
+    Downloader,
+    DownloadResult,
+    MediaInfo,
+    Progress,
+    fetch_thumbnail,
+)
 from app.services.filestore import FileStore
 from app.services.formats import FormatOption
 from app.services.linktoken import make_token
@@ -91,6 +98,8 @@ class JobTask:
     mode: str = "video"
     custom_name: str = ""
     custom_thumbnail: bytes | None = None
+    # ترجیح کاربر: انتخاب کاور از فریم‌های ویدیو (پیش‌فرض خاموش)
+    thumb_picker: bool = False
     # همهٔ پیام‌های رسانه‌ای که در این کار ارسال شدند (پارت‌ها/آلبوم)؛ برای
     # حذف زمان‌بندی‌شدهٔ محتوای بزرگسال لازم است.
     sent_messages: list[Message] = field(default_factory=list)
@@ -140,6 +149,8 @@ class JobManager:
         self._pickers: dict[tuple[int, int], JobTask] = {}
         self._stop = asyncio.Event()
         self._wake = asyncio.Event()
+        # تسک‌های کوتاه پس‌زمینه (مثل ثبت «لغو شد») با رفرنس قوی و لاگ خطا.
+        self._bg: set[asyncio.Task] = set()
 
     # ── چرخهٔ عمر ───────────────────────────────────────────
     async def start(self, bot) -> None:
@@ -166,6 +177,9 @@ class JobManager:
         for sweep in list(self._nsfw_tasks):
             sweep.cancel()
         self._nsfw_tasks.clear()
+        for job in list(self._bg):
+            job.cancel()
+        self._bg.clear()
         for job in (*self._workers, self._publisher):
             if job is not None:
                 try:
@@ -222,8 +236,23 @@ class JobManager:
             except ValueError:
                 pass
             self._tasks.pop(task.id, None)
-            asyncio.create_task(self._finish_canceled(task))
+            self._spawn(self._finish_canceled(task), f"cancel-{task.id}")
         return True
+
+    def _spawn(self, coro, name: str) -> None:
+        """اجرای کوتاه پس‌زمینه با نگه‌داشتن رفرنس و لاگ خطا (بدون تسک یتیم)."""
+        job = asyncio.create_task(coro, name=name)
+        self._bg.add(job)
+
+        def _done(finished: asyncio.Task) -> None:
+            self._bg.discard(finished)
+            if finished.cancelled():
+                return
+            exc = finished.exception()
+            if exc is not None:
+                log.warning("background task %s failed", finished.get_name(), exc_info=exc)
+
+        job.add_done_callback(_done)
 
     def tasks_for_user(self, user_id: int) -> list[JobTask]:
         return [t for t in list(self._tasks.values()) if t.user_id == user_id]
@@ -265,7 +294,7 @@ class JobManager:
                 picked = task
 
         for task in canceled:
-            asyncio.create_task(self._finish_canceled(task))
+            self._spawn(self._finish_canceled(task), f"cancel-{task.id}")
         return picked
 
     async def _next_or_wait(self) -> JobTask | None:
@@ -323,9 +352,9 @@ class JobManager:
                 try:
                     cached = await self.cache.cached_delivery(self.bot, task)
                 except Exception:
-                    cached = False
+                    cached = None
                     log.warning("media cache read failed; proceeding normally", exc_info=True)
-                if cached:
+                if cached is not None:
                     await repo.update_job(
                         task.id, status="done", size=int(cached),
                         finished_at=int(time.time()),
@@ -348,14 +377,26 @@ class JobManager:
             if task.cancel.is_set():
                 raise errors.JobCancelled()
 
-            result = await self.downloader.download(
-                task.url,
-                task.option,
-                workdir,
-                task.progress,
-                task.cancel,
-                task.info,
-            )
+            # اگر حجم از قبل معلوم است و دیسک جا ندارد، دانلود شروع نشود
+            # (پر شدن دیسک دیتابیس و همهٔ کارها را می‌شکند).
+            expected = int(getattr(task.option, "filesize", 0) or 0)
+            if expected and not self.store.has_room(expected):
+                raise errors.DiskFull(
+                    need=human.human_bytes(expected),
+                    free=human.human_bytes(self.store.disk_free()),
+                )
+
+            if torrent.is_magnet(task.url):
+                result = await self._download_torrent(task, workdir)
+            else:
+                result = await self.downloader.download(
+                    task.url,
+                    task.option,
+                    workdir,
+                    task.progress,
+                    task.cancel,
+                    task.info,
+                )
             source_bytes = int(
                 getattr(task.progress, "downloaded_bytes_total", 0) or result.size or 0
             )
@@ -607,7 +648,9 @@ class JobManager:
             if exc.key in ("unsupported", "live_unsupported"):
                 if await self._report_error(task, f"{exc.key}: {exc.reason}"):
                     body += "\n\n" + text.t(task.lang, "issue_reported")
-            await self._edit_final(task, body)
+            await self._edit_final(
+                task, body, reply_markup=kb.retry_job(task.lang, task.id)
+            )
             if self.hub is not None:
                 await self.hub.notify_job_result(task, "failed", reason=f"{exc.key}: {exc.reason}")
         except Exception as exc:  # noqa: BLE001
@@ -622,6 +665,7 @@ class JobManager:
             await self._edit_final(
                 task,
                 text.t(task.lang, "failed", reason=human.esc(errors.public_reason(str(exc)))),
+                reply_markup=kb.retry_job(task.lang, task.id),
             )
             await self._report_error(task, f"crash: {exc}")
             if self.hub is not None:
@@ -679,6 +723,25 @@ class JobManager:
         if exc is not None:
             log.warning("nsfw cleanup failed", exc_info=exc)
 
+    # ── مگنت/تورنت ────────────────────────────────────────────
+    async def _download_torrent(self, task: JobTask, workdir: Path) -> DownloadResult:
+        """مگنت را با aria2c می‌گیرد و بزرگ‌ترین فایلش را برمی‌گرداند."""
+        got = await torrent.download(
+            task.url,
+            workdir,
+            task.progress,
+            task.cancel,
+            connections=int(self.settings.aria2c_connections or 4),
+        )
+        mime = mimetypes.guess_type(got.path.name)[0] or "application/octet-stream"
+        log.info("torrent delivered %s (%s files, %s bytes)", got.path.name, got.files, got.size)
+        return DownloadResult(
+            path=got.path,
+            title=got.title or task.title,
+            mime=mime,
+            size=got.size,
+        )
+
     # ── انتخاب تامبنیل از اسکرین‌شات‌های ویدیو ────────────────
     async def _maybe_pick_thumbnail(
         self, task: JobTask, result, workdir: Path
@@ -697,7 +760,9 @@ class JobManager:
         if duration < 3:
             return
         wait = int(self.settings.thumb_wait_seconds)
-        if wait > 0:
+        # v5.13.0: آلبوم فریم‌ها پیش‌فرض خاموش است؛ فقط کاربری که از
+        # «تنظیمات» روشنش کرده، آلبوم انتخاب کاور را می‌بیند.
+        if wait > 0 and task.thumb_picker:
             await self._offer_thumb_shots(task, result, workdir, duration, wait)
         if task.custom_thumbnail is None and result.thumbnail is None:
             # کاور سایت نبود/خراب بود: یک قاب از خود ویدیو تا تلگرام سیاه نماند
@@ -715,8 +780,9 @@ class JobManager:
     ) -> None:
         if self.bot is None or task.cancel.is_set():
             return
+        count = int(getattr(self.settings, "thumb_shots", thumbs.SHOTS) or thumbs.SHOTS)
         shots = await thumbs.extract_shots(
-            result.path, thumbs.shot_times(duration), workdir / "shots",
+            result.path, thumbs.shot_times(duration, count), workdir / "shots",
             cancel=task.cancel,
         )
         if not shots:

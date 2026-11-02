@@ -12,7 +12,9 @@ from app.bot.flows import admin as admin_flow
 from app.bot.flows import link as link_flow
 from app.bot.flows import start as start_flow
 from app.bot.flows import user_links as links_flow
+from app.bot.guards import unlimited
 from app.core import human, text
+from app.db import repo
 from app.services import splitter
 from app.services.formats import find_option
 
@@ -56,6 +58,8 @@ async def _dispatch(update: Update, context: ContextTypes.DEFAULT_TYPE, query) -
             await links_flow.on_callback(update, context, args)
         elif prefix == "d":
             await _on_dismiss(update, context, args)
+        elif prefix == "r":
+            await _on_retry(update, context, args)
         else:
             await safe_answer(query)
     except Exception:  # noqa: BLE001
@@ -221,7 +225,10 @@ async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
             if mode == "video" and draft.kind != "gallery" and not link_flow.can_send_as_video(draft):
                 mode = "document"
 
-    if not svc.limiter.has_slot(draft.user_id, svc.cfg.per_user_concurrency):
+    # ادمین/مالک و کاربر ویژه محدودیت کار همزمان ندارند؛ در «پیش‌نمایش»
+    # ادمین مثل کاربر رفتار می‌کند.
+    admin = unlimited(context)
+    if not admin and not svc.limiter.has_slot(draft.user_id, svc.cfg.per_user_concurrency):
         await safe_answer(query, text.t(user_lang, "too_many_active"), alert=True)
         return
 
@@ -294,6 +301,24 @@ async def _on_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, args: l
         await safe_answer(update.callback_query, text.t(lang, "canceled"))
     else:
         await safe_answer(update.callback_query, text.t(lang, "expired_draft"), alert=True)
+
+
+async def _on_retry(update: Update, context: ContextTypes.DEFAULT_TYPE, args: list[str]) -> None:
+    """«تلاش دوباره» روی پیام خطا: همان لینک از ابتدا پردازش می‌شود."""
+    lang = lang_of(context)
+    query = update.callback_query
+    job_id = args[0] if args else ""
+    job = await repo.get_job(job_id) if job_id else None
+    user = update.effective_user
+    if job is None or user is None or job.user_id != user.id:
+        await safe_answer(query, text.t(lang, "retry_unavailable"), alert=True)
+        return
+    if job.status not in {"failed", "canceled"}:
+        await safe_answer(query, text.t(lang, "expired_draft"), alert=True)
+        return
+    await safe_answer(query, text.t(lang, "retry_btn"))
+    # همان مسیر عادی لینک: بررسی، انتخاب کیفیت/تحویل و صف.
+    await link_flow.handle_link(update, context, job.url)
 
 
 async def _on_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE, args: list[str]) -> None:

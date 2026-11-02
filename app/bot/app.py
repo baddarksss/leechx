@@ -131,6 +131,8 @@ async def gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     preview = in_preview(context)
     staff = await is_staff(cfg, user.id)
     context.user_data["is_admin"] = staff and not preview
+    # کاربر ویژه: فقط معافیت از محدودیت‌ها، بدون هیچ دسترسی مدیریتی.
+    context.user_data["is_vip"] = bool(getattr(row, "vip", False))
     if staff and not preview:
         context.user_data["lang"] = text.DEFAULT_LANG
 

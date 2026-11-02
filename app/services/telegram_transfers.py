@@ -8,11 +8,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import mimetypes
+import os
 import secrets
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import aiohttp
 
@@ -24,6 +26,71 @@ from app.services.linktoken import make_token
 
 log = logging.getLogger("leechx.telegram_transfers")
 CHUNK = 256 * 1024
+
+# پوشه‌های رسانه در ذخیره‌گاه Local Bot API؛ مسیر نسبی از یکی از این‌ها شروع می‌شود.
+_API_MEDIA_FOLDERS = frozenset({
+    "animations", "documents", "music", "passport", "photos", "profile_photos",
+    "secret", "stickers", "temp", "thumbnails", "video_notes", "videos", "voice",
+})
+
+
+def _storage_relative(file_path: str) -> str:
+    """``/var/lib/telegram-bot-api/<token>/documents/a.mkv`` ← ``documents/a.mkv``."""
+    raw = (file_path or "").replace("\\", "/")
+    if "://" in raw:
+        raw = urlsplit(raw).path
+    parts = [part for part in raw.split("/") if part]
+    for index, part in enumerate(parts):
+        if part in _API_MEDIA_FOLDERS:
+            return "/".join(parts[index:])
+    return parts[-1] if parts else ""
+
+
+def _api_file_url(cfg, relative: str) -> str:
+    """آدرس درست فایل روی Local Bot API؛ اگر تنظیم نشده باشد رشتهٔ خالی."""
+    base = str(getattr(cfg, "telegram_api_file_url", "") or "").strip().rstrip("/")
+    token = str(getattr(cfg, "bot_token", "") or "").strip()
+    if not base or not relative or not token:
+        return ""
+    if token in base:
+        return f"{base}/{relative}"
+    if base.endswith("/bot"):
+        return f"{base}{token}/{relative}"
+    return f"{base}/bot{token}/{relative}"
+
+
+BOT_API_CACHE_DIR = Path("/var/lib/telegram-bot-api")
+
+
+def bot_api_cache_state(cfg) -> str:
+    """وضعیت خواندن پوشهٔ کش Local Bot API: ok / missing / unreadable / off."""
+    if not getattr(cfg, "uses_local_api", False):
+        return "off"
+    token = str(getattr(cfg, "bot_token", "") or "").strip()
+    if not token:
+        return "missing"
+    root = BOT_API_CACHE_DIR / token
+    try:
+        if not root.is_dir():
+            return "missing"
+        with os.scandir(root) as entries:
+            next(entries, None)
+        return "ok"
+    except OSError:
+        return "unreadable"
+
+
+def _readable_local_file(file_path: str) -> Path | None:
+    """فایل محلی خواندنی؛ در غیر این صورت ``None`` (یعنی باید از HTTP خواند)."""
+    if not file_path or file_path.startswith(("http://", "https://")):
+        return None
+    try:
+        path = Path(file_path)
+        if path.is_file() and os.access(path, os.R_OK):
+            return path
+    except OSError:
+        return None
+    return None
 
 
 @dataclass
@@ -132,10 +199,17 @@ class FileLinkTransfers:
                 body += f"\n{human.human_speed(speed)} · {human.human_eta(eta)}"
             await edit(task.status, body, reply_markup=kb.cancel_job(task.lang, task.id))
 
-        # Local Telegram Bot API provides a path on a shared filesystem.
-        if not file_path.startswith(("http://", "https://")):
-            source = Path(file_path)
-            with source.open("rb") as fh, dest.open("wb") as output:
+        def count(size: int) -> None:
+            nonlocal received
+            received += size
+            if received > self.svc.settings.max_link_bytes:
+                raise RuntimeError("Maximum link file size exceeded")
+
+        local = _readable_local_file(file_path)
+        if local is not None:
+            # Local Bot API با --local مسیر واقعی فایل را می‌دهد و همان پوشه در این
+            # کانتینر هم سوار شده است؛ پس بدون HTTP مستقیم از دیسک می‌خوانیم.
+            with local.open("rb") as fh, dest.open("wb") as output:
                 while True:
                     if task.cancel_event.is_set():
                         raise asyncio.CancelledError()
@@ -143,32 +217,52 @@ class FileLinkTransfers:
                     if not chunk:
                         break
                     await asyncio.to_thread(output.write, chunk)
-                    received += len(chunk)
-                    if received > self.svc.settings.max_link_bytes:
-                        raise RuntimeError("Maximum link file size exceeded")
+                    count(len(chunk))
                     await progress()
         else:
-            # Only consume the trusted URL returned by Bot.get_file.
-            # Redirects are explicitly disabled to avoid leaking its bot token.
-            timeout = aiohttp.ClientTimeout(total=None, sock_read=120, connect=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(file_path, allow_redirects=False) as response:
-                    if response.status != 200:
-                        raise RuntimeError(f"Telegram file server HTTP {response.status}")
-                    with dest.open("wb") as output:
-                        async for chunk in response.content.iter_chunked(CHUNK):
-                            if task.cancel_event.is_set():
-                                raise asyncio.CancelledError()
-                            output.write(chunk)
-                            received += len(chunk)
-                            if received > self.svc.settings.max_link_bytes:
-                                raise RuntimeError("Maximum link file size exceeded")
-                            await progress()
+            await self._download_http(task, file_path, dest, count, progress)
         if task.cancel_event.is_set():
             raise asyncio.CancelledError()
         if received <= 0 or (expected and received != expected):
             raise RuntimeError(f"Telegram transfer incomplete ({received}/{expected})")
         await progress(force=True)
+
+    async def _download_http(self, task, file_path, dest, count, progress) -> None:
+        """Stream the file through the Bot API file endpoint.
+
+        PTB rewrites a ``getFile`` path into ``{base_file_url}/{path}`` when the
+        path is not readable from this process. With ``--local`` the API reports
+        an absolute path inside its own storage folder, so that rewrite becomes
+        ``…/file/bot<token>/var/lib/telegram-bot-api/<token>/documents/…`` and the
+        server answers **404**. Ask for the media-relative path instead, and keep
+        the URL PTB produced only as a second candidate.
+        """
+        candidates: list[str] = []
+        corrected = _api_file_url(self.svc.cfg, _storage_relative(file_path))
+        if corrected:
+            candidates.append(corrected)
+        if file_path.startswith(("http://", "https://")) and file_path not in candidates:
+            candidates.append(file_path)
+        if not candidates:
+            raise RuntimeError("Telegram file location is neither local nor a URL")
+        failure = "Telegram file server unreachable"
+        timeout = aiohttp.ClientTimeout(total=None, sock_read=120, connect=30)
+        # Redirects stay disabled so the bot token cannot leak to another host.
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            for url in candidates:
+                async with session.get(url, allow_redirects=False) as response:
+                    if response.status != 200:
+                        failure = f"Telegram file server HTTP {response.status}"
+                        continue
+                    with dest.open("wb") as output:
+                        async for chunk in response.content.iter_chunked(CHUNK):
+                            if task.cancel_event.is_set():
+                                raise asyncio.CancelledError()
+                            output.write(chunk)
+                            count(len(chunk))
+                            await progress()
+                    return
+        raise RuntimeError(failure)
 
     async def _run(self, task: FileLinkTask) -> None:
         svc = self.svc

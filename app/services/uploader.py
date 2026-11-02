@@ -36,8 +36,10 @@ BOT_API_LIMIT = 50 * 1024 * 1024  # سقف آپلود Bot API بدون سرور 
 PHOTO_LIMIT = 10 * 1024 * 1024   # سقف عکس تلگرام (sendPhoto)
 ALBUM_CHUNK = 10                 # حداکثر آیتم در هر media group
 
-# فرمت‌هایی که تلگرام به‌عنوان ویدیو قابل پخش می‌داند
-PLAYABLE_VIDEO_EXT = {".mp4", ".m4v", ".mov"}
+# ظرف‌هایی که تلگرام به‌عنوان ویدیو می‌پذیرد/پخش می‌کند.
+# MKV رایج‌ترین ظرف لینک‌های مستقیم است؛ اگر سرور فایل را رد کند، ``send`` همان
+# فایل را به‌صورت سند می‌فرستد، پس این فهرست کار را نمی‌شکند.
+PLAYABLE_VIDEO_EXT = {".mp4", ".m4v", ".mov", ".mkv"}
 
 
 # سرعت واقعیِ آپلود از سرور به دیتاسنتر تلگرام.
@@ -120,6 +122,10 @@ def media_kind(result: DownloadResult) -> str:
     if result.mime.startswith("image/"):
         return "image"
     if result.mime.startswith("video/"):
+        return "video"
+    # CDNها معمولاً MKV را با mime عمومی (octet-stream) می‌دهند؛ پسوند فایل هم
+    # معیار است تا ویدیو به‌اشتباه «سند» تحویل داده نشود.
+    if result.suffix in PLAYABLE_VIDEO_EXT:
         return "video"
     return "document"
 
@@ -208,9 +214,13 @@ class Uploader:
                 read_file_handle=False,
             )
 
+        # بایت‌های تلاش ناموفق نباید در آمار ترافیک و سرعت بمانند.
+        bytes_before_attempt = progress.uploaded_bytes_total
+
         def reset() -> None:
             progress.pct = 0.0
             progress.uploaded = 0
+            progress.uploaded_bytes_total = bytes_before_attempt
 
         message: Message | None = None
         try:
@@ -267,6 +277,7 @@ class Uploader:
                         raise
                     log.info("video upload rejected (%s); retrying as document", exc)
                     reset()
+                    started = time.monotonic()  # سرعت را از تلاش دوم اندازه بگیر
                     if thumb_handle is not None and not thumb_handle.closed:
                         thumb_handle.seek(0)
 

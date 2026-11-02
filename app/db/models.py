@@ -34,6 +34,14 @@ class User(Base):
     default_destination: Mapped[str] = mapped_column(
         String(16), default="telegram", server_default="telegram", nullable=False
     )
+    # کاربر ویژه (v5.14.0): از محدودیت‌های ربات معاف است (نه دسترسی ادمین).
+    vip: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
+    # انتخاب کاور از فریم‌های ویدیو (v5.13.0): پیش‌فرض خاموش، کاربر روشن می‌کند.
+    thumb_picker: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
     created_at: Mapped[int] = mapped_column(Integer, default=now)
     last_seen: Mapped[int] = mapped_column(Integer, default=now)
 

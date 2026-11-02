@@ -109,7 +109,19 @@ class NotEnoughSpace(LeechError):
     key = "split_no_space"
 
 
+class DiskFull(LeechError):
+    """فضای دیسک سرور برای این دانلود کافی نیست."""
+
+    key = "disk_full"
+
+
 class SplitFailed(LeechError):
     """تقسیم فایل (مثلاً برش ویدیو) ناموفق بود."""
 
     key = "split_failed"
+
+
+class TorrentFailed(LeechError):
+    """دانلود مگنت/تورنت شکست خورد یا ابزارش نصب نیست."""
+
+    key = "torrent_failed"

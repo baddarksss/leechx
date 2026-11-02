@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+MAGNET_RE = re.compile(r"magnet:\?[^\s<>\"']+", re.IGNORECASE)
 
 MEDIA_EXTENSIONS = {
     # video
@@ -44,6 +45,14 @@ def extract_urls(text: str | None) -> list[str]:
         if len(cleaned) >= 5:
             break
     return cleaned
+
+
+def extract_magnet(text: str | None) -> str | None:
+    """اولین لینک مگنت متن را برمی‌گرداند (تورنت)."""
+    if not text:
+        return None
+    found = MAGNET_RE.search(text)
+    return found.group(0) if found else None
 
 
 def is_valid_url(url: str) -> bool:

@@ -7,6 +7,7 @@ ST_BROADCAST = "broadcast"
 ST_ADD_ADMIN = "add_admin"
 ST_SET_VALUE = "set_value"
 ST_LOOKUP_USER = "lookup_user"
+ST_USER_SEARCH = "user_search"
 ST_COOKIE_ADD = "cookie_add"
 ST_RENAME = "rename"
 ST_THUMBNAIL = "thumbnail"
@@ -22,6 +23,7 @@ ADMIN_STATES = {
     ST_ADD_ADMIN,
     ST_SET_VALUE,
     ST_LOOKUP_USER,
+    ST_USER_SEARCH,
     ST_COOKIE_ADD,
     ST_GROUP_ID,
     ST_BAN,

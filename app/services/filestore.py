@@ -84,6 +84,15 @@ class FileStore:
             freed += size
         return removed, freed
 
+    # فضایی که همیشه برای دیتابیس/لاگ/پارت‌ها نگه می‌داریم.
+    DISK_RESERVE_BYTES = 512 * 1024 * 1024
+
+    def has_room(self, size: int, factor: float = 1.1) -> bool:
+        """آیا بعد از این دانلود، فضای امن برای بقیهٔ سرویس‌ها می‌ماند؟"""
+        if size <= 0:
+            return True
+        return self.disk_free() >= int(size * factor) + self.DISK_RESERVE_BYTES
+
     def disk_free(self) -> int:
         try:
             return shutil.disk_usage(self.root).free
