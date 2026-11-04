@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.14.3"
-CODENAME = "Polish"
+__version__ = "5.14.4"
+CODENAME = "Resolver"
 RELEASE_DATE = "2026-11-04"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.

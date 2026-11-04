@@ -7,6 +7,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.14.4] - 2026-11-04 — "Resolver"
+
+### Added
+- **VOE player support (voe.sx).** Aggregators like `girlswallowed.com` embed
+  their videos from VOE, which serves the playlist behind DDoS-Guard and a
+  JavaScript-obfuscated payload (no `m3u8` in the HTML). The probe now fetches
+  the player with a browser-impersonating client (`curl_cffi`, already a
+  dependency), follows the rotating-domain redirect and decodes the payload
+  without running JavaScript (`rot13 → markers→«_» → strip → base64 → −3 →
+  reverse → base64 → JSON`) to get the master playlist. Every link is validated
+  as public before use and the playlist is re-resolved at download time because
+  VOE links rotate and expire. `girlswallowed` is classified as adult so its
+  deliveries follow the usual NSFW auto-delete rules.
+
 ## [5.14.3] - 2026-11-04 — "Polish"
 
 ### Changed

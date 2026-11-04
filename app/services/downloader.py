@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import mimetypes
@@ -490,6 +491,92 @@ def iframe_sources(html: str) -> list[str]:
             continue
         out.append(src)
     return out
+
+
+# ─── VOE (voe.sx) ─────────────────────────────────────────────
+# صفحهٔ پلیر VOE پشت DDoS-Guard و یک payload جاوااسکریپتی مبهم است؛ خودِ
+# پلیلیست مادر در HTML نیست. صفحه با curl_cffi (impersonate کروم) باز میشود و
+# payload بدون اجرای JS دیکود میشود: rot13 → نشانهها→«_» → حذف «_» →
+# base64 → منهای ۳ → معکوس → base64 → JSON. خروجی ``source`` = m3u8 مادر.
+_VOE_HOST = re.compile(r"^(?:www\.)?voe\.sx$", re.IGNORECASE)
+_VOE_REDIRECT = re.compile(r"window\.location\.href\s*=\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
+_VOE_JSON = re.compile(
+    r'<script[^>]*type=["\']application/json["\'][^>]*>(.*?)</script>', re.S | re.I
+)
+_VOE_MARKERS = ("@$", "^^", "~@", "%?", "*~", "!!", "#&")
+
+
+def looks_like_voe(url: str) -> bool:
+    """آیا این لینک یک صفحهٔ پلیر ``voe.sx`` است؟"""
+    try:
+        host = urlparse(url).hostname or ""
+    except ValueError:
+        return False
+    return bool(_VOE_HOST.match(host))
+
+
+def _voe_rot13(text: str) -> str:
+    out: list[str] = []
+    for char in text:
+        code = ord(char)
+        if 0x41 <= code <= 0x5A:
+            code = (code - 0x41 + 13) % 26 + 0x41
+        elif 0x61 <= code <= 0x7A:
+            code = (code - 0x61 + 13) % 26 + 0x61
+        out.append(chr(code))
+    return "".join(out)
+
+
+def voe_payload(html: str) -> str | None:
+    """رشتهٔ payload از تگ ``<script type="application/json">`` صفحهٔ VOE."""
+    match = _VOE_JSON.search(html or "")
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(1))
+    except (ValueError, TypeError):
+        return None
+    if isinstance(data, list) and data and isinstance(data[0], str):
+        return data[0]
+    return None
+
+
+def voe_redirect_target(html: str, base: str) -> str | None:
+    """آدرس مقصد ریدایرکت جاوااسکریپتی صفحهٔ ``voe.sx``."""
+    match = _VOE_REDIRECT.search(html or "")
+    if not match:
+        return None
+    target = match.group(1).strip()
+    if not target:
+        return None
+    return target if target.startswith(("http://", "https://")) else urljoin(base, target)
+
+
+def decode_voe_config(payload: str | None) -> dict | None:
+    """payload مبهم VOE را به کانفیگ پلیر (با ``source`` = m3u8) تبدیل میکند."""
+    if not payload:
+        return None
+    try:
+        text = _voe_rot13(payload)
+        for marker in _VOE_MARKERS:
+            text = text.replace(marker, "_")
+        text = text.replace("_", "")
+        raw = base64.b64decode(text + "=" * (-len(text) % 4))
+        text = "".join(chr(byte - 3) for byte in raw)[::-1]
+        decoded = base64.b64decode(text + "=" * (-len(text) % 4))
+        config = json.loads(decoded.decode("utf-8", "replace"))
+    except (ValueError, TypeError, UnicodeError):
+        return None
+    return config if isinstance(config, dict) else None
+
+
+def _voe_get(url: str, referer: str = "") -> str:
+    """GET با curl_cffi تا چالش DDoS-Guard رد شود (رشتهٔ HTML)."""
+    from curl_cffi import requests as creq  # فقط برای مسیر VOE لازم است
+
+    headers = {"Referer": referer} if referer else None
+    with creq.Session(impersonate="chrome") as sess:
+        return sess.get(url, timeout=30, headers=headers).text
 
 
 def hls_master_variants(text: str, base_url: str = "") -> list[dict]:
@@ -1142,6 +1229,9 @@ class Downloader:
             embed = await self._embed_fallback(url)
             if embed is not None:
                 return embed
+            voe = await self._voe_fallback(url, exc)
+            if voe is not None:
+                return voe
             cf = await self._cf_fallback(url, exc)
             if cf is not None:
                 return cf
@@ -1157,6 +1247,9 @@ class Downloader:
             embed = await self._embed_fallback(url)
             if embed is not None:
                 return embed
+            voe = await self._voe_fallback(url, mapped)
+            if voe is not None:
+                return voe
             cf = await self._cf_fallback(url, mapped)
             if cf is not None:
                 return cf
@@ -1368,6 +1461,13 @@ class Downloader:
             log.debug("embed fallback could not fetch %s", url, exc_info=True)
             return None
         for candidate in embed_candidates(html, url)[:3]:
+            if looks_like_voe(candidate):
+                # پلیر VOE با yt-dlp قابل خواندن نیست؛ خودمان دیکود میکنیم.
+                voe = await self._voe_resolve(candidate, url)
+                if voe is not None and voe.formats:
+                    log.info("resolved VOE player %s for %s", candidate, url)
+                    return voe
+                continue
             try:
                 info = await asyncio.to_thread(self._probe_blocking, candidate)
             except errors.LeechError:
@@ -1380,6 +1480,85 @@ class Downloader:
                 log.info("resolved embedded player %s for %s", candidate, url)
                 return info
         return None
+
+    async def _voe_config(self, page_url: str) -> tuple[dict, str] | None:
+        """کانفیگ دیکودشدهٔ VOE و آدرس نهایی صفحه (پس از ریدایرکت JS)."""
+        if not await urlcheck.is_safe_public_url(page_url):
+            return None
+        try:
+            html = await asyncio.to_thread(_voe_get, page_url)
+        except Exception:  # noqa: BLE001 — نباید جریان بررسی را بشکند
+            log.warning("VOE fetch failed for %s", page_url, exc_info=True)
+            return None
+        payload = voe_payload(html)
+        embed_page = page_url
+        if payload is None:
+            target = voe_redirect_target(html, page_url)
+            if not target or not await urlcheck.is_safe_public_url(target):
+                return None
+            try:
+                html = await asyncio.to_thread(_voe_get, target, page_url)
+            except Exception:  # noqa: BLE001
+                log.warning("VOE redirect fetch failed for %s", target, exc_info=True)
+                return None
+            embed_page = target
+            payload = voe_payload(html)
+        config = decode_voe_config(payload)
+        if not config:
+            return None
+        return config, embed_page
+
+    async def _voe_master(self, page_url: str) -> tuple[str, str] | None:
+        """``(master_m3u8, referer)`` تازه برای صفحهٔ VOE (لینکها منقضی میشوند)."""
+        got = await self._voe_config(page_url)
+        if got is None:
+            return None
+        config, embed_page = got
+        master = str(config.get("source") or "").strip()
+        if not master or not await urlcheck.is_safe_public_url(master):
+            return None
+        return master, embed_page
+
+    async def _voe_resolve(self, page_url: str, referer: str = ""):
+        """صفحهٔ پلیر VOE را به ``MediaInfo`` با واریانتهای HLS تبدیل میکند."""
+        got = await self._voe_config(page_url)
+        if got is None:
+            return None
+        config, embed_page = got
+        master = str(config.get("source") or "").strip()
+        if not master or not await urlcheck.is_safe_public_url(master):
+            return None
+        title = human.safe_filename(str(config.get("title") or "").strip() or "media", 150)
+        timeout = aiohttp.ClientTimeout(total=45, connect=10)
+        headers = {"User-Agent": USER_AGENT, "Accept": "*/*", "Accept-Encoding": "identity"}
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
+            variants = await self._hls_from_manifest(sess, master, embed_page)
+            if not variants:
+                return None
+            await self._hls_variant_sizes(sess, variants, embed_page)
+        log.info("resolved VOE page %s (%d variants)", page_url, len(variants))
+        return MediaInfo(
+            url=referer or page_url,
+            title=title,
+            thumbnail=str(config.get("thumbnail") or "").strip() or None,
+            extractor="HLS",
+            formats=_hls_formats(variants),
+            ext="mp4",
+            # در زمان دانلود از همین صفحه دوباره حل میشود (هاست میچرخد).
+            embed_url=page_url,
+        )
+
+    async def _voe_fallback(self, url: str, exc: errors.LeechError):
+        """اگر خودِ لینک کاربر یک صفحهٔ voe.sx بود، مستقیم حلش کن."""
+        if not looks_like_voe(url):
+            return None
+        try:
+            return await self._voe_resolve(url)
+        except errors.LeechError:
+            raise
+        except Exception:  # noqa: BLE001 — خطای اصلی باید به کاربر برسد
+            log.warning("VOE fallback failed for %s", url, exc_info=True)
+            return None
 
     async def _cf_fallback(self, url: str, exc: errors.LeechError):
         """اگر سایت پشت چالش Cloudflare بود، صفحه را با byparr باز می‌کنیم."""
@@ -2206,34 +2385,42 @@ class Downloader:
                     embed_url=embed_url,
                 )
 
-            async with safe_http_request(
-                sess, "GET", embed_url, headers={"Referer": info.url}
-            ) as resp:
-                if resp.status in (401, 403):
-                    raise errors.AccessDenied(str(resp.status))
-                if resp.status >= 400:
-                    raise errors.UnsupportedUrl(f"HTTP {resp.status}")
-                embed_html = await resp.text(errors="replace")
-
-            links = hls_links(embed_html, embed_url)
-            if "#EXTM3U" in embed_html or embed_url.split("?", 1)[0].casefold().endswith(".m3u8"):
-                # embed_url is already the playlist (e.g. missav, no iframe).
-                master_url = embed_url
-            elif links:
-                master_url = links.get("hls3") or links.get("hls2") or next(iter(links.values()))
+            if looks_like_voe(embed_url):
+                # VOE: پلیلیست با دیکود payload ساخته میشود و هر بار تازه است.
+                fresh = await self._voe_master(embed_url)
+                if fresh is None:
+                    raise errors.UnsupportedUrl("VOE source missing")
+                master_url, referer = fresh
             else:
-                candidates = m3u8_candidates(embed_html, embed_url)
-                master_url = candidates[0] if candidates else ""
-            if not master_url:
-                raise errors.UnsupportedUrl("HLS links missing")
-            variants = await self._hls_from_manifest(sess, master_url, embed_url)
+                async with safe_http_request(
+                    sess, "GET", embed_url, headers={"Referer": info.url}
+                ) as resp:
+                    if resp.status in (401, 403):
+                        raise errors.AccessDenied(str(resp.status))
+                    if resp.status >= 400:
+                        raise errors.UnsupportedUrl(f"HTTP {resp.status}")
+                    embed_html = await resp.text(errors="replace")
+
+                links = hls_links(embed_html, embed_url)
+                if "#EXTM3U" in embed_html or embed_url.split("?", 1)[0].casefold().endswith(".m3u8"):
+                    # embed_url is already the playlist (e.g. missav, no iframe).
+                    master_url = embed_url
+                elif links:
+                    master_url = links.get("hls3") or links.get("hls2") or next(iter(links.values()))
+                else:
+                    candidates = m3u8_candidates(embed_html, embed_url)
+                    master_url = candidates[0] if candidates else ""
+                if not master_url:
+                    raise errors.UnsupportedUrl("HLS links missing")
+                referer = embed_url
+            variants = await self._hls_from_manifest(sess, master_url, referer)
             picked = pick_hls_variant(variants, option.height)
             if picked is None:
                 raise errors.UnsupportedUrl("HLS variant missing")
             variant = picked
 
             async with safe_http_request(
-                sess, "GET", str(variant["url"]), headers={"Referer": embed_url}
+                sess, "GET", str(variant["url"]), headers={"Referer": referer}
             ) as resp:
                 if resp.status in (401, 403):
                     raise errors.AccessDenied(str(resp.status))
@@ -2261,7 +2448,7 @@ class Downloader:
                             raise errors.JobCancelled()
                         target = parts_dir / f"{index:05d}.part"
                         async with safe_http_request(
-                            sess, "GET", segment, headers={"Referer": embed_url}
+                            sess, "GET", segment, headers={"Referer": referer}
                         ) as media:
                             if media.status in (401, 403):
                                 raise errors.AccessDenied(str(media.status))

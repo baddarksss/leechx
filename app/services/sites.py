@@ -40,6 +40,7 @@ NSFW_EXTRACTORS: set[str] = {
     "pornhd", "pornhubpremium", "brazzers", "bangbros", "fakehub", "kink",
     "chaturbate", "cam4", "stripchat", "bongacams", "livejasmin", "myfreecams",
     "hanime", "hentaihaven", "nhentai", "rule34", "e621", "gelbooru", "danbooru",
+    "girlswallowed",
 }
 
 NSFW_HOST_WORDS = ("porn", "xxx", "sex", "nude", "hentai", "adult", "cam4", "onlyfans", "erotic")
