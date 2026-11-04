@@ -142,7 +142,7 @@ async def test_private_chat_deletes_every_part_after_countdown():
 
 
 @pytest.mark.asyncio
-async def test_group_chat_deletes_without_extra_copy():
+async def test_group_chat_is_never_touched():
     bot = FakeBot()
 
     async def fake_sleep(_seconds: float) -> None:
@@ -157,8 +157,9 @@ async def test_group_chat_deletes_without_extra_copy():
         sleep=fake_sleep,
     )
 
-    assert "private copy" not in bot.sent[0]["text"]
-    assert bot.deleted == [(-100123, 31)]
+    # Group topics are an immutable archive: no notice, no deletion.
+    assert bot.sent == []
+    assert bot.deleted == []
 
 
 # ── اتصال به صف کار ─────────────────────────────────────────
@@ -182,7 +183,7 @@ async def test_job_schedules_cleanup_for_sent_parts(monkeypatch):
     task = JobTask(
         id="job1",
         user_id=7,
-        chat_id=-100123,
+        chat_id=7,
         url="https://www.pornhub.com/view_video.php?viewkey=1",
         option=SimpleNamespace(selector="", label="720"),
         title="clip",
@@ -193,9 +194,38 @@ async def test_job_schedules_cleanup_for_sent_parts(monkeypatch):
     await asyncio.gather(*manager._nsfw_tasks)
 
     assert seen and seen[0]["message_ids"] == [5, 6]
-    assert seen[0]["chat_id"] == -100123
+    assert seen[0]["chat_id"] == 7
     assert "copy_dm" not in seen[0]
     assert "user_id" not in seen[0]
+
+
+@pytest.mark.asyncio
+async def test_job_never_schedules_cleanup_for_groups(monkeypatch):
+    async def fake_cleanup(bot, **kwargs):  # pragma: no cover - must not be called
+        raise AssertionError("group cleanup must not run")
+
+    monkeypatch.setattr(nsfwguard, "cleanup_messages", fake_cleanup)
+    manager = JobManager(
+        cfg=SimpleNamespace(),
+        settings=SimpleNamespace(),
+        store=SimpleNamespace(),
+        downloader=None,
+        uploader=None,
+        limiter=SimpleNamespace(),
+    )
+    manager.bot = FakeBot()
+    task = JobTask(
+        id="job-group",
+        user_id=7,
+        chat_id=-100123,
+        url="https://www.pornhub.com/view_video.php?viewkey=1",
+        option=SimpleNamespace(selector="", label="720"),
+        title="clip",
+    )
+    task.sent_messages = [SimpleNamespace(message_id=5)]
+
+    assert manager._schedule_nsfw_cleanup(task, 30) is False
+    assert not manager._nsfw_tasks
 
 
 # ── آپلودر همهٔ پیام‌ها را گزارش می‌کند ─────────────────────

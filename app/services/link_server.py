@@ -168,8 +168,17 @@ class LinkServer:
             log.warning("link file size mismatch %s: expected %s, got %s", row.id, row.size, size)
             await self._drop(row.id, row.path)
             return web.Response(status=410, text="Link unavailable; create a new one.\n")
-        ctype = row.mime or mimetypes.guess_type(row.name)[0] or "application/octet-stream"
-        inline = ctype.startswith(("video/", "audio/", "image/"))
+        guessed_mime = mimetypes.guess_type(row.name)[0]
+        ctype = row.mime or guessed_mime or "application/octet-stream"
+        if ctype == "application/octet-stream" and guessed_mime:
+            ctype = guessed_mime
+        suffix = Path(row.name).suffix.lower()
+        inline_extensions = {
+            ".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".ts", ".m3u8",
+            ".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".opus",
+            ".jpg", ".jpeg", ".png", ".gif", ".webp",
+        }
+        inline = ctype.startswith(("video/", "audio/", "image/")) or suffix in inline_extensions
         rng = _parse_range(request.headers.get("Range"), size)
 
         headers = {

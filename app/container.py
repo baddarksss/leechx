@@ -105,6 +105,7 @@ class Services:
         await self.settings.load()
         self.settings.apply_to_config()
         self.admin_group.attach(bot)
+        await self.admin_group.migrate_topics()
         self.limiter.set_interval(self.settings.rate_limit_seconds)
         self.media_cache_state = await asyncio.to_thread(
             bot_api_cache_state, self.cfg

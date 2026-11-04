@@ -24,14 +24,16 @@ from app.services.runtime_settings import RuntimeSettings
 log = logging.getLogger("leechx.admin_group")
 
 TOPICS: dict[str, str] = {
-    "downloads": "📥 دانلودها",
-    "uploads": "📤 آپلودها",
-    "reports": "🚨 گزارش‌ها",
-    "logs": "🐞 لاگ‌ها",
-    "cache": "📦 کش رسانه‌ها",
-    "audit": "🧾 ممیزی و وضعیت عملیات",
+    "activity": "🧾 فعالیت (دانلود/آپلود)",
+    "reports": "🚨 گزارشها",
+    "logs": "🐞 لاگها و ممیزی",
+    "cache": "📦 کش رسانهها",
     "security": "🔐 امنیت و تنظیمات",
 }
+
+# Topic keys that existed before the activity/logs merge; on upgrade their
+# thread ids are reused and the stale keys are cleared.
+LEGACY_TOPICS = ("downloads", "uploads", "audit")
 
 
 def _username(username: str | None) -> str:
@@ -98,7 +100,28 @@ class AdminGroup:
         await self.settings.set("admin_group_title", (title or "")[:128])
         for key, thread in created.items():
             await self.settings.set(f"topic_{key}", str(thread or ""))
+        await self._clear_legacy_topics()
         return created
+
+    async def _clear_legacy_topics(self) -> None:
+        for key in LEGACY_TOPICS:
+            if self.settings.get_str(f"topic_{key}"):
+                await self.settings.forget(f"topic_{key}")
+
+    async def migrate_topics(self) -> None:
+        """Reuse the old downloads/uploads/audit topics after the merge.
+
+        ``downloads`` (or ``uploads``) becomes the single «فعالیت» topic, and the
+        ``logs`` topic also receives audit entries; the legacy keys are then
+        cleared so nothing is sent to the retired topics.
+        """
+        if self.chat_id is None:
+            return
+        if not self.topic_id("activity"):
+            legacy = self.topic_id("downloads") or self.topic_id("uploads")
+            if legacy:
+                await self.settings.set("topic_activity", str(legacy))
+        await self._clear_legacy_topics()
 
     async def disable(self) -> None:
         await self.settings.set("admin_group_id", "")
@@ -146,9 +169,9 @@ class AdminGroup:
 
     async def audit(self, category: str, action: str, user_id: int | None = None,
                     details: str = "", severity: str = "INFO") -> None:
-        """Store events in SQLite and route to audit or security topic."""
+        """Store events in SQLite and route to logs or security topic."""
         message = f"{action}" + (f" • {details[:350]}" if details else "")
-        topic = "security" if category == "security" else "audit"
+        topic = "security" if category == "security" else "logs"
         try:
             row = await repo.add_log(severity, category[:64], message[:1300], user_id)
             label = "🔐" if category == "security" else "🧾"
@@ -167,7 +190,7 @@ class AdminGroup:
                                 reason: str = "") -> None:
         """Lifecycle status for every URL download, upload, link or cancel."""
         mode = getattr(task, "mode", "video")
-        topic = "downloads" if mode == "link" else "uploads"
+        topic = "activity"
         message = (
             f"🧾 <b>پایان عملیات {human.esc(status)}</b>\n"
             f"کار: <code>{human.esc(task.id)}</code>\n"
@@ -192,10 +215,9 @@ class AdminGroup:
             )
             if kind == "download":
                 heading = "📥 <b>دانلود جدید</b>"
-                topic = "downloads"
             else:
                 heading = "📤 <b>آپلود جدید</b>"
-                topic = "uploads"
+            topic = "activity"
             mode = {
                 "video": "ویدیو",
                 "document": "فایل",
@@ -232,7 +254,7 @@ class AdminGroup:
                 f"📦 حجم: {human.human_bytes(size)}\n"
                 "🔗 تحویل: لینک مستقیم"
             )
-            await self.send("uploads", body)
+            await self.send("activity", body)
         except Exception:  # noqa: BLE001
             log.exception("upload notification failed")
 

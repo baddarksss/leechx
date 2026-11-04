@@ -40,6 +40,7 @@ from app.services.formats import FormatOption
 from app.services.linktoken import make_token
 from app.services.ratelimit import RateLimiter
 from app.services.runtime_settings import RuntimeSettings
+from app.services.source_policy import is_social_source, public_cache_eligible
 from app.services.uploader import (
     PLAYABLE_VIDEO_EXT,
     Uploader,
@@ -100,6 +101,11 @@ class JobTask:
     custom_thumbnail: bytes | None = None
     # ترجیح کاربر: انتخاب کاور از فریم‌های ویدیو (پیش‌فرض خاموش)
     thumb_picker: bool = False
+    # VIP از محدودیت‌های کاربر عادی، از جمله حذف خودکار NSFW، معاف است.
+    vip: bool = False
+    # فعال فقط برای URL عمومیِ مجاز، بدون کوکی و بدون علامت NSFW.
+    public_cache: bool = False
+    slot_acquired: bool = False
     # همهٔ پیام‌های رسانه‌ای که در این کار ارسال شدند (پارت‌ها/آلبوم)؛ برای
     # حذف زمان‌بندی‌شدهٔ محتوای بزرگسال لازم است.
     sent_messages: list[Message] = field(default_factory=list)
@@ -108,6 +114,8 @@ class JobTask:
     created_at: float = field(default_factory=time.time)
     last_text: str = ""
     last_edit: float = 0.0
+    finalized: bool = False
+    edit_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     canceled_by_user: bool = False
     upload_task: asyncio.Task | None = None
     upload_started: float = 0.0
@@ -289,9 +297,16 @@ class JobManager:
                 self._tasks.pop(task.id, None)
                 canceled.append(task)
                 continue
-            if picked is None and self.limiter.acquire_slot(task.user_id, limit):
-                self._queue.remove(task)
-                picked = task
+            if picked is None:
+                task.slot_acquired = False
+                if task.vip:
+                    can_take = True
+                else:
+                    can_take = self.limiter.acquire_slot(task.user_id, limit)
+                    task.slot_acquired = can_take
+                if can_take:
+                    self._queue.remove(task)
+                    picked = task
 
         for task in canceled:
             self._spawn(self._finish_canceled(task), f"cancel-{task.id}")
@@ -332,9 +347,28 @@ class JobManager:
         # ولی از کش بازپخش نمی‌شود تا هر درخواست تایمر حذف خودش را داشته باشد.
         # در صورت فعال‌بودن تنظیم، نسخهٔ چت بعد از چند ثانیه پاک می‌شود.
         nsfw = nsfwguard.is_nsfw(
-            task.url, task.info.extractor if task.info is not None else ""
+            task.url, getattr(task.info, "extractor", "") if task.info is not None else ""
         )
         task.nsfw = nsfw
+        # Cross-user reuse is opt-in by policy and fails closed if cookie status
+        # cannot be determined. Private, signed, cookie-dependent, and NSFW URLs
+        # remain scoped to the requesting user.
+        cookie_for = getattr(self.downloader, "cookie_for", None)
+        has_cookie = True
+        if callable(cookie_for):
+            try:
+                has_cookie = cookie_for(task.url) is not None
+            except Exception:  # noqa: BLE001 — uncertain auth state means do not share
+                has_cookie = True
+        extractor = getattr(task.info, "extractor", "") if task.info is not None else ""
+        task.public_cache = (
+            task.mode != "link"
+            and not nsfw
+            and not task.custom_thumbnail
+            and public_cache_eligible(
+                task.url, extractor, has_cookie=has_cookie, nsfw=nsfw
+            )
+        )
         nsfw_delete_seconds = 0
         try:
             await repo.update_job(task.id, status="running", started_at=started)
@@ -345,7 +379,6 @@ class JobManager:
 
             if (
                 task.mode != "link"
-                and not nsfw
                 and self.cache is not None
                 and not task.custom_thumbnail
             ):
@@ -364,12 +397,22 @@ class JobManager:
                     await repo.log_event(task.user_id, "download_done")
                     await repo.log_event(task.user_id, "upload_done")
                     await repo.log_event(task.user_id, "bytes", float(cached))
-                    await self._edit_final(
-                        task,
-                        text.t(task.lang, "done")
-                        + "\n"
-                        + text.t(task.lang, "cache_fast_delivery"),
+                    task.progress.stage = "done"
+                    task.progress.pct = 100.0
+                    body = text.t(task.lang, "done") + "\n" + text.t(
+                        task.lang, "cache_fast_delivery"
                     )
+                    # An adult delivery replayed from cache still needs its own
+                    # delete timer (unless the user is VIP or the chat is a group).
+                    if nsfw and self.settings.nsfw_autodelete and not task.vip:
+                        seconds = self.settings.nsfw_autodelete_seconds
+                        if self._schedule_nsfw_cleanup(task, seconds):
+                            body += "\n" + text.t(
+                                task.lang,
+                                "nsfw_autodelete_job_line",
+                                seconds=seconds,
+                            )
+                    await self._edit_final(task, body)
                     if self.hub is not None:
                         await self.hub.notify_job_result(task, "cache_hit")
                     return
@@ -580,14 +623,16 @@ class JobManager:
                     finally:
                         task.upload_task = None
                     if task.cancel.is_set():
-                        # If the upload finished concurrently with cancellation,
-                        # remove the message instead of claiming a successful cancel.
-                        try:
-                            await self.bot.delete_message(
-                                chat_id=task.chat_id, message_id=uploaded_message.message_id
-                            )
-                        except TelegramError:
-                            pass
+                        # Private-chat deliveries may be removed if cancellation
+                        # raced with upload. Group topics remain immutable.
+                        if task.chat_id > 0:
+                            try:
+                                await self.bot.delete_message(
+                                    chat_id=task.chat_id,
+                                    message_id=uploaded_message.message_id,
+                                )
+                            except TelegramError:
+                                pass
                         raise errors.JobCancelled()
                     # آرشیو گروه ادمین برای محتوای بزرگسال هم مثل بقیه است؛
                     # فقط نسخهٔ چت کاربر بعد از تایمر پاک می‌شود.
@@ -601,12 +646,14 @@ class JobManager:
                 size=result.size,
                 finished_at=int(time.time()),
             )
+            task.progress.stage = "done"
+            task.progress.pct = 100.0
             await repo.bump_downloads(task.user_id)
             await repo.bump_uploads(task.user_id)
             await repo.log_event(task.user_id, "download_done")
             await repo.log_event(task.user_id, "upload_done")
             await repo.log_event(task.user_id, "bytes", float(result.size))
-            if task.mode != "link" and nsfw and self.settings.nsfw_autodelete:
+            if task.mode != "link" and nsfw and self.settings.nsfw_autodelete and not task.vip:
                 seconds = self.settings.nsfw_autodelete_seconds
                 if self._schedule_nsfw_cleanup(task, seconds):
                     nsfw_delete_seconds = seconds
@@ -692,12 +739,19 @@ class JobManager:
                     telegram_upload_bytes=upload_observed - upload_traffic_recorded
                 )
             self.store.drop_job_dir(task.id)
-            self.limiter.release_slot(task.user_id)
+            if task.slot_acquired:
+                self.limiter.release_slot(task.user_id)
+                task.slot_acquired = False
             self._tasks.pop(task.id, None)
             self._wake.set()
 
     def _schedule_nsfw_cleanup(self, task: JobTask, seconds: int) -> bool:
-        """تایمر حذف را جدا از worker اجرا می‌کند تا صف معطل نماند."""
+        """تایمر حذف را جدا از worker اجرا می‌کند تا صف معطل نماند.
+
+        Group chats (including forum topics) are immutable archives.
+        """
+        if task.chat_id < 0:
+            return False
         ids = [m.message_id for m in task.sent_messages if m is not None]
         if not ids or self.bot is None:
             return False
@@ -762,7 +816,9 @@ class JobManager:
         wait = int(self.settings.thumb_wait_seconds)
         # v5.13.0: آلبوم فریم‌ها پیش‌فرض خاموش است؛ فقط کاربری که از
         # «تنظیمات» روشنش کرده، آلبوم انتخاب کاور را می‌بیند.
-        if wait > 0 and task.thumb_picker:
+        # Social platforms already ship a good cover; every other source may pick one.
+        extractor = getattr(task.info, "extractor", "") if task.info is not None else ""
+        if wait > 0 and task.thumb_picker and not is_social_source(task.url, extractor):
             await self._offer_thumb_shots(task, result, workdir, duration, wait)
         if task.custom_thumbnail is None and result.thumbnail is None:
             # کاور سایت نبود/خراب بود: یک قاب از خود ویدیو تا تلگرام سیاه نماند
@@ -778,7 +834,9 @@ class JobManager:
     async def _offer_thumb_shots(
         self, task: JobTask, result, workdir: Path, duration: float, wait: int
     ) -> None:
-        if self.bot is None or task.cancel.is_set():
+        if self.bot is None or task.cancel.is_set() or task.chat_id < 0:
+            # Interactive picker albums are temporary and cleaned up after use;
+            # do not create them in group topics that must remain immutable.
             return
         count = int(getattr(self.settings, "thumb_shots", thumbs.SHOTS) or thumbs.SHOTS)
         shots = await thumbs.extract_shots(
@@ -884,7 +942,9 @@ class JobManager:
         return "picked"
 
     async def _delete_messages(self, chat_id: int, message_ids: list[int]) -> None:
-        """پاک‌کردن پارت‌های ارسال‌شده بعد از لغو/خطا."""
+        """Clean up partial private-chat deliveries; never mutate group topics."""
+        if chat_id < 0:
+            return
         for message_id in message_ids:
             try:
                 await self.bot.delete_message(chat_id=chat_id, message_id=message_id)
@@ -1034,7 +1094,7 @@ class JobManager:
     async def _deliver_link(self, task: JobTask, result) -> None:
         """فایل دانلودشده را به پوشهٔ لینک مستقیم منتقل و لینک امضاشده می‌سازد."""
         limit = self.settings.max_links_per_user
-        if limit > 0 and await repo.count_user_shared(task.user_id) >= limit:
+        if not task.vip and limit > 0 and await repo.count_user_shared(task.user_id) >= limit:
             # سقف لینک همزمان پر شده است؛ فایل هنوز جابه‌جا نشده تا پوشهٔ کار
             # در finally پاک شود و فایل یتیم نماند.
             raise errors.LinkQuota(limit=limit)
@@ -1154,45 +1214,55 @@ class JobManager:
         return text.t(lang, "processing")
 
     async def _edit_progress(self, task: JobTask, force: bool = False) -> None:
-        if not task.status_message_id or self.bot is None:
-            return
-        now = time.monotonic()
-        if not force and now - task.last_edit < EDIT_INTERVAL:
-            return
-        body = self._progress_text(task)
-        if body == task.last_text and not force:
-            return
-        task.last_text = body
-        task.last_edit = now
-        try:
-            await self.bot.edit_message_text(
-                chat_id=task.chat_id,
-                message_id=task.status_message_id,
-                text=body,
-                parse_mode=ParseMode.HTML,
-                reply_markup=Kb([[Btn(text.t(task.lang, "cancel_btn"),
-                                      callback_data=f"x|{task.id}")]]),
-            )
-        except TelegramError:
-            pass
+        # Serialize status edits. Without this lock the publisher can finish an
+        # old 99% edit after _edit_final has already written the success message.
+        async with task.edit_lock:
+            if task.finalized or not task.status_message_id or self.bot is None:
+                return
+            now = time.monotonic()
+            if not force and now - task.last_edit < EDIT_INTERVAL:
+                return
+            body = self._progress_text(task)
+            if body == task.last_text and not force:
+                return
+            task.last_text = body
+            task.last_edit = now
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=task.chat_id,
+                    message_id=task.status_message_id,
+                    text=body,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=Kb([[Btn(text.t(task.lang, "cancel_btn"),
+                                          callback_data=f"x|{task.id}")]]),
+                )
+            except TelegramError:
+                pass
 
     async def _edit_final(self, task: JobTask, body: str, reply_markup=None) -> None:
-        if not task.status_message_id or self.bot is None:
-            return
-        try:
-            await self.bot.edit_message_text(
-                chat_id=task.chat_id,
-                message_id=task.status_message_id,
-                text=body,
-                parse_mode=ParseMode.HTML,
-                reply_markup=reply_markup,
-            )
-        except TelegramError:
-            pass
+        async with task.edit_lock:
+            # Set this even if there is no status message: the publisher must not
+            # resurrect progress after a terminal result has been produced.
+            task.finalized = True
+            if not task.status_message_id or self.bot is None:
+                return
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=task.chat_id,
+                    message_id=task.status_message_id,
+                    text=body,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=reply_markup,
+                )
+            except TelegramError:
+                pass
 
     async def _publisher_loop(self) -> None:
         while not self._stop.is_set():
             for task in list(self._tasks.values()):
-                if task.progress.stage in ("downloading", "uploading", "postprocessing"):
+                if (
+                    not task.finalized
+                    and task.progress.stage in ("downloading", "uploading", "postprocessing")
+                ):
                     await self._edit_progress(task)
             await asyncio.sleep(EDIT_INTERVAL)

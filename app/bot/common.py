@@ -76,6 +76,27 @@ async def reply(update: Update, body: str, **kwargs) -> Message | None:
         return None
 
 
+async def rate_limit_notice(update: Update, context: ContextTypes.DEFAULT_TYPE, body: str) -> bool:
+    """Send a standalone, immediate cooldown notice on the first blocked request."""
+    chat = update.effective_chat
+    bot = getattr(context, "bot", None)
+    if chat is None or bot is None:
+        return False
+    try:
+        await bot.send_message(
+            chat_id=chat.id,
+            text=body,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+        return True
+    except TelegramError as exc:
+        # A reply-to can fail if Telegram has already removed the user's input;
+        # fall back to the normal reply path and make delivery failures visible.
+        log.warning("standalone rate-limit notice failed: %s", exc)
+        return await reply(update, body) is not None
+
+
 async def edit(message: Message | None, body: str, **kwargs) -> Message | None:
     """ویرایش امن؛ در صورت موفقیت (یا «تغییری نکرد») خود پیام را برمی‌گرداند، وگرنه None."""
     if message is None:

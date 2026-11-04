@@ -414,14 +414,13 @@ FA: dict[str, str] = {
     ),
     "admin_forward_hint": "💡 می‌توانی پیام کاربر را هم فوروارد کنی.",
     "admin_group_panel": (
-        "<b>👥 گروه ادمین</b>\n\n"
+        "<b>🏠 گروه ادمین</b>\n\n"
         "وضعیت: {status}\n"
         "گروه: <b>{title}</b>\n"
-        "شناسه: <code>{chat}</code>\n\n"
-        "📥 دانلودها: {downloads}\n"
-        "📤 آپلودها: {uploads}\n"
+        "چت: <code>{chat}</code>\n\n"
+        "🧾 فعالیت (دانلود/آپلود): {activity}\n"
         "🚨 گزارش‌ها: {reports}\n"
-        "🐞 لاگ‌ها: {logs}\n\n"
+        "🐞 لاگ‌ها و ممیزی: {logs}\n\n"
         "{hint}"
     ),
     "admin_group_configured": "✅ تنظیم‌شده",
@@ -455,8 +454,7 @@ FA: dict[str, str] = {
     "setup_not_group": "این چت گروه نیست.",
     "setup_done": (
         "✅ گروه ادمین تنظیم شد.\n\n"
-        "📥 دانلودها: {downloads}\n📤 آپلودها: {uploads}\n"
-        "🚨 گزارش‌ها: {reports}\n🐞 لاگ‌ها: {logs}\n\n"
+        "🧾 فعالیت: {activity}\n🚨 گزارش‌ها: {reports}\n🐞 لاگ‌ها و ممیزی: {logs}\n\n"
         "اگر موردی «—» بود، Topics گروه را فعال و ربات را ادمین کن."
     ),
     "admin_reports": "<b>🚨 گزارش‌های باز</b> ({count})\n\n{list}",
@@ -766,12 +764,10 @@ FA: dict[str, str] = {
     "run_owner_id": "مالک ربات",
     "run_admin_group_id": "شناسهٔ گروه ادمین",
     "run_admin_group_title": "نام گروه ادمین",
-    "run_topic_downloads": "تاپیک دانلود",
-    "run_topic_uploads": "تاپیک آپلود",
+    "run_topic_activity": "تاپیک فعالیت (دانلود/آپلود)",
     "run_topic_reports": "تاپیک گزارش‌ها",
-    "run_topic_logs": "تاپیک لاگ‌ها",
+    "run_topic_logs": "تاپیک لاگها و ممیزی",
     "run_topic_cache": "تاپیک کش رسانه‌ها",
-    "run_topic_audit": "تاپیک ممیزی عملیات",
     "run_topic_security": "تاپیک امنیت",
     "run_force_join_enabled": "عضویت اجباری",
     "run_force_join_chats": "کانال/گروه‌های عضویت اجباری",
@@ -1125,14 +1121,13 @@ EN: dict[str, str] = {
     ),
     "admin_forward_hint": "💡 You can also forward a message from the user.",
     "admin_group_panel": (
-        "<b>👥 Admin group</b>\n\n"
+        "<b>🛡 Admin group</b>\n\n"
         "Status: {status}\n"
         "Group: <b>{title}</b>\n"
         "Chat ID: <code>{chat}</code>\n\n"
-        "📥 Downloads topic: {downloads}\n"
-        "📤 Uploads topic: {uploads}\n"
-        "🚨 Reports topic: {reports}\n"
-        "🐞 Logs topic: {logs}\n\n"
+        "🧾 Activity (downloads/uploads): {activity}\n"
+        "🚨 Reports: {reports}\n"
+        "🐞 Logs & audit: {logs}\n\n"
         "{hint}"
     ),
     "admin_group_configured": "✅ Configured",
@@ -1166,8 +1161,7 @@ EN: dict[str, str] = {
     "setup_not_group": "This chat is not a group.",
     "setup_done": (
         "✅ Admin group configured.\n\n"
-        "📥 Downloads: {downloads}\n📤 Uploads: {uploads}\n"
-        "🚨 Reports: {reports}\n🐞 Logs: {logs}\n\n"
+        "🧾 Activity: {activity}\n🚨 Reports: {reports}\n🐞 Logs & audit: {logs}\n\n"
         "If an item is “—”, enable Topics and make the bot an admin."
     ),
     "admin_reports": "<b>🚨 Open reports</b> ({count})\n\n{list}",
@@ -1478,12 +1472,10 @@ EN: dict[str, str] = {
     "run_owner_id": "Bot owner",
     "run_admin_group_id": "Admin group ID",
     "run_admin_group_title": "Admin group title",
-    "run_topic_downloads": "Downloads topic",
-    "run_topic_uploads": "Uploads topic",
+    "run_topic_activity": "Activity (downloads/uploads) topic",
     "run_topic_reports": "Reports topic",
-    "run_topic_logs": "Logs topic",
+    "run_topic_logs": "Logs & audit topic",
     "run_topic_cache": "Media cache topic",
-    "run_topic_audit": "Audit topic",
     "run_topic_security": "Security topic",
     "run_force_join_enabled": "Forced membership",
     "run_force_join_chats": "Forced join channels/groups",
@@ -1832,10 +1824,10 @@ RU: dict[str, str] = {
     "admin_ban_prompt": "Отправь числовой ID, @username или пересланное сообщение пользователя, чтобы изменить блокировку.",
     "admin_forward_hint": "💡 Можно также переслать сообщение пользователя.",
     "admin_group_panel": (
-        "<b>👥 Группа администраторов</b>\n\n"
+        "<b>🛡 Группа администраторов</b>\n\n"
         "Статус: {status}\nГруппа: <b>{title}</b>\nID чата: <code>{chat}</code>\n\n"
-        "📥 Тема загрузок: {downloads}\n📤 Тема выгрузок: {uploads}\n"
-        "🚨 Тема жалоб: {reports}\n🐞 Тема логов: {logs}\n\n{hint}"
+        "🧾 Активность (загрузки/выгрузки): {activity}\n🚨 Жалобы: {reports}\n"
+        "🐞 Логи и аудит: {logs}\n\n{hint}"
     ),
     "admin_group_configured": "✅ Настроена",
     "admin_group_not_configured": "❌ Не настроена",
@@ -1852,7 +1844,7 @@ RU: dict[str, str] = {
     "setup_private": "Эту команду нужно отправлять <b>внутри группы</b>.\nДобавь бота в группу с Topics и отправь <code>/setup</code> там.",
     "setup_need_admin": "⛔️ Только админы бота могут настроить группу логов.",
     "setup_not_group": "Этот чат не является группой.",
-    "setup_done": "✅ Группа админов настроена.\n\n📥 Загрузки: {downloads}\n📤 Выгрузки: {uploads}\n🚨 Жалобы: {reports}\n🐞 Логи: {logs}\n\nЕсли значение «—», включи Topics и сделай бота админом.",
+    "setup_done": "✅ Группа администраторов настроена.\n\n🧾 Активность: {activity}\n🚨 Жалобы: {reports}\n🐞 Логи и аудит: {logs}\n\nЕсли значение «—», включите Topics и сделайте бота админом.",
     "admin_reports": "<b>🚨 Открытые жалобы</b> ({count})\n\n{list}",
     "admin_reports_empty": "Открытых жалоб нет.",
     "admin_report_item": "{icon} <b>#{id}</b> · {kind} · {when}\n👤 {name} (@{username}) · <code>{uid}</code>\n{body}",
@@ -2098,12 +2090,10 @@ RU: dict[str, str] = {
     "run_owner_id": "Владелец бота",
     "run_admin_group_id": "ID группы админов",
     "run_admin_group_title": "Название группы админов",
-    "run_topic_downloads": "Тема загрузок",
-    "run_topic_uploads": "Тема выгрузок",
+    "run_topic_activity": "Тема активности (загрузки/выгрузки)",
     "run_topic_reports": "Тема жалоб",
-    "run_topic_logs": "Тема логов",
+    "run_topic_logs": "Тема логов и аудита",
     "run_topic_cache": "Тема кэша медиа",
-    "run_topic_audit": "Тема аудита",
     "run_topic_security": "Тема безопасности",
     "run_force_join_enabled": "Обязательная подписка",
     "run_force_join_chats": "Каналы/группы подписки",

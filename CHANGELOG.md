@@ -7,6 +7,72 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.14.3] - 2026-11-04 — "Polish"
+
+### Changed
+- **Admin-group topics merged (7 → 5).** `downloads` + `uploads` collapse into
+  one «فعالیت» topic and `audit` folds into the `logs` topic; `reports`,
+  `cache` and `security` stay. On upgrade the old thread ids are reused and the
+  retired keys cleared (`AdminGroup.migrate_topics`), so nothing is posted to
+  the empty topics; a fresh `/setup` creates 5 topics.
+- **Cache reuse now covers adult media too.** A delivery already in the media
+  cache is replayed from the group archive for **every** kind of file (not only
+  non-NSFW), so the same link is never downloaded twice. A replayed adult
+  delivery still gets its own countdown and is deleted from the user's chat.
+  Per-user covers no longer block caching (only the cross-user public cache
+  skips them).
+
+### Fixed
+- **Thumbnail picker now matches the request.** The per-user
+  «🖼 انتخاب کاور از فریمهای ویدیو» album is offered for every source
+  **except** social/video-sharing platforms (YouTube, Instagram, TikTok, ...),
+  which keep their own cover. It had been limited *to* social sources, so
+  opting in showed nothing for ordinary sites.
+- **Embedded players.** When yt-dlp cannot parse a page, the bot now follows the
+  page's `<iframe>` player (DoodStream, StreamTape, ...) and downloads from the
+  embed. The KVS fallback also runs on plain "unsupported" pages, not only on
+  flashvars errors.
+
+## [5.14.2] - 2026-11-04 — "Archive"
+
+### Fixed
+- **Progress completion race.** Successful Telegram upload now sets 100%, and
+  serialized status edits prevent the periodic publisher from replacing the
+  final success message with a stale 99% update.
+- **Immutable group topics.** Cache expiry removes only database metadata; all
+  cleanup paths that could target a group chat now leave its messages untouched.
+  NSFW auto-delete remains available in private chats but never runs in groups.
+- **VIP exemptions are complete.** VIP jobs bypass the worker's per-user slot,
+  concurrent-link quotas and NSFW auto-delete; VIP Telegram-file-to-link jobs
+  also bypass per-user concurrency and link-count limits. Global workers and
+  technical file-size limits still apply.
+- **Direct video streaming.** Range/seek support remains enabled, and generic
+  `application/octet-stream` video files now get an extension-based media MIME
+  and inline disposition when served.
+- **First slow-mode notice.** A blocked request receives a standalone immediate
+  wait message instead of relying only on a reply-to the submitted message.
+
+### Changed
+- Optional thumbnail selection is restricted to social/video-sharing sources
+  (including YouTube, Instagram and TikTok); it remains opt-in in user settings
+  and offers up to the configured 10 frames. Other sites never show the picker.
+- Link probing no longer waits for size-enrichment requests indefinitely:
+  direct checks and KVS/HLS/generic format-size lookups are bounded. A missing
+  size is left unknown rather than delaying the quality menu.
+- Cross-user media reuse is enabled only for allow-listed public platforms when
+  the URL has no credential/token markers, no applicable cookies, and is not
+  NSFW. Such cache keys omit the requester ID; all other media remains private
+  per user. Probe metadata remains per-user. The existing private-cache key
+  serialization is unchanged, so same-user cache rows created by prior releases
+  remain reusable.
+
+### Retention and archive
+- Ordinary Telegram jobs still use a temporary per-job working directory that
+  is removed on completion/failure; direct-link files remain under the link TTL
+  cleanup policy. The cache-topic message archive is not pruned when its DB row
+  expires.
+- The seven existing admin topics are unchanged; no topics are merged.
+
 ## [5.14.1] - 2026-11-02 — "Tidy"
 
 ### Fixed

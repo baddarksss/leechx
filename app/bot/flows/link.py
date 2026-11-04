@@ -18,7 +18,16 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.bot import keyboards as kb
-from app.bot.common import DRAFT_SLOT, drop_user_input, edit, lang_of, panel, reply, services
+from app.bot.common import (
+    DRAFT_SLOT,
+    drop_user_input,
+    edit,
+    lang_of,
+    panel,
+    rate_limit_notice,
+    reply,
+    services,
+)
 from app.bot.guards import unlimited
 from app.bot.states import ST_RENAME, ST_THUMBNAIL, clear_state, get_data, set_state
 from app.core import errors, human, text
@@ -331,7 +340,9 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
     # منوها هرگز این تایمر را مصرف نمی‌کنند.
     wait = 0.0 if admin else svc.limiter.hit(user.id)
     if wait > 0:
-        await reply(update, text.t(lang, "rate_limited", seconds=f"{wait:g}"))
+        await rate_limit_notice(
+            update, context, text.t(lang, "rate_limited", seconds=f"{wait:g}")
+        )
         return
 
     status = await reply(update, text.t(lang, "probing"))
@@ -726,6 +737,7 @@ async def enqueue(
         custom_name=draft.custom_name,
         custom_thumbnail=draft.custom_thumbnail,
         thumb_picker=draft.thumb_picker,
+        vip=bool(context.user_data.get("is_vip")),
     )
     position = await svc.jobs.submit(task)
     await edit(

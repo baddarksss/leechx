@@ -166,9 +166,9 @@ class RecordingCache:
         self.archived: list[tuple[str, int]] = []
         self.hits = 0
 
-    async def cached_delivery(self, bot, task) -> bool:
+    async def cached_delivery(self, bot, task) -> int | None:
         self.hits += 1
-        return False
+        return None
 
     async def record_delivery(self, bot, task, result, uploaded_message) -> None:
         self.archived.append((task.id, uploaded_message.message_id))
@@ -235,7 +235,7 @@ async def test_nsfw_job_is_archived_and_scheduled_for_deletion(
     # فایل بزرگسال هم مثل قبل در آرشیو گروه ادمین ذخیره می‌شود…
     assert cache.archived == [("pipe-nsfw", 1)]
     # …ولی از کش بازپخش نمی‌شود تا تایمر حذف همیشه اجرا شود.
-    assert cache.hits == 0
+    assert cache.hits == 1
     # تایمر حذف فقط روی پیام‌های چت کاربر تنظیم شده است.
     assert cleanup_calls and cleanup_calls[0]["chat_id"] == 42
     assert cleanup_calls[0]["message_ids"] == [1]
@@ -243,6 +243,65 @@ async def test_nsfw_job_is_archived_and_scheduled_for_deletion(
     # بدون نسخهٔ اضافه یا اسپویلر: همان روال ثابت قبلی
     assert "spoiler" not in uploader.calls[0]
     job = await repo.get_job("pipe-nsfw")
+    assert job.status == "done"
+
+
+class HittingCache:
+    """Cache stub that always reports a hit and records a replayed message."""
+
+    def __init__(self, size: int = 4096) -> None:
+        self.size = size
+
+    async def cached_delivery(self, bot, task) -> int | None:
+        task.sent_messages.append(SimpleNamespace(message_id=77))
+        return self.size
+
+    async def record_delivery(self, bot, task, result, uploaded_message) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_nsfw_cache_hit_replays_and_still_schedules_deletion(db, monkeypatch):
+    cfg = db
+    store = FileStore(cfg.files_dir, cfg.tmp_dir)
+    settings = RuntimeSettings(cfg)
+    await settings.load()
+    await settings.set("nsfw_autodelete_enabled", True)
+    await settings.set("nsfw_autodelete_seconds", 5)
+    monkeypatch.setattr("app.services.jobs.nsfwguard.is_nsfw", lambda *a, **k: True)
+
+    calls: list[dict] = []
+
+    async def fake_cleanup(bot, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr("app.services.jobs.nsfwguard.cleanup_messages", fake_cleanup)
+
+    downloader = Downloader(cfg)
+    uploader = ArchivingStubUploader()
+    manager = JobManager(cfg, settings, store, downloader, uploader, RateLimiter(0))
+    manager.bot = StubBot()
+    manager.cache = HittingCache()
+    task = JobTask(
+        id="nsfw-hit",
+        user_id=42,
+        chat_id=42,
+        url="https://www.pornhub.com/view_video.php?viewkey=1",
+        option=FormatOption(kind="direct", code="direct", label="direct", selector=""),
+        title="clip",
+        lang="fa",
+    )
+    await manager.submit(task)
+    await manager._run(task)
+    await asyncio.gather(*manager._nsfw_tasks)
+
+    # A cache hit is served without downloading/uploading...
+    assert uploader.results == []
+    # ...but the adult delivery still gets its own delete timer on the chat copy.
+    assert calls and calls[0]["chat_id"] == 42
+    assert calls[0]["message_ids"] == [77]
+    assert calls[0]["seconds"] == 5
+    job = await repo.get_job("nsfw-hit")
     assert job.status == "done"
 
 

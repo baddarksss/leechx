@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.14.1"
-CODENAME = "Tidy"
-RELEASE_DATE = "2026-11-02"
+__version__ = "5.14.3"
+CODENAME = "Polish"
+RELEASE_DATE = "2026-11-04"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.
 MIN_PYTHON = (3, 11)

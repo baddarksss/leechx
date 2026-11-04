@@ -106,6 +106,7 @@ class FileLinkTask:
     status: object
     username: str | None = None
     first_name: str | None = None
+    vip: bool = False
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     job: asyncio.Task | None = None
     finalizing: bool = False
@@ -132,7 +133,9 @@ class FileLinkTransfers:
                 log.warning("Telegram receive traffic could not be recorded", exc_info=True)
         return max(already_recorded, size)
 
-    async def start(self, update, lang: str, attachment, name: str, size: int) -> FileLinkTask | None:
+    async def start(
+        self, update, lang: str, attachment, name: str, size: int, *, vip: bool = False
+    ) -> FileLinkTask | None:
         user = update.effective_user
         mime = getattr(attachment, "mime_type", None) or mimetypes.guess_type(name)[0] or "application/octet-stream"
         status = await update.effective_message.reply_text(
@@ -144,7 +147,7 @@ class FileLinkTransfers:
             id=secrets.token_hex(6), user_id=user.id,
             chat_id=update.effective_chat.id, name=name, size=size,
             mime=mime, lang=lang, attachment=attachment, status=status,
-            username=user.username, first_name=user.first_name,
+            username=user.username, first_name=user.first_name, vip=vip,
         )
         self._tasks[task.id] = task
         await edit(status, text.t(lang, "file_received"), reply_markup=kb.cancel_job(lang, task.id))
@@ -279,7 +282,7 @@ class FileLinkTransfers:
             if task.cancel_event.is_set():
                 raise asyncio.CancelledError()
             limit = svc.settings.max_links_per_user
-            if limit > 0 and await repo.count_user_shared(task.user_id) >= limit:
+            if not task.vip and limit > 0 and await repo.count_user_shared(task.user_id) >= limit:
                 # سقف لینک همزمان بین شروع آپلود و پایانش پر شده است.
                 await edit(task.status, text.t(task.lang, "link_quota_full", limit=limit))
                 svc.store.drop_link_dir(task.id)

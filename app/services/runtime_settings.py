@@ -43,12 +43,10 @@ SCHEMA: dict[str, tuple[str, str]] = {
     "owner_id": ("text", "مالک ربات"),
     "admin_group_id": ("text", "شناسهٔ گروه ادمین"),
     "admin_group_title": ("text", "نام گروه ادمین"),
-    "topic_downloads": ("text", "تاپیک دانلود"),
-    "topic_uploads": ("text", "تاپیک آپلود"),
-    "topic_reports": ("text", "تاپیک گزارش‌ها"),
-    "topic_logs": ("text", "تاپیک لاگ‌ها"),
-    "topic_cache": ("text", "تاپیک کش رسانه‌ها"),
-    "topic_audit": ("text", "تاپیک ممیزی عملیات"),
+    "topic_activity": ("text", "تاپیک فعالیت"),
+    "topic_reports": ("text", "تاپیک گزارشها"),
+    "topic_logs": ("text", "تاپیک لاگها و ممیزی"),
+    "topic_cache": ("text", "تاپیک کش رسانهها"),
     "topic_security": ("text", "تاپیک امنیت"),
     # ── قابلیت‌های جدید ──
     "force_join_enabled": ("bool", "عضویت اجباری"),
@@ -110,12 +108,10 @@ class RuntimeSettings:
             "owner_id": "",
             "admin_group_id": "",
             "admin_group_title": "",
-            "topic_downloads": "",
-            "topic_uploads": "",
+            "topic_activity": "",
             "topic_reports": "",
             "topic_logs": "",
             "topic_cache": "",
-            "topic_audit": "",
             "topic_security": "",
             "force_join_enabled": False,
             "force_join_chats": "",
@@ -268,6 +264,15 @@ class RuntimeSettings:
         new_value = not self.get_bool(key)
         await self.set(key, new_value)
         return new_value
+
+    async def forget(self, key: str) -> None:
+        """Clear a stored value even if the key is no longer in ``SCHEMA``.
+
+        Used to retire settings removed by a refactor (e.g. the pre-merge
+        ``topic_downloads``/``topic_uploads``/``topic_audit`` keys).
+        """
+        await repo.set_setting(key, "")
+        self._cache[key] = ""
 
     def label(self, key: str, lang: str | None = None) -> str:
         """برچسب محلی‌شدهٔ یک کلید؛ اگر ترجمه نبود از برچسب فارسی استفاده می‌کند."""

@@ -1062,15 +1062,13 @@ async def _render_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         status=status,
         title=human.esc(group.title or "—"),
         chat=group.chat_id or "—",
-        downloads=svc.settings.get_str("topic_downloads") or "—",
-        uploads=svc.settings.get_str("topic_uploads") or "—",
+        activity=svc.settings.get_str("topic_activity") or "—",
         reports=svc.settings.get_str("topic_reports") or "—",
         logs=svc.settings.get_str("topic_logs") or "—",
         hint=hint,
     )
     body += (
         f"\n\n📦 {group.topic_id('cache') or '—'}"
-        f"\n🧾 {group.topic_id('audit') or '—'}"
         f"\n🔐 {group.topic_id('security') or '—'}"
     )
     menu = kb.group_menu(lang, group.configured)
@@ -1722,19 +1720,17 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     body = text.t(
         lang,
         "setup_done",
-        downloads=created.get("downloads") or "—",
-        uploads=created.get("uploads") or "—",
+        activity=created.get("activity") or "—",
         reports=created.get("reports") or "—",
         logs=created.get("logs") or "—",
     )
     body += (
         f"\n📦 کش: <code>{created.get('cache') or '—'}</code>"
-        f"\n🧾 ممیزی: <code>{created.get('audit') or '—'}</code>"
         f"\n🔐 امنیت: <code>{created.get('security') or '—'}</code>"
     )
     await reply(update, body)
     await _audit_soon(context, "security", "group_setup", user.id,
-                                f"group {chat.id}; topics {sum(bool(x) for x in created.values())}/7")
+                                f"group {chat.id}; topics {sum(bool(x) for x in created.values())}/5")
 
 
 async def handle_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

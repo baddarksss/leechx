@@ -289,6 +289,13 @@ class Uploader:
                     thumbnail=thumb_file,
                     **common,
                 )
+            if reset_progress:
+                # send_* returning successfully confirms that Telegram accepted
+                # the full file; byte-read hooks alone stop at 99.9% by design.
+                progress.uploaded = max(progress.uploaded, progress.total or result.size)
+                progress.pct = 100.0
+            elif progress.total and progress.uploaded >= progress.total:
+                progress.pct = 100.0
             if sent is not None and message is not None:
                 # برای حذف زمان‌بندی‌شدهٔ NSFW به شناسهٔ همهٔ پارت‌ها نیاز داریم.
                 sent.append(message)

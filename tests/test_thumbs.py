@@ -304,3 +304,43 @@ async def test_probe_display_size_without_ffprobe(monkeypatch):
     monkeypatch.setattr(thumbs.shutil, "which", lambda name: None)
     assert await thumbs.probe_display_size(Path("missing.mp4")) is None
 
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_picker_is_opt_in_and_skips_social(tmp_path: Path, monkeypatch):
+    calls = []
+
+    async def fake_offer(task, result, workdir, duration, wait):
+        calls.append((task.url, duration, wait))
+
+    async def no_shots(video, times, workdir, cancel=None):
+        return []
+
+    monkeypatch.setattr(thumbs, "extract_shots", no_shots)
+    settings = SimpleNamespace(thumb_wait_seconds=5)
+    manager = JobManager(
+        cfg=SimpleNamespace(), settings=settings, store=SimpleNamespace(),
+        downloader=None, uploader=None, limiter=SimpleNamespace(),
+    )
+    manager._offer_thumb_shots = fake_offer
+
+    social = _make_task("social", 7, 7)
+    social.url = "https://www.youtube.com/watch?v=public"
+    social.info = SimpleNamespace(duration=120, extractor="Youtube")
+    social.thumb_picker = True
+    await manager._maybe_pick_thumbnail(social, _make_result(tmp_path), tmp_path)
+
+    other_site = _make_task("other", 8, 8)
+    other_site.url = "https://www.pornhub.com/view_video.php?viewkey=x"
+    other_site.info = SimpleNamespace(duration=120, extractor="PornHub")
+    other_site.thumb_picker = True
+    await manager._maybe_pick_thumbnail(other_site, _make_result(tmp_path), tmp_path)
+
+    opted_out = _make_task("off", 9, 9)
+    opted_out.url = "https://www.example.com/video/1"
+    opted_out.info = SimpleNamespace(duration=120, extractor="Generic")
+    opted_out.thumb_picker = False
+    await manager._maybe_pick_thumbnail(opted_out, _make_result(tmp_path), tmp_path)
+
+    # Only the opted-in, non-social source gets the frame album.
+    assert calls == [(other_site.url, 120.0, 5)]

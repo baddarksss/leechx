@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +15,14 @@ from app.db import repo
 from app.db.base import session
 from app.db.models import MediaCacheEntry
 from app.services.admin_group import TOPICS, AdminGroup
-from app.services.cache import MEDIA_TTL, CacheHub, fingerprint, safe_source
+from app.services.cache import (
+    MEDIA_TTL,
+    PUBLIC_CACHE_USER_ID,
+    CacheHub,
+    fingerprint,
+    safe_source,
+    shared_fingerprint,
+)
 from app.services.downloader import DownloadResult
 from app.services.formats import FormatOption
 from app.services.jobs import JobTask
@@ -59,14 +68,14 @@ async def forum(db):
 
 
 @pytest.mark.asyncio
-async def test_single_forum_creates_all_seven_topics_and_is_idempotent(forum):
+async def test_single_forum_creates_all_five_topics_and_is_idempotent(forum):
     hub, bot, topics = forum
     assert set(topics) == set(TOPICS)
-    assert len(topics) == 7
+    assert len(topics) == 5
     assert all(isinstance(mid, int) and mid > 0 for mid in topics.values())
     second = await hub.configure(-100123456789, "Private LeechX operations")
     assert second == topics
-    assert len(bot.created) == 7
+    assert len(bot.created) == 5
     status = hub.status()
     assert status["topics"] == topics
     assert await hub.send("cache", "ready")
@@ -84,7 +93,7 @@ async def test_event_audit_persisted_and_routed_to_appropriate_topics(forum):
     assert "42" in bot.sent[-1][1]
     assert "setting_updated" in bot.sent[-1][1]
     await hub.audit("job", "done", user_id=42, details="task=one")
-    assert bot.sent[-1][2]["message_thread_id"] == topics["audit"]
+    assert bot.sent[-1][2]["message_thread_id"] == topics["logs"]
     assert await hub.cache_event("media", "HIT", "hash123")
     assert bot.sent[-1][2]["message_thread_id"] == topics["cache"]
     await hub.record_log("ERROR", "handler", "unexpected exception", user_id=42)
@@ -162,7 +171,7 @@ async def test_telegram_media_cache_roundtrip_and_owner_isolation(db, forum, tmp
 
 
 @pytest.mark.asyncio
-async def test_expired_media_cache_db_and_group_cleanup(db, forum, tmp_path):
+async def test_expired_media_cache_metadata_cleanup_preserves_group_archive(db, forum, tmp_path):
     hub, bot, topics = forum
     cache = CacheHub(hub)
     key = fingerprint(42, "https://example.com", "b", "video", "")
@@ -173,7 +182,8 @@ async def test_expired_media_cache_db_and_group_cleanup(db, forum, tmp_path):
         ))
         await s.commit()
     assert await cache.clear_expired(bot) == 1
-    assert bot.deleted == [(hub.chat_id, 987)]
+    # Expiring lookup metadata must never delete the archived Telegram message.
+    assert bot.deleted == []
     assert await repo.get_media_cache(key, 42, hub.chat_id) is None
 
 
@@ -191,6 +201,12 @@ async def test_cache_db_disabled_without_group(db):
     await cache.record_delivery(bot, task,
         DownloadResult(path=path, title="x", size=1), SimpleNamespace(message_id=9))
     assert bot.copied == []
+
+
+def test_private_fingerprint_preserves_legacy_cache_keys():
+    parts = [7, "https://example.com/video", "720", "video", ""]
+    old_serialization = json.dumps(parts, ensure_ascii=True, separators=(",", ":"))
+    assert fingerprint(*parts) == hashlib.sha256(old_serialization.encode()).hexdigest()
 
 
 def test_cache_fingerprints_are_private_and_no_secrets_in_topic():
@@ -321,3 +337,32 @@ async def test_direct_link_access_log_is_rate_limited_and_keeps_token_private(db
     assert audit.entries[0][0] == "link_http"
     assert audit.entries[0][2] == 42
     assert token not in audit.entries[0][-1]
+
+
+@pytest.mark.asyncio
+async def test_public_media_cache_is_reused_across_users(db, forum, tmp_path):
+    hub, bot, topics = forum
+    cache = CacheHub(hub)
+    first = make_task(user_id=10)
+    first.public_cache = True
+    path = tmp_path / "public.mp4"
+    path.write_bytes(b"public-video-bytes")
+    result = DownloadResult(
+        path=path, title="Public video", mime="video/mp4", size=18
+    )
+
+    await cache.record_delivery(bot, first, result, SimpleNamespace(message_id=72))
+    key = shared_fingerprint(
+        first.url, first.option.selector, first.mode, first.custom_name
+    )
+    row = await repo.get_media_cache(key, PUBLIC_CACHE_USER_ID, hub.chat_id)
+    assert row is not None and row.size == 18
+    assert "کاربر:" not in bot.copied[0]["caption"]
+    assert "کش عمومی" in bot.copied[0]["caption"]
+
+    second = make_task(user_id=11)
+    second.public_cache = True
+    assert await cache.cached_delivery(bot, second) == 18
+    assert bot.copied[-1]["from_chat_id"] == hub.chat_id
+    assert bot.copied[-1]["chat_id"] == 11
+    assert bot.copied[-1]["message_id"] == row.message_id

@@ -9,7 +9,7 @@ import time
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from app.bot.common import drop_user_input, lang_of, panel, reply, services
+from app.bot.common import drop_user_input, lang_of, panel, rate_limit_notice, reply, services
 from app.bot.flows import link as link_flow
 from app.bot.guards import require_admin, unlimited
 from app.bot.states import ST_COOKIE_ADD, ST_DEPLOY_ZIP, ST_THUMBNAIL, clear_state, get_state
@@ -190,13 +190,14 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         name += guessed
     name = human.safe_filename(name, 120)
 
+    # VIP/admin bypass user concurrency and per-user link/cooldown restrictions.
+    admin = unlimited(context)
     # Run asynchronously so the user can cancel the transfer with a button
     # while Telegram's file bytes arrive in bounded chunks.
-    if svc.file_transfers.tasks_for_user(user.id):
+    if not admin and svc.file_transfers.tasks_for_user(user.id):
         await reply(update, text.t(lang, "too_many_active"))
         return
     # ادمین/مالک و کاربر ویژه از سقف لینک و «حالت آهسته» معاف‌اند.
-    admin = unlimited(context)
     limit, used = await link_flow.link_quota_used(context, user.id)
     if limit and used >= limit:
         await reply(update, text.t(lang, "link_quota_full", limit=limit))
@@ -205,6 +206,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # فاصلهٔ بین درخواست‌ها فقط همین‌جا (پردازش فایل) مصرف می‌شود، نه برای دکمه‌ها.
     wait = 0.0 if admin else svc.limiter.hit(user.id)
     if wait > 0:
-        await reply(update, text.t(lang, "rate_limited", seconds=f"{wait:g}"))
+        await rate_limit_notice(
+            update, context, text.t(lang, "rate_limited", seconds=f"{wait:g}")
+        )
         return
-    await svc.file_transfers.start(update, lang, att, name, size)
+    await svc.file_transfers.start(update, lang, att, name, size, vip=admin)

@@ -87,12 +87,12 @@ async def cleanup_messages(
     seconds: int,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
-    """اعلان زیر فایل، شمارش معکوس، و حذف فایل‌ها بعد از ``seconds`` ثانیه.
+    """Delete private-chat media after a countdown; group chats stay immutable.
 
-    ``sleep`` قابل تزریق است تا در تست‌ها بدون انتظار واقعی اجرا شود.
+    ``sleep`` is injectable so tests do not wait in real time.
     """
     ids = [int(mid) for mid in message_ids if mid]
-    if not ids or bot is None:
+    if chat_id < 0 or not ids or bot is None:
         return
     seconds = clamp_seconds(seconds)
 

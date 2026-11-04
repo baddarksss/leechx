@@ -241,6 +241,44 @@ def is_kvs_error(reason: str | None) -> bool:
     return any(marker in text for marker in ("flashvars", "kt_player", "kvs player"))
 
 
+# yt-dlp reports "unsupported"/"no formats" for pages that only embed a player;
+# those are worth a direct KVS or iframe attempt even without a flashvars error.
+_UNSUPPORTED_MARKERS = (
+    "unsupported", "no video", "no media", "no formats", "no downloadable",
+    "unable to extract", "not a valid url", "invalid url", "no valid url",
+)
+
+
+def _looks_unsupported(reason: str | None) -> bool:
+    text = (reason or "").casefold()
+    return any(marker in text for marker in _UNSUPPORTED_MARKERS)
+
+
+_IFRAME_RE = re.compile(
+    r"<iframe[^>]+(?:src|data-src|data-litespeed-src)\s*=\s*[\"']([^\"']+)",
+    re.IGNORECASE,
+)
+_EMBED_SKIP = (
+    "doubleclick", "googlesyndication", "googleads", "adsystem", "adservice",
+    "taboola", "outbrain", "criteo", "pubmatic", "facebook.com/plugins",
+)
+
+
+def embed_candidates(html: str, base: str) -> list[str]:
+    """Absolute, de-duplicated embedded-player URLs from a page (ads excluded)."""
+    found: list[str] = []
+    for raw in _IFRAME_RE.findall(html or ""):
+        candidate = urljoin(base, (raw or "").strip())
+        if not candidate.lower().startswith(("http://", "https://")):
+            continue
+        lowered = candidate.casefold()
+        if any(marker in lowered for marker in _EMBED_SKIP):
+            continue
+        if candidate not in found:
+            found.append(candidate)
+    return found
+
+
 def _js_objects(html: str):
     """همهٔ آبجکت‌های ``var x = {...};`` را با پرانتزهای متوازن برمی‌گرداند."""
     for match in re.finditer(r"var\s+(\w+)\s*=\s*\{", html):
@@ -1101,6 +1139,9 @@ class Downloader:
             kvs = await self._kvs_fallback(url, exc)
             if kvs is not None:
                 return kvs
+            embed = await self._embed_fallback(url)
+            if embed is not None:
+                return embed
             cf = await self._cf_fallback(url, exc)
             if cf is not None:
                 return cf
@@ -1113,6 +1154,9 @@ class Downloader:
             kvs = await self._kvs_fallback(url, mapped)
             if kvs is not None:
                 return kvs
+            embed = await self._embed_fallback(url)
+            if embed is not None:
+                return embed
             cf = await self._cf_fallback(url, mapped)
             if cf is not None:
                 return cf
@@ -1161,7 +1205,7 @@ class Downloader:
         headers = {"User-Agent": USER_AGENT, "Accept": "*/*", "Accept-Encoding": "identity"}
         if referer:
             headers["Referer"] = referer
-        timeout = aiohttp.ClientTimeout(total=20)
+        timeout = aiohttp.ClientTimeout(total=6, connect=3)
         sem = asyncio.Semaphore(6)
 
         async def one(fmt: dict) -> None:
@@ -1185,7 +1229,7 @@ class Downloader:
         try:
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
                 await asyncio.wait_for(
-                    asyncio.gather(*(one(fmt) for fmt in targets)), timeout=15
+                    asyncio.gather(*(one(fmt) for fmt in targets)), timeout=4
                 )
         except TimeoutError:
             log.debug("size lookup timed out for %s", referer or "?")
@@ -1248,8 +1292,8 @@ class Downloader:
                 return await resp.text(errors="replace")
 
     async def _kvs_fallback(self, url: str, exc: errors.LeechError):
-        """اگر خطا مربوط به KVS بود، خودمان صفحه را تفسیر می‌کنیم."""
-        if not is_kvs_error(exc.reason):
+        """اگر yt-dlp صفحه را نشناخت، خودمان قالب KVS را تفسیر میکنیم."""
+        if not (is_kvs_error(exc.reason) or _looks_unsupported(exc.reason)):
             return None
         try:
             info = await self._probe_kvs(url)
@@ -1279,23 +1323,63 @@ class Downloader:
             info = parse_kvs(html, url)
             if info is None:
                 return None
-            for fmt in info.formats:
-                try:
-                    async with safe_http_request(
-                        sess, "GET", str(fmt["url"]),
-                        headers={"Referer": url, "Range": "bytes=0-0"},
-                    ) as media:
-                        if media.status not in (200, 206):
-                            continue
-                        total = (
-                            media.headers.get("Content-Range", "").rpartition("/")[2]
-                            or media.headers.get("Content-Length")
-                        )
-                        if total and str(total).isdigit():
-                            fmt["filesize"] = int(total)
-                except (errors.LeechError, aiohttp.ClientError, TimeoutError, OSError):
-                    continue
+            sem = asyncio.Semaphore(6)
+
+            async def lookup_size(fmt: dict) -> None:
+                async with sem:
+                    try:
+                        async with safe_http_request(
+                            sess,
+                            "GET",
+                            str(fmt["url"]),
+                            headers={"Referer": url, "Range": "bytes=0-0"},
+                        ) as media:
+                            if media.status not in (200, 206):
+                                return
+                            total = (
+                                media.headers.get("Content-Range", "").rpartition("/")[2]
+                                or media.headers.get("Content-Length")
+                            )
+                            if total and str(total).isdigit():
+                                fmt["filesize"] = int(total)
+                    except (errors.LeechError, aiohttp.ClientError, TimeoutError, OSError):
+                        return
+
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*(lookup_size(fmt) for fmt in info.formats)),
+                    timeout=4,
+                )
+            except TimeoutError:
+                # Sizes are optional; never hold the quality menu for slow CDNs.
+                log.debug("KVS size lookup timed out for %s", url)
         return info
+
+    async def _embed_fallback(self, url: str):
+        """Follow the page's embedded player when yt-dlp cannot parse the page.
+
+        Aggregator sites host nothing themselves: the video sits behind an
+        ``<iframe>`` player (DoodStream, StreamTape, ...). Probe each iframe until
+        one yields formats and remember it so the download targets the embed.
+        """
+        try:
+            html = await self._fetch_text(url, USER_AGENT, timeout=12)
+        except Exception:  # noqa: BLE001 — the embed attempt must never break the probe
+            log.debug("embed fallback could not fetch %s", url, exc_info=True)
+            return None
+        for candidate in embed_candidates(html, url)[:3]:
+            try:
+                info = await asyncio.to_thread(self._probe_blocking, candidate)
+            except errors.LeechError:
+                continue
+            except Exception:  # noqa: BLE001
+                continue
+            if info is not None and info.formats:
+                info.embed_url = candidate
+                info.url = url
+                log.info("resolved embedded player %s for %s", candidate, url)
+                return info
+        return None
 
     async def _cf_fallback(self, url: str, exc: errors.LeechError):
         """اگر سایت پشت چالش Cloudflare بود، صفحه را با byparr باز می‌کنیم."""
@@ -1456,7 +1540,7 @@ class Downloader:
                 variant["filesize_approx"] = int(seconds * rate / 8)
 
         try:
-            await asyncio.wait_for(asyncio.gather(*(one(v) for v in variants)), timeout=12)
+            await asyncio.wait_for(asyncio.gather(*(one(v) for v in variants)), timeout=4)
         except TimeoutError:
             log.debug("HLS size lookup timed out for %s", referer)
 
@@ -1534,7 +1618,7 @@ class Downloader:
 
     async def _probe_direct(self, url: str) -> MediaInfo | None:
         """آیا این URL یک فایل قابل دانلود مستقیم است؟ (بدون استخراج yt-dlp)"""
-        timeout = aiohttp.ClientTimeout(total=20)
+        timeout = aiohttp.ClientTimeout(total=8, connect=3)
         headers = {"User-Agent": USER_AGENT, "Accept": "*/*", "Accept-Encoding": "identity"}
         retry_statuses = (403, 405, 501)  # بعضی CDNها HEAD را دوست ندارند
         try:
@@ -1629,9 +1713,10 @@ class Downloader:
                 title=fallback.title,
             )
 
-        # VK: the wall page has no downloadable formats; use the resolved video URL.
+        # Pages that only embed a player (VK wall posts, iframe hosts) expose no
+        # downloadable formats themselves; target the embedded player instead.
         target = url
-        if info is not None and info.extractor == "VK" and info.embed_url:
+        if info is not None and info.embed_url:
             target = info.embed_url
         watcher: asyncio.Task | None = None
         if uses_external_downloader():

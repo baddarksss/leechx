@@ -26,11 +26,22 @@ log = logging.getLogger("leechx.cache")
 PROBE_TTL = 600
 MEDIA_TTL = 24 * 3600  # Telegram deleteMessage normally allows only ~48 hours
 MAX_PROBES = 1000
+PUBLIC_CACHE_USER_ID = 0  # Telegram user IDs are positive; 0 marks public shared media.
 
 
 def fingerprint(user_id: int, url: str, selector: str, mode: str, custom_name: str) -> str:
+    # Preserve the original compact per-user serialization so existing cache rows keep hitting.
     raw = json.dumps(
         [user_id, url, selector, mode, custom_name], ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def shared_fingerprint(url: str, selector: str, mode: str, custom_name: str) -> str:
+    """Cache key for explicitly approved public, cookie-free media."""
+    raw = json.dumps(
+        ["public", url, selector, mode, custom_name], ensure_ascii=True,
         separators=(",", ":"),
     )
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -87,10 +98,23 @@ class CacheHub:
         group_id = self.group.chat_id
         if not group_id or not self.group.topic_id("cache"):
             return None
-        key = fingerprint(
-            task.user_id, task.url, task.option.selector, task.mode, task.custom_name
-        )
-        row = await repo.get_media_cache(key, task.user_id, group_id)
+        shared = bool(getattr(task, "public_cache", False))
+        if shared:
+            key = shared_fingerprint(
+                task.url, task.option.selector, task.mode, task.custom_name
+            )
+            row = await repo.get_media_cache(key, PUBLIC_CACHE_USER_ID, group_id)
+            if row is None:
+                # Keep same-user cache entries from before cross-user sharing was enabled.
+                key = fingerprint(
+                    task.user_id, task.url, task.option.selector, task.mode, task.custom_name
+                )
+                row = await repo.get_media_cache(key, task.user_id, group_id)
+        else:
+            key = fingerprint(
+                task.user_id, task.url, task.option.selector, task.mode, task.custom_name
+            )
+            row = await repo.get_media_cache(key, task.user_id, group_id)
         if row is None:
             return None
         if task.cancel.is_set():
@@ -114,11 +138,16 @@ class CacheHub:
             await self.group.cache_event("media", "STALE", key[:12])
             return None
         if task.cancel.is_set():
-            try:
-                await bot.delete_message(task.chat_id, copied.message_id)
-            except TelegramError:
-                pass
+            if task.chat_id > 0:
+                try:
+                    await bot.delete_message(task.chat_id, copied.message_id)
+                except TelegramError:
+                    pass
             return None
+        sent = getattr(task, "sent_messages", None)
+        if sent is not None:
+            # Track the replayed message so NSFW auto-delete can remove it too.
+            sent.append(copied)
         try:
             await self.group.cache_event("media", "HIT", key[:12])
         except Exception:
@@ -130,19 +159,31 @@ class CacheHub:
         topic_id = self.group.topic_id("cache")
         if not group_id or not topic_id or not uploaded_message:
             return
-        key = fingerprint(
-            task.user_id, task.url, task.option.selector, task.mode, task.custom_name
-        )
+        shared = bool(getattr(task, "public_cache", False))
+        if shared and getattr(task, "custom_thumbnail", None):
+            # Never reuse one user's chosen cover across users.
+            return
+        cache_user_id = PUBLIC_CACHE_USER_ID if shared else task.user_id
+        if shared:
+            key = shared_fingerprint(
+                task.url, task.option.selector, task.mode, task.custom_name
+            )
+            caption = f"📦 کش عمومی رسانه | شناسه: {key[:12]}"
+        else:
+            key = fingerprint(
+                task.user_id, task.url, task.option.selector, task.mode, task.custom_name
+            )
+            caption = f"📦 کش خصوصی رسانه | کاربر: {task.user_id} | شناسه: {key[:12]}"
         try:
             copied = await bot.copy_message(
                 chat_id=group_id,
                 from_chat_id=task.chat_id,
                 message_id=uploaded_message.message_id,
                 message_thread_id=topic_id,
-                caption=f"📦 کش خصوصی رسانه | کاربر: {task.user_id} | شناسه: {key[:12]}",
+                caption=caption,
             )
             await repo.put_media_cache(
-                key, task.user_id, group_id, copied.message_id,
+                key, cache_user_id, group_id, copied.message_id,
                 task.mode, result.path.name, result.size, MEDIA_TTL,
             )
             await self.group.cache_event("media", "STORE", f"{key[:12]} • {result.size} B")
@@ -150,16 +191,15 @@ class CacheHub:
             log.warning("media caching failed, normal delivery already succeeded", exc_info=True)
 
     async def clear_expired(self, bot=None) -> int:
+        """Expire DB lookup rows only; never delete messages from the group archive.
+
+        ``bot`` remains an ignored compatibility argument for existing callers.
+        """
         removed = 0
         rows = await repo.expired_media_cache()
         for row in rows:
             await repo.delete_media_cache(row.cache_key)
             removed += 1
-            if bot is not None:
-                try:
-                    await bot.delete_message(row.group_id, row.message_id)
-                except TelegramError:
-                    pass
         now = time.monotonic()
         for key in list(self._probes):
             if self._probes[key][0] <= now:
