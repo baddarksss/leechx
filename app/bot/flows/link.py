@@ -208,7 +208,10 @@ def delivery_text(lang: str, draft: Draft, ttl_hours: float = 6.0) -> str:
         quality = draft.option.label
     else:
         quality = "—"
-    mode_key = "delivery_mode_video" if draft.send_as == "video" else "delivery_mode_file"
+    if draft.option is not None and getattr(draft.option, "kind", "") == "audio":
+        mode_key = "delivery_mode_audio"
+    else:
+        mode_key = "delivery_mode_video" if draft.send_as == "video" else "delivery_mode_file"
     destination_key = (
         "delivery_destination_telegram" if draft.destination == "telegram"
         else "delivery_destination_link"

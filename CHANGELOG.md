@@ -7,6 +7,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.14.8] - 2026-11-04 — "Audio"
+
+### Fixed
+- **Audio is sent as Telegram audio, not as a file.** Picking an MP3/M4A
+  quality (or the Shazam «آهنگ کامل» button) marks the output as a document, so
+  the uploader used to attach the `.mp3` as a plain file. Audio results are now
+  always delivered with `sendAudio` (a proper music player with the title),
+  regardless of the video/file toggle. The delivery panel also shows
+  «🎵 صدا» for audio instead of «📄 فایل».
+- **Clearer song errors.** If the recognised track cannot be found/downloaded
+  from YouTube, the user gets the honest «آهنگ پیدا نشد» message instead of a
+  generic "unsupported link" error.
+
 ## [5.14.7] - 2026-11-04 — "Shazam"
 
 ### Added

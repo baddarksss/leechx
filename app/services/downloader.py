@@ -2013,14 +2013,21 @@ class Downloader:
         artist, title = parsed
 
         progress.stage = "downloading"
-        song = await asyncio.to_thread(
-            self._download_blocking,
-            f"ytsearch1:{song_query(artist, title)}",
-            AUDIO_MP3,
-            workdir / "song",
-            progress,
-            cancel,
-        )
+        try:
+            song = await asyncio.to_thread(
+                self._download_blocking,
+                f"ytsearch1:{song_query(artist, title)}",
+                AUDIO_MP3,
+                workdir / "song",
+                progress,
+                cancel,
+            )
+        except errors.JobCancelled:
+            raise
+        except errors.LeechError as exc:
+            # آهنگ تشخیص داده شد ولی نسخهٔ کاملش پیدا/دانلود نشد.
+            log.warning("full song download failed for %r: %s", artist, exc.key)
+            raise errors.SongNotFound(f"full track: {exc.key}") from exc
         if cancel.is_set():
             raise errors.JobCancelled()
         nice = f"{artist} - {title}".strip(" -") or song.title

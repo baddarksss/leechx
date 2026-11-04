@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.14.7"
-CODENAME = "Shazam"
+__version__ = "5.14.8"
+CODENAME = "Audio"
 RELEASE_DATE = "2026-11-04"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.

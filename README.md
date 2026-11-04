@@ -14,13 +14,15 @@ per-user concurrency limits, automatic disk cleanup and a modular design.
 |---|---|
 | 🔗 **Link → quality → delivery** | 1700+ sites via yt-dlp (YouTube, Instagram, TikTok, X, SoundCloud, Twitch, Reddit…) |
 | 🎚 **Quality buttons** | video `144p`–`2160p` + `MP3 192k` / `M4A` |
-| 📤 **Delivery menu** | before upload choose **video**, **document**, **direct link** or **rename** |
+| 🎬 **VOE / embedded players** | aggregators that embed VOE (`voe.sx`) or a packed HLS player are resolved without a browser |
+| 🔎 **Identify full song** | Shazam-style: from a reel/clip sample the bot finds the **complete track** (YouTube) and sends it as audio |
+| 📤 **Delivery menu** | before upload choose **video**, **document**, **audio**, **direct link** or **rename** |
 | 🍪 **Cookies** | upload/paste `cookies.txt` (Netscape or JSON) from the admin panel for YouTube/Instagram |
 | 🏷 **Clickable caption** | the title is a link to the source page: tapping the caption opens the video |
 | 📁 **File → direct link** | signed URL, `Range` support, 6h TTL by default |
 | 🔞 **NSFW auto-delete** | optional countdown in private chats (default 30 s, off by default); VIPs and all group chats are exempt |
 | 🖼 **Thumbnail picker** | opt-in 10-frame choices only for social/video-sharing platforms (YouTube, Instagram, TikTok and similar); never prompted on other sites |
-| 📦 **Media cache** | same-user cache for private sources; cross-user reuse only for allow-listed public, cookie-free, non-NSFW URLs |
+| 📦 **Media cache** | reuse across users for any public, cookie-free source (same link + same quality, including NSFW) — admin toggle |
 | 🧹 **Zero leftovers** | the working directory is removed right after upload |
 | ⚡️ **Job queue** | `WORKERS` global + `PER_USER_CONCURRENCY` per user |
 | 👑 **Admin panel** | categorized screens (stats, users, settings, groups, deploy, diagnostics), admin group with topics, ban by forward/username/ID, reports, logs, broadcast, cleanup |
@@ -146,10 +148,10 @@ New sites added by yt-dlp become available immediately after the update.
 ## Admin group, reports and logs
 
 1. Create a group with **Topics** enabled and add the bot as an administrator.
-2. Send `/setup` inside the group. Seven topics are created automatically:
-   **Downloads**, **Uploads**, **Reports**, **Logs**, **Media cache**, **Audit**,
-   and **Security**. They are kept separate for clarity; the cache topic is an
-   immutable archive and bot cleanup never deletes its messages.
+2. Send `/setup` inside the group. Five topics are created automatically:
+   **Activity** (downloads + uploads), **Reports**, **Logs** (incl. audit),
+   **Media cache**, and **Security**. The cache topic is an immutable archive and
+   bot cleanup never deletes its messages.
 3. Every download/upload notification includes the user's name, `@username` and
    numeric ID. Failing sites and user messages go to **Reports**; errors go to **Logs**.
 4. In the admin panel you can ban by forwarding a message, typing `@username`, or
@@ -160,12 +162,15 @@ New sites added by yt-dlp become available immediately after the update.
 ## Cache and file retention
 
 Metadata probes are cached per user for 10 minutes. Media copies are cached for
-24 hours: private/cookie-dependent, signed, or NSFW sources stay scoped to their
-requester; only allow-listed public sources without token-like URL parameters or
-applicable cookies may be copied to another user's chat. Expiring the database
-lookup never removes the Telegram message from the cache archive. Normal
-Telegram deliveries use a temporary working directory that is cleaned after the
-job; direct-link files are removed by the configured expiry cleanup.
+24 hours and, by default, reused across users for **any** public, cookie-free
+source when the same link and quality are requested (including NSFW) — turn this
+off with the **«اشتراک کش بین کاربران»** admin toggle. Private/cookie-dependent,
+credential-bearing or token/signature URLs always stay scoped to their
+requester, per-user covers are never shared, and a replayed adult delivery keeps
+its own auto-delete countdown. Expiring the database lookup never removes the
+Telegram message from the cache archive. Normal Telegram deliveries use a
+temporary working directory that is cleaned after the job; direct-link files are
+removed by the configured expiry cleanup.
 
 ## Architecture
 

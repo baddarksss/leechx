@@ -571,11 +571,11 @@ class JobManager:
                             task.progress,
                             task.url,
                             as_document=(
-                                task.mode == "document"
+                                (task.mode == "document" and kind != "audio")
                                 or (
                                     task.mode == "video"
                                     and (
-                                        media_kind(result) != "video"
+                                        kind != "video"
                                         or result.suffix not in PLAYABLE_VIDEO_EXT
                                     )
                                 )

@@ -6,6 +6,7 @@ import pytest
 from app.bot.flows import callbacks as callbacks_flow
 from app.bot.flows import link as link_flow
 from app.bot.keyboards import delivery_menu
+from app.core import text
 from app.services.downloader import MediaInfo, parse_shazam_match, song_query
 from app.services.drafts import Draft
 from app.services.formats import FormatOption
@@ -72,3 +73,16 @@ async def test_song_button_enqueues_song_job(db):
     assert jobs.tasks[0].option.kind == "audio"
     assert jobs.tasks[0].option.code == "song"
     assert not len(svc.drafts)
+
+
+def test_delivery_text_marks_audio_mode():
+    option = FormatOption(
+        kind="audio", code="mp3", label="MP3 192k",
+        selector="ba[ext=m4a]/ba/b", ext="mp3",
+    )
+    draft = Draft(
+        id="a", user_id=1, chat_id=1, url="https://x", title="T",
+        kind="link", option=option, send_as="document",
+    )
+    body = link_flow.delivery_text("fa", draft, ttl_hours=4)
+    assert text.t("fa", "delivery_mode_audio") in body
