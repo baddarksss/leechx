@@ -430,7 +430,12 @@ class JobManager:
                     free=human.human_bytes(self.store.disk_free()),
                 )
 
-            if torrent.is_magnet(task.url):
+            if task.mode == "song":
+                # تشخیص آهنگ کلیپ (Shazam) و آوردن نسخهٔ کامل از یوتیوب.
+                result = await self.downloader.download_song(
+                    task.url, workdir, task.progress, task.cancel, task.info
+                )
+            elif torrent.is_magnet(task.url):
                 result = await self._download_torrent(task, workdir)
             else:
                 result = await self.downloader.download(
@@ -1175,6 +1180,8 @@ class JobManager:
             )
         if prog.stage == "thumb_wait":
             return text.t(lang, "thumb_wait_stage")
+        if prog.stage == "recognizing":
+            return text.t(lang, "progress_stage_recognize")
         if prog.stage == "uploading":
             elapsed = max(.001, time.monotonic() - task.upload_started)
             speed = prog.uploaded / elapsed

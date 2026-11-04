@@ -169,6 +169,13 @@ async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
         )
         return
 
+    if action == "song":
+        # تشخیص آهنگ کلیپ و آوردن نسخهٔ کامل از یوتیوب.
+        await safe_answer(query, text.t(user_lang, "song_searching"))
+        svc.drafts.pop(draft_id, draft.user_id)
+        await link_flow.enqueue_song(context, query.message, draft, user_lang)
+        return
+
     if action == "format":
         if len(args) < 3 or args[2] not in {"video", "document"}:
             await safe_answer(query)

@@ -754,3 +754,53 @@ async def enqueue(
 
 # نام قبلی برای سازگاری با تست‌ها و کدهای قدیمی
 _enqueue = enqueue
+
+
+async def enqueue_song(
+    context: ContextTypes.DEFAULT_TYPE,
+    status,
+    draft: Draft,
+    lang: str | None = None,
+) -> None:
+    """کار «آهنگ کامل» را میسازد: تشخیص Shazam + دانلود نسخهٔ کامل از یوتیوب."""
+    from app.services.downloader import MediaInfo
+    from app.services.jobs import JobTask
+
+    svc = services(context)
+    lang = lang or draft.lang or "fa"
+    option = FormatOption(
+        kind="audio",
+        code="song",
+        label=text.t(lang, "deliver_song_btn"),
+        selector="song",
+        ext="mp3",
+    )
+    info = MediaInfo(
+        url=draft.url,
+        title=draft.title,
+        duration=draft.duration,
+        uploader=draft.uploader,
+        thumbnail=draft.thumbnail,
+        extractor=draft.extractor,
+        embed_url=draft.embed_url,
+    )
+    task = JobTask(
+        id=new_job_id(),
+        user_id=draft.user_id,
+        chat_id=status.chat_id,
+        url=draft.url,
+        option=option,
+        title=draft.title,
+        status_message_id=status.message_id,
+        info=info,
+        lang=lang,
+        kind=draft.kind,
+        mode="song",
+        vip=bool(context.user_data.get("is_vip")),
+    )
+    position = await svc.jobs.submit(task)
+    await edit(
+        status,
+        text.t(lang, "queued", pos=position),
+        reply_markup=kb.cancel_job(lang, task.id),
+    )

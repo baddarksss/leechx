@@ -125,3 +125,9 @@ class TorrentFailed(LeechError):
     """دانلود مگنت/تورنت شکست خورد یا ابزارش نصب نیست."""
 
     key = "torrent_failed"
+
+
+class SongNotFound(LeechError):
+    """تشخیص آهنگِ کلیپ (Shazam) نتیجه نداد."""
+
+    key = "song_not_found"

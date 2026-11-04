@@ -282,9 +282,11 @@ def delivery_menu(lang: str, draft: Draft) -> Kb:
         [_delivery_btn(text.t(lang, "delivery_tab_edits"), f"o|{draft.id}|tab|edits", style="primary")],
     ]
     audios = [opt for opt in draft.options if getattr(opt, "kind", "") == "audio"]
+    song_ok = draft.kind == "link" and draft.extractor not in {"KVS", "HLS"}
+    insert_at = 2
     if audios:
         rows.insert(
-            2,
+            insert_at,
             [
                 _delivery_btn(
                     (check if draft.option is opt else empty)
@@ -293,6 +295,12 @@ def delivery_menu(lang: str, draft: Draft) -> Kb:
                 )
                 for opt in audios
             ],
+        )
+        insert_at += 1
+    if song_ok:
+        rows.insert(
+            insert_at,
+            [_delivery_btn(text.t(lang, "deliver_song_btn"), f"o|{draft.id}|song")],
         )
     if draft.kind != "direct" and not draft.auto_quality:
         rows.append([_delivery_btn(text.t(lang, "deliver_back_btn"), f"o|{draft.id}|q")])

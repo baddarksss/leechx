@@ -7,6 +7,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.14.7] - 2026-11-04 — "Shazam"
+
+### Added
+- **Identify the full song of a clip (Shazam-style).** When a reel/clip contains
+  a snippet of a track, the new **«🔎 آهنگ کامل»** button in the delivery screen
+  extracts a short audio sample, recognises it with Shazam (`shazamio`) and then
+  downloads the **complete original song** from YouTube (via the existing yt-dlp
+  path) and sends it as Telegram audio titled `Artist - Song`. The button shows
+  on yt-dlp sources (Instagram, TikTok, YouTube, ...); it is hidden for KVS/HLS
+  and direct files. If the song cannot be recognised the user gets a clear
+  «آهنگ پیدا نشد» message. Requires the new `shazamio` dependency (installed
+  into the persistent `pip --user` layer on the server).
+
 ## [5.14.6] - 2026-11-04 — "Song"
 
 ### Added

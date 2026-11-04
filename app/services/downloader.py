@@ -33,7 +33,7 @@ from app.config import Config
 from app.core import errors, human, urlcheck
 from app.services import apkstore, gallery, thumbs
 from app.services.cookies import CookieStore
-from app.services.formats import FormatOption
+from app.services.formats import AUDIO_MP3, FormatOption
 
 log = logging.getLogger("leechx.downloader")
 
@@ -1021,6 +1021,47 @@ def _mime_for(path: Path) -> str:
     return mime or "application/octet-stream"
 
 
+# ─── شناسایی آهنگ (Shazam) ────────────────────────────────────
+# از صدای کلیپ یک برش کوتاه میگیریم، با Shazam تشخیص میدهیم و بعد نسخهٔ
+# کامل را از یوتیوب میآوریم. برش کوتاه سریعتر اثرانگشت میشود و دقت کافی دارد.
+SONG_SNIPPET_SECONDS = 30
+
+
+def _extract_snippet(source: Path, dest: Path) -> bool:
+    """یک برش مونوی WAV برای اثرانگشتگیری میسازد (ffmpeg)."""
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", str(source), "-t", str(SONG_SNIPPET_SECONDS),
+        "-vn", "-ac", "1", "-ar", "44100", "-f", "wav", str(dest),
+    ]
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        return False
+    return proc.returncode == 0 and dest.is_file() and dest.stat().st_size > 0
+
+
+def parse_shazam_match(result: object) -> tuple[str, str] | None:
+    """``(artist, title)`` از خروجی ``shazamio.recognize``؛ وگرنه ``None``."""
+    if not isinstance(result, dict):
+        return None
+    track = result.get("track")
+    if not isinstance(track, dict):
+        matches = result.get("matches")
+        track = matches[0] if isinstance(matches, list) and matches else None
+    if not isinstance(track, dict):
+        return None
+    title = str(track.get("title") or "").strip()
+    if not title:
+        return None
+    return str(track.get("subtitle") or "").strip(), title
+
+
+def song_query(artist: str, title: str) -> str:
+    """عبارت جستوجوی یوتیوب برای نسخهٔ کامل آهنگ."""
+    return " ".join(part for part in (artist.strip(), title.strip()) if part)
+
+
 def map_error(exc: BaseException) -> errors.LeechError:
     """تبدیل خطاهای yt-dlp/aiohttp به خطای قابل‌نمایش."""
     if isinstance(exc, aiohttp.ClientPayloadError):
@@ -1923,6 +1964,73 @@ class Downloader:
                 watcher.cancel()
                 with suppress(asyncio.CancelledError, Exception):
                     await watcher
+
+    async def download_song(
+        self,
+        url: str,
+        workdir: Path,
+        progress: Progress,
+        cancel: asyncio.Event,
+        info: MediaInfo | None = None,
+    ) -> DownloadResult:
+        """آهنگ کاملِ پخششده در یک کلیپ را پیدا و دانلود میکند (Shazam → یوتیوب)."""
+        from shazamio import Shazam  # وابستگی سنگین؛ فقط در همین مسیر لازم است
+
+        workdir.mkdir(parents=True, exist_ok=True)
+        progress.reset_download()
+
+        clip = await asyncio.to_thread(
+            self._download_blocking,
+            url,
+            AUDIO_MP3,
+            workdir / "clip",
+            progress,
+            cancel,
+        )
+        if cancel.is_set():
+            raise errors.JobCancelled()
+
+        snippet = workdir / "snippet.wav"
+        if not await asyncio.to_thread(_extract_snippet, clip.path, snippet):
+            raise errors.SongNotFound("could not prepare audio")
+
+        progress.stage = "recognizing"
+        shazam = Shazam()
+        try:
+            result = await shazam.recognize(str(snippet))
+        except errors.LeechError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — سرویس تشخیص ممکن است پاسخ ندهد
+            log.warning("shazam recognition failed for %s", url, exc_info=True)
+            raise errors.SongNotFound(str(exc)[:120]) from exc
+        finally:
+            with suppress(Exception):
+                await shazam.close()
+
+        parsed = parse_shazam_match(result)
+        if parsed is None:
+            raise errors.SongNotFound("no match")
+        artist, title = parsed
+
+        progress.stage = "downloading"
+        song = await asyncio.to_thread(
+            self._download_blocking,
+            f"ytsearch1:{song_query(artist, title)}",
+            AUDIO_MP3,
+            workdir / "song",
+            progress,
+            cancel,
+        )
+        if cancel.is_set():
+            raise errors.JobCancelled()
+        nice = f"{artist} - {title}".strip(" -") or song.title
+        return DownloadResult(
+            path=song.path,
+            title=human.safe_filename(nice, 150),
+            mime=_mime_for(song.path),
+            size=song.path.stat().st_size,
+            is_audio=True,
+        )
 
     async def _download_gallery(
         self,
