@@ -62,10 +62,21 @@ async def test_snapshot(db):
         "nsfw_enabled",
         "nsfw_autodelete_enabled",
         "nsfw_autodelete_seconds",
+        "cache_cross_user",
         "thumb_wait_seconds",
         "thumb_shots",
         "aria2c_connections",
     }
+
+
+@pytest.mark.asyncio
+async def test_cache_cross_user_defaults_on_and_toggles(db):
+    settings = RuntimeSettings(db)
+    await settings.load()
+    assert settings.cache_cross_user is True  # پیشفرض روشن
+    assert await settings.toggle("cache_cross_user") is False
+    assert settings.cache_cross_user is False
+    assert settings.snapshot()["cache_cross_user"] is False
 
 
 @pytest.mark.asyncio

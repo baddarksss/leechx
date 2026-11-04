@@ -7,6 +7,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.14.5] - 2026-11-04 — "Shared"
+
+### Changed
+- **Cross-user media cache is now the default for every public source.** When a
+  delivery is already in the media cache (the admin-group cache topic), the same
+  link at the **same quality** is replayed to any user who asks for it with no
+  download and no re-upload — including adult media and ordinary tube sites, not
+  just the social allow-list. The cache key still contains the requested quality
+  (`selector`), `mode` and custom name, so a different quality re-downloads.
+  Sharing fails closed for cookie-based, credential-bearing or token/signature
+  URLs, and for per-user covers. A new admin toggle **«اشتراک کش بین کاربران»**
+  (Settings → cache share, default **on**) turns it off, restoring the strict
+  social-only, non-NSFW policy. A replayed adult delivery still gets its own
+  auto-delete countdown.
+
 ## [5.14.4] - 2026-11-04 — "Resolver"
 
 ### Added

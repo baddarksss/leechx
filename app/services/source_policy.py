@@ -63,9 +63,19 @@ def public_cache_eligible(
     *,
     has_cookie: bool = False,
     nsfw: bool = False,
+    allow_any_host: bool = False,
+    allow_nsfw: bool = False,
 ) -> bool:
-    """Fail closed unless a source is public, unauthenticated, and non-NSFW."""
-    if has_cookie or nsfw:
+    """Fail closed unless a source is public and unauthenticated.
+
+    Default policy shares only well-known social platforms and never adult media.
+    The admin toggle ``cache_cross_user`` widens this to every public, cookie-free
+    source (``allow_any_host``) including NSFW (``allow_nsfw``); signed/tokenised
+    or credential-bearing URLs and cookie sources are still never shared.
+    """
+    if has_cookie:
+        return False
+    if nsfw and not allow_nsfw:
         return False
     try:
         parts = urlsplit(url or "")
@@ -77,7 +87,7 @@ def public_cache_eligible(
     except ValueError:
         return False
 
-    if not (
+    if not allow_any_host and not (
         _host_matches(host, PUBLIC_CACHE_DOMAINS)
         or _extractor_matches(extractor, PUBLIC_CACHE_EXTRACTORS)
     ):

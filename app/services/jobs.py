@@ -361,12 +361,13 @@ class JobManager:
             except Exception:  # noqa: BLE001 — uncertain auth state means do not share
                 has_cookie = True
         extractor = getattr(task.info, "extractor", "") if task.info is not None else ""
+        share = bool(getattr(self.settings, "cache_cross_user", False)) if self.settings is not None else False
         task.public_cache = (
             task.mode != "link"
-            and not nsfw
             and not task.custom_thumbnail
             and public_cache_eligible(
-                task.url, extractor, has_cookie=has_cookie, nsfw=nsfw
+                task.url, extractor, has_cookie=has_cookie, nsfw=nsfw,
+                allow_any_host=share, allow_nsfw=share,
             )
         )
         nsfw_delete_seconds = 0

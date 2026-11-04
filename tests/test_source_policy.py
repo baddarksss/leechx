@@ -34,3 +34,37 @@ def test_only_public_cookie_free_non_nsfw_sources_are_shareable():
     assert not public_cache_eligible("https://user:pass@youtube.com/watch?v=public")
     assert not public_cache_eligible("https://example.org/video.mp4", "Generic")
     assert not public_cache_eligible("magnet:?xt=urn:btih:abc", "")
+
+
+def test_admin_toggle_widens_sharing_to_any_public_source_and_nsfw():
+    # پیشفرض: سایتهای معمولی و بزرگسال مشترک نمیشوند.
+    assert not public_cache_eligible("https://example.org/video.mp4", "Generic")
+    assert not public_cache_eligible(
+        "https://example.org/video.mp4", "Generic", nsfw=True
+    )
+    # با کلید ادمین، هر منبع عمومی (و بزرگسال) مشترک میشود.
+    assert public_cache_eligible(
+        "https://example.org/video.mp4", "Generic",
+        allow_any_host=True, allow_nsfw=True,
+    )
+    assert public_cache_eligible(
+        "https://girlswallowed.com/x/", "HLS",
+        nsfw=True, allow_any_host=True, allow_nsfw=True,
+    )
+    # حتی با کلید روشن، کوکی/توکن/یوزرپسورد هرگز مشترک نمیشوند.
+    assert not public_cache_eligible(
+        "https://example.org/video.mp4", "Generic",
+        has_cookie=True, allow_any_host=True, allow_nsfw=True,
+    )
+    assert not public_cache_eligible(
+        "https://example.org/video.mp4?token=abc", "Generic",
+        allow_any_host=True, allow_nsfw=True,
+    )
+    assert not public_cache_eligible(
+        "https://user:pass@example.org/video.mp4", "Generic",
+        allow_any_host=True, allow_nsfw=True,
+    )
+    # بزرگسال بدون مجوز صریح، حتی با allow_any_host، رد میشود.
+    assert not public_cache_eligible(
+        "https://example.org/video.mp4", "Generic", nsfw=True, allow_any_host=True
+    )

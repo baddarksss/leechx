@@ -26,6 +26,7 @@ SCHEMA: dict[str, tuple[str, str]] = {
     # ── محافظت از ربات در برابر محتوای بزرگسال ──
     "nsfw_autodelete_enabled": ("bool", "حذف خودکار فایل بزرگسال"),
     "nsfw_autodelete_seconds": ("int", "زمان حذف فایل بزرگسال (ثانیه)"),
+    "cache_cross_user": ("bool", "اشتراک کش بین کاربران"),
     "thumb_wait_seconds": ("int", "ثانیهٔ صبر انتخاب تامبنیل"),
     "thumb_shots": ("int", "تعداد فریم‌های انتخاب تامبنیل (۴ تا ۱۰)"),
     "aria2c_connections": (
@@ -96,6 +97,9 @@ class RuntimeSettings:
             # پیش‌فرض خاموش است تا رفتار فعلی ربات تغییر نکند؛ ادمین روشنش می‌کند.
             "nsfw_autodelete_enabled": False,
             "nsfw_autodelete_seconds": 30,
+            # پیشفرض روشن: هر لینک عمومیِ بدون کوکی/توکن (شامل بزرگسال) بین
+            # کاربران مشترک شود؛ ادمین میتواند خاموشش کند.
+            "cache_cross_user": True,
             "thumb_wait_seconds": 30,
             "thumb_shots": thumbs.SHOTS,
             "aria2c_connections": thumbs.ARIA2C_DEFAULT,
@@ -213,8 +217,13 @@ class RuntimeSettings:
 
     @property
     def nsfw_autodelete_seconds(self) -> int:
-        """زمان حذف؛ همیشه در بازهٔ ۵ تا ۶۰۰ ثانیه (پیش‌فرض ۳۰)."""
+        """زمان حذف؛ همیشه در بازهٔ ۵ تا ۶۰۰ ثانیه (پیشفرض ۳۰)."""
         return max(5, min(600, self.get_int("nsfw_autodelete_seconds") or 30))
+
+    @property
+    def cache_cross_user(self) -> bool:
+        """آیا فایل کششدهٔ یک لینک بین کاربران مشترک شود؟"""
+        return self.get_bool("cache_cross_user")
 
     @property
     def thumb_wait_seconds(self) -> int:
@@ -294,6 +303,7 @@ class RuntimeSettings:
             "nsfw_enabled": self.nsfw_enabled,
             "nsfw_autodelete_enabled": self.nsfw_autodelete,
             "nsfw_autodelete_seconds": self.nsfw_autodelete_seconds,
+            "cache_cross_user": self.cache_cross_user,
             "thumb_wait_seconds": self.thumb_wait_seconds,
             "thumb_shots": self.thumb_shots,
             "aria2c_connections": self.aria2c_connections,

@@ -428,6 +428,8 @@ def settings_menu(lang: str, snap: dict) -> Kb:
              callback_data="a|toggle|nsfw_autodelete_enabled")],
         [Btn(text.t(lang, "set_nsfw_seconds", v=snap["nsfw_autodelete_seconds"]),
              callback_data="a|edit|nsfw_autodelete_seconds")],
+        [Btn(text.t(lang, "set_cache_share", flag=flag(snap.get("cache_cross_user", False))),
+             callback_data="a|toggle|cache_cross_user")],
         [Btn(text.t(lang, "set_thumb_wait", v=snap["thumb_wait_seconds"]),
              callback_data="a|edit|thumb_wait_seconds")],
         [Btn(text.t(lang, "set_thumb_shots", v=snap.get("thumb_shots", 10)),
