@@ -153,6 +153,22 @@ async def _on_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
                    reply_markup=kb.quality_menu(user_lang, draft))
         return
 
+    if action == "audio":
+        code = args[2] if len(args) > 2 else ""
+        option = find_option(draft.options, "audio", code)
+        if option is None:
+            await safe_answer(query, text.t(user_lang, "invalid_url"), alert=True)
+            return
+        draft.option = option
+        link_flow.normalize_delivery_mode(draft)
+        await safe_answer(query, option.label)
+        await edit(
+            query.message,
+            link_flow.delivery_text(user_lang, draft, svc.settings.ttl_hours),
+            reply_markup=kb.delivery_menu(user_lang, draft),
+        )
+        return
+
     if action == "format":
         if len(args) < 3 or args[2] not in {"video", "document"}:
             await safe_answer(query)

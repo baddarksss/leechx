@@ -34,7 +34,7 @@ from app.core import errors, human, text
 from app.db import repo
 from app.services import apkstore, torrent
 from app.services.drafts import Draft
-from app.services.formats import FormatOption, all_options
+from app.services.formats import AUDIO_M4A, AUDIO_MP3, FormatOption, all_options
 from app.services.uploader import BOT_API_LIMIT, PLAYABLE_VIDEO_EXT, upload_limit
 
 log = logging.getLogger("leechx.link")
@@ -198,13 +198,16 @@ async def apply_user_preferences(draft: Draft) -> None:
 def delivery_text(lang: str, draft: Draft, ttl_hours: float = 6.0) -> str:
     """Explain the per-link choices before any network transfer starts."""
     size = draft.option.filesize if draft.option is not None else None
-    quality = (
-        text.t(lang, "quality_auto")
-        if draft.auto_quality
-        else text.t(lang, "quality_original") if draft.kind == "direct"
-        else draft.option.label if draft.option is not None
-        else "—"
-    )
+    if draft.option is not None and getattr(draft.option, "kind", "") == "audio":
+        quality = draft.option.label
+    elif draft.auto_quality:
+        quality = text.t(lang, "quality_auto")
+    elif draft.kind == "direct":
+        quality = text.t(lang, "quality_original")
+    elif draft.option is not None:
+        quality = draft.option.label
+    else:
+        quality = "—"
     mode_key = "delivery_mode_video" if draft.send_as == "video" else "delivery_mode_file"
     destination_key = (
         "delivery_destination_telegram" if draft.destination == "telegram"
@@ -481,7 +484,9 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE, url: s
             selector="bv*+ba/b",
             ext="mp4",
         )
-        draft.options = [draft.option]
+        # Keep the audio options available so a reel/clip's song can be sent as
+        # MP3 without going through the (skipped) quality menu.
+        draft.options = [draft.option, AUDIO_MP3, AUDIO_M4A]
         svc.drafts.put(draft)
         await edit(
             status, delivery_text(lang, draft, svc.settings.ttl_hours),

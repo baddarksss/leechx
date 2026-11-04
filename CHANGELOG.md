@@ -7,6 +7,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.14.6] - 2026-11-04 — "Song"
+
+### Added
+- **Song/audio from Instagram Reels and TikTok.** Those two sources skip the
+  quality menu, so the MP3/M4A choices were never offered. The delivery screen
+  now shows a **«🎵 آهنگ»** button (MP3 192k / M4A) for any draft that has audio
+  options; picking it turns the clip into an audio file (its music/soundtrack)
+  and sends it as Telegram audio. Other sites are unchanged — they already show
+  MP3/M4A in the quality menu.
+
 ## [5.14.5] - 2026-11-04 — "Shared"
 
 ### Changed

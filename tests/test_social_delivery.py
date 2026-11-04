@@ -231,6 +231,37 @@ def test_auto_social_delivery_has_no_quality_back_but_youtube_does():
 
 
 @pytest.mark.asyncio
+async def test_social_offers_song_as_mp3_and_downloads_audio(db):
+    url = "https://www.instagram.com/reel/SONG/"
+    info = MediaInfo(url=url, title="My Reel", extractor="Instagram", formats=VIDEO_FORMATS)
+    ctx, svc, jobs = make_context(info)
+    request = make_update()
+    await link_flow.handle_link(request, ctx, url)
+    draft = next(iter(svc.drafts._items.values()))
+
+    buttons = [b for row in request.effective_message.kwargs[-1]["reply_markup"].inline_keyboard for b in row]
+    mp3 = [b for b in buttons if b.callback_data and b.callback_data.endswith("|audio|mp3")]
+    assert mp3, "MP3/آهنگ button must be offered for Instagram/TikTok"
+
+    # انتخاب آهنگ (MP3)
+    await callbacks_flow._on_delivery(
+        make_update(FakeQuery(request.effective_message)), ctx, [draft.id, "audio", "mp3"]
+    )
+    assert draft.option is not None
+    assert draft.option.kind == "audio"
+    assert draft.option.code == "mp3"
+    assert draft.option.selector == "ba[ext=m4a]/ba/b"
+    assert draft.send_as == "document"  # صدا ویدیو نیست
+
+    # شروع → یک کار صوتی صف میشود (ffmpeg آن را mp3 میکند)
+    await callbacks_flow._on_delivery(
+        make_update(FakeQuery(request.effective_message)), ctx, [draft.id, "start"]
+    )
+    assert len(jobs.tasks) == 1
+    assert jobs.tasks[0].option.kind == "audio"
+
+
+@pytest.mark.asyncio
 async def test_delivery_section_tab_only_explains_choices(db):
     info = MediaInfo(
         url="https://www.instagram.com/reel/ID",
