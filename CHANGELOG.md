@@ -7,6 +7,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 > `app/version.py`, `pyproject.toml` and add an entry here. `tests/test_version.py`
 > fails when these three disagree.
 
+## [5.14.9] - 2026-11-05 — "Cache & Players"
+
+### Fixed
+- **Deliveries with a chosen cover were never cached.** `CacheHub.record_delivery`
+  returned early for shared jobs when `task.custom_thumbnail` was set, and that
+  happens for *every* video where the cover picker was used — or where the bot
+  extracted a fallback frame because the site had no cover. Those jobs silently
+  skipped the cache even though `public_cache` was true only because the cover
+  did not exist yet at queue time. The delivery is now stored under the
+  **per-user** key instead of being dropped, so the owner gets a cache hit while
+  one user's cover is still never shared with anyone else.
+- **KVS sites offered only one quality.** yt-dlp succeeds on KVS pages with the
+  single `<video><source>` URL, so the probe never used the flashvars that list
+  every quality. When the page is KVS (`/get_file/` URLs), the flashvars are now
+  parsed and win whenever they expose more resolutions (e.g. viralxxxporn
+  480p/720p/1080p instead of only 720p). Downloads still go through the KVS path
+  and re-resolve the signed URL at start.
+- **JWPlayer/HLS embeds (nowplay.to) were unsupported.** Aggregators like
+  sxyland embed a player whose manifest lives in a packed/eval script, so the
+  `nowplay.to` iframe probe failed and the whole link was reported unsupported.
+  The embed fallback now reads the player page, extracts the master playlist
+  (`hls_links`, then `m3u8_candidates` which also unpacks the script) and builds
+  the quality menu from the real HLS variants; `embed_url` stays the player page
+  so the download resolves a fresh signed playlist at start.
+
 ## [5.14.8] - 2026-11-04 — "Audio"
 
 ### Fixed

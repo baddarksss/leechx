@@ -393,6 +393,40 @@ def parse_kvs(html: str, url: str) -> MediaInfo | None:
     )
 
 
+def looks_like_kvs_formats(formats: list[dict] | None) -> bool:
+    """KVS formats point at ``/get_file/``; yt-dlp may only expose one of them."""
+    for fmt in formats or []:
+        if isinstance(fmt, dict) and "/get_file/" in str(fmt.get("url") or ""):
+            return True
+    return False
+
+
+def prefer_kvs_info(info: MediaInfo, kvs: MediaInfo | None) -> MediaInfo:
+    """Use the KVS flashvars qualities when yt-dlp found fewer resolutions.
+
+    On KVS pages the ``<video><source>`` tag usually carries a single
+    resolution while ``video_url``/``video_alt_url*`` list every quality
+    (480p/720p/1080p). yt-dlp succeeds with the single one, so the KVS parser
+    has to win when it knows about more resolutions.
+    """
+    if kvs is None or not kvs.formats:
+        return info
+    info_heights = {int(fmt.get("height") or 0) for fmt in info.formats}
+    kvs_heights = {int(fmt.get("height") or 0) for fmt in kvs.formats}
+    if not kvs_heights - info_heights:
+        return info
+    return MediaInfo(
+        url=info.url,
+        title=info.title or kvs.title,
+        duration=info.duration or kvs.duration,
+        thumbnail=info.thumbnail or kvs.thumbnail,
+        extractor="KVS",
+        formats=kvs.formats,
+        ext="mp4",
+        embed_url=info.embed_url,
+    )
+
+
 def _kvs_pick(formats: list[dict], option: FormatOption) -> dict | None:
     """فرمت KVS متناظر با گزینهٔ منو را پیدا می‌کند (یا بهترین را)."""
     usable = [f for f in (formats or []) if f.get("url")]
@@ -647,6 +681,15 @@ def m3u8_candidates(html: str, base_url: str = "") -> list[str]:
                 out.append(url)
     out.sort(key=lambda item: (0 if "playlist" in item.casefold() else 1, len(item)))
     return out
+
+
+def hls_master_from_player(html: str, base_url: str = "") -> str:
+    """Master playlist of an embedded player page (packed JS / JWPlayer)."""
+    links = hls_links(html, base_url)
+    if links:
+        return links.get("hls3") or links.get("hls2") or next(iter(links.values()))
+    candidates = m3u8_candidates(html, base_url)
+    return candidates[0] if candidates else ""
 
 
 def hls_manifest_variants(text: str, base_url: str = "") -> list[dict]:
@@ -1299,6 +1342,19 @@ class Downloader:
             log.exception("probe failed for %s", url)
             raise map_error(exc) from exc
 
+        if (
+            not info.direct
+            and not info.gallery
+            and info.extractor != "KVS"
+            and looks_like_kvs_formats(info.formats)
+        ):
+            # yt-dlp read only the single <video><source>; the flashvars may
+            # list more qualities (480p/720p/1080p) on the same page.
+            try:
+                kvs = await self._probe_kvs(url)
+            except Exception:  # noqa: BLE001 - enrichment must not fail the probe
+                kvs = None
+            info = prefer_kvs_info(info, kvs)
         return await self._enrich(info)
 
     async def _enrich(self, info: MediaInfo) -> MediaInfo:
@@ -1489,6 +1545,53 @@ class Downloader:
                 log.debug("KVS size lookup timed out for %s", url)
         return info
 
+    async def _embed_hls(self, player_url: str, page_url: str) -> MediaInfo | None:
+        """Resolve an iframe player page to HLS formats (nowplay.to, JWPlayer…).
+
+        Aggregators such as sxyland embed a JWPlayer page whose manifest sits in
+        a packed/eval script that yt-dlp cannot read. The player page is fetched
+        here, the master playlist is extracted (unpacking the script when
+        needed) and the variants become the quality menu. ``embed_url`` stays the
+        player page so the download resolves a fresh signed playlist at start.
+        """
+        try:
+            html = await self._fetch_text(
+                player_url, USER_AGENT, referer=page_url, timeout=15
+            )
+        except Exception:  # noqa: BLE001 - a broken iframe must not break the probe
+            log.debug("embed player fetch failed for %s", player_url, exc_info=True)
+            return None
+        if not html:
+            return None
+        master_url = hls_master_from_player(html, player_url)
+        if not master_url:
+            return None
+        timeout = aiohttp.ClientTimeout(total=45, connect=10)
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "*/*",
+            "Accept-Encoding": "identity",
+            "Referer": player_url,
+        }
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
+            variants = await self._hls_from_manifest(sess, master_url, player_url)
+            if not variants:
+                return None
+            await self._hls_variant_sizes(sess, variants, player_url)
+        title = _html_title(html)
+        og_image = re.search(
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html
+        )
+        return MediaInfo(
+            url=page_url,
+            title=human.safe_filename(title or "media", 150),
+            thumbnail=urljoin(page_url, og_image.group(1)) if og_image else None,
+            extractor="HLS",
+            formats=_hls_formats(variants),
+            ext="mp4",
+            embed_url=player_url,
+        )
+
     async def _embed_fallback(self, url: str):
         """Follow the page's embedded player when yt-dlp cannot parse the page.
 
@@ -1509,6 +1612,10 @@ class Downloader:
                     log.info("resolved VOE player %s for %s", candidate, url)
                     return voe
                 continue
+            hls = await self._embed_hls(candidate, url)
+            if hls is not None and hls.formats:
+                log.info("resolved HLS player %s for %s", candidate, url)
+                return hls
             try:
                 info = await asyncio.to_thread(self._probe_blocking, candidate)
             except errors.LeechError:

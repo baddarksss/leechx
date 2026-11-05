@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import re
 
-__version__ = "5.14.8"
-CODENAME = "Audio"
-RELEASE_DATE = "2026-11-04"
+__version__ = "5.14.9"
+CODENAME = "Cache & Players"
+RELEASE_DATE = "2026-11-05"
 
 # نسخهٔ حداقلی پایتون برای اجرای این سورس.
 MIN_PYTHON = (3, 11)

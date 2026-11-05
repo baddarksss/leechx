@@ -161,8 +161,11 @@ class CacheHub:
             return
         shared = bool(getattr(task, "public_cache", False))
         if shared and getattr(task, "custom_thumbnail", None):
-            # Never reuse one user's chosen cover across users.
-            return
+            # A chosen cover must never enter the shared cache, but the delivery
+            # still belongs in the archive: keep it private to its owner instead
+            # of silently skipping the cache (that used to leave every job with a
+            # picked/auto cover uncached for everyone, including its owner).
+            shared = False
         cache_user_id = PUBLIC_CACHE_USER_ID if shared else task.user_id
         if shared:
             key = shared_fingerprint(

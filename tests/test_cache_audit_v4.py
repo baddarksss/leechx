@@ -366,3 +366,34 @@ async def test_public_media_cache_is_reused_across_users(db, forum, tmp_path):
     assert bot.copied[-1]["from_chat_id"] == hub.chat_id
     assert bot.copied[-1]["chat_id"] == 11
     assert bot.copied[-1]["message_id"] == row.message_id
+
+
+@pytest.mark.asyncio
+async def test_shared_delivery_with_custom_cover_is_cached_privately(db, forum, tmp_path):
+    """A chosen cover must not disable caching; it only makes the entry private."""
+    hub, bot, topics = forum
+    cache = CacheHub(hub)
+    task = make_task(user_id=10)
+    task.public_cache = True
+    task.custom_thumbnail = b"\xff\xd8fake-jpeg"
+    path = tmp_path / "covered.mp4"
+    path.write_bytes(b"covered-video")
+    result = DownloadResult(path=path, title="Public video", mime="video/mp4", size=13)
+
+    await cache.record_delivery(bot, task, result, SimpleNamespace(message_id=77))
+
+    assert len(bot.copied) == 1  # cached, not silently dropped
+    private_key = fingerprint(
+        task.user_id, task.url, task.option.selector, task.mode, task.custom_name
+    )
+    assert await repo.get_media_cache(private_key, task.user_id, hub.chat_id) is not None
+    shared_key = shared_fingerprint(
+        task.url, task.option.selector, task.mode, task.custom_name
+    )
+    assert await repo.get_media_cache(shared_key, PUBLIC_CACHE_USER_ID, hub.chat_id) is None
+
+    # The owner gets a cache hit, another user does not.
+    assert await cache.cached_delivery(bot, task) == 13
+    other = make_task(user_id=11)
+    other.public_cache = True
+    assert await cache.cached_delivery(bot, other) is None
